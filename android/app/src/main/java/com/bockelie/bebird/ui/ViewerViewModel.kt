@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.SystemClock
 import com.bockelie.bebird.band.BandData
 import com.bockelie.bebird.capture.Capture
+import com.bockelie.bebird.capture.CaptureFolder
 import com.bockelie.bebird.capture.CaptureNames
 import com.bockelie.bebird.capture.SnapshotMeta
 import com.bockelie.bebird.capture.ZoomCrop
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZonedDateTime
 import androidx.lifecycle.AndroidViewModel
@@ -65,9 +67,10 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     val bandRenderer: StateFlow<BandRenderer?> = _bandRenderer.asStateFlow()
 
     init {
+        Log.i("BebirdSpike", "ViewModel created (${Integer.toHexString(System.identityHashCode(this))})")
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                _bandRenderer.value = BandRenderer(BandFonts.load(app.assets))
+                _bandRenderer.value = BandRenderer(BandFonts.shared(app.assets))
             } catch (e: Exception) {
                 Log.e("BebirdSpike", "band fonts failed to load", e)
             }
@@ -177,10 +180,13 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
      * Start [intent] over this app, in its task (Back returns to the viewer). Leaving for it
      * doesn't disconnect; see [ExternalLaunch]. Returns false if nothing could handle it.
      */
-    fun launchOver(context: Context, intent: Intent): Boolean {
+    fun launchOver(context: Context, intent: Intent): Boolean = launchOver { context.startActivity(intent) }
+
+    /** Run [start] (which starts another activity over this app, e.g. a picker) under the same cover. */
+    fun launchOver(start: () -> Unit): Boolean {
         external.begin(SystemClock.elapsedRealtime())
         return try {
-            context.startActivity(intent)
+            start()
             true
         } catch (_: ActivityNotFoundException) {
             external.returned(); false
@@ -221,8 +227,10 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         connection.decoding = true
     }
 
-    /** Whether the captures folder exists yet (it appears with the first capture). */
-    suspend fun capturesExist(): Boolean = withContext(Dispatchers.IO) { capture.hasCaptures() }
+    /** Where Files should open the picker (or that there is nothing yet), from MediaStore. */
+    suspend fun capturesPlan(): CaptureFolder.Plan = withContext(Dispatchers.IO) {
+        CaptureFolder.plan(capture.hasCaptures(), LocalDate.now(), capture::hasCapturesIn)
+    }
 
     fun toggleRecording() = if (_recordingSince.value == null) startRecording() else stopRecording()
 

@@ -16,19 +16,22 @@ import android.util.Log
  * on Android 10+. Entries are pending (hidden) until complete, and removed if writing fails.
  */
 class MediaStoreFiles(private val resolver: ContentResolver) {
-    enum class Kind(val collection: Uri, val mime: String, val dir: String) {
-        // Video in Pictures/ too (allowed for the video collection on Android 10+): one folder.
-        STILL(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "image/jpeg", CaptureNames.FOLDER),
-        VIDEO(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "video/mp4", CaptureNames.FOLDER),
+    // Video goes under Pictures/ too (allowed for the video collection on Android 10+).
+    enum class Kind(val collection: Uri, val mime: String) {
+        STILL(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "image/jpeg"),
+        VIDEO(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "video/mp4"),
     }
 
-    /** A new pending entry named [name], taken now (so galleries sort it by capture time). */
-    fun create(kind: Kind, name: String): Uri {
+    /**
+     * A new pending entry named [name] in [dir] (a day's folder, see [CaptureNames.folder]),
+     * taken now (so galleries sort it by capture time).
+     */
+    fun create(kind: Kind, name: String, dir: String): Uri {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.DATE_TAKEN, System.currentTimeMillis())
             put(MediaStore.MediaColumns.MIME_TYPE, kind.mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, kind.dir)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "$dir/")
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         return resolver.insert(kind.collection, values) ?: error("MediaStore refused $name")
@@ -47,13 +50,13 @@ class MediaStoreFiles(private val resolver: ContentResolver) {
     }
 
     /**
-     * Remove this app's entries still pending in Pictures/Bebird: left by a
+     * Remove this app's entries still pending anywhere under Pictures/Bebird/: left by a
      * capture interrupted by the process dying (Android 10 never expires them). Other apps'
      * pending entries aren't visible to us, so only ours can match.
      */
     fun sweepPending(): Int = Kind.entries.sumOf { kind ->
         val where = "${MediaStore.MediaColumns.IS_PENDING} = 1 AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
-        val args = arrayOf("${kind.dir}%")
+        val args = arrayOf(UNDER_ROOT)
         val uris = mutableListOf<Uri>()
         try {
             val cursor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -74,19 +77,22 @@ class MediaStoreFiles(private val resolver: ContentResolver) {
         uris.size
     }
 
-    /** Whether the captures folder holds any of this app's finished captures (so it exists). */
-    fun hasCaptures(): Boolean = Kind.entries.any { kind ->
+    /** Whether this app has finished captures under Pictures/Bebird/ (its day folders included). */
+    fun hasCaptures(): Boolean = any("${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", UNDER_ROOT)
+
+    /** Whether this app has finished captures in the folder [dir] itself. */
+    fun hasCapturesIn(dir: String): Boolean = any("${MediaStore.MediaColumns.RELATIVE_PATH} = ?", "$dir/")
+
+    private fun any(where: String, arg: String) = Kind.entries.any { kind ->
         runCatching {
-            resolver.query(
-                kind.collection, arrayOf(MediaStore.MediaColumns._ID),
-                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", arrayOf("${kind.dir}%"), null,
-            )?.use { it.count > 0 } ?: false
+            resolver.query(kind.collection, arrayOf(MediaStore.MediaColumns._ID), where, arrayOf(arg), null)
+                ?.use { it.count > 0 } ?: false
         }.getOrDefault(false)
     }
 
-    /** Write [bytes] as a new [kind] entry named [name]; returns its uri. */
-    fun write(kind: Kind, name: String, bytes: ByteArray): Uri {
-        val uri = create(kind, name)
+    /** Write [bytes] as a new [kind] entry named [name] in [dir]; returns its uri. */
+    fun write(kind: Kind, name: String, dir: String, bytes: ByteArray): Uri {
+        val uri = create(kind, name, dir)
         try {
             resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("can't write $uri")
             publish(uri)
@@ -95,5 +101,10 @@ class MediaStoreFiles(private val resolver: ContentResolver) {
             discard(uri)
             throw e
         }
+    }
+
+    private companion object {
+        /** RELATIVE_PATH values of Pictures/Bebird/ and every folder in it. */
+        const val UNDER_ROOT = "${CaptureNames.ROOT}/%"
     }
 }

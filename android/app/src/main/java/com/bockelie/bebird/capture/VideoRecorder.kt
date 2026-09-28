@@ -127,13 +127,13 @@ class VideoRecorder private constructor(
         const val BIT_RATE = 2_000_000
 
         /**
-         * A new recording named [name], [width] × [height]. Everything it opens is closed again
+         * A new recording named [name] in [dir], [width] × [height]. Everything it opens is closed again
          * (and the pending MediaStore entry removed) if any step fails.
          */
-        fun create(files: MediaStoreFiles, name: String, width: Int, height: Int): VideoRecorder {
+        fun create(files: MediaStoreFiles, name: String, dir: String, width: Int, height: Int): VideoRecorder {
             val encW = Yuv.padTo16(width)
             val encH = Yuv.padTo16(height)
-            val uri = files.create(MediaStoreFiles.Kind.VIDEO, name)
+            val uri = files.create(MediaStoreFiles.Kind.VIDEO, name, dir)
             var pfd: ParcelFileDescriptor? = null
             var muxer: MediaMuxer? = null
             var codec: MediaCodec? = null

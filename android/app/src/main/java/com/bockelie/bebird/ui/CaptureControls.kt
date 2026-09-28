@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.bockelie.bebird.ui
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.LocalTextStyle
@@ -15,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -70,33 +75,42 @@ fun CaptureSnackbar(vm: ViewerViewModel, host: SnackbarHostState) {
     }
 }
 
+/** The document picker ([ActivityResultContracts.OpenDocument]) opening at [initialUri]. */
+private class OpenCapture : ActivityResultContracts.OpenDocument() {
+    var initialUri: Uri? = null
+
+    override fun createIntent(context: Context, input: Array<String>): Intent =
+        super.createIntent(context, input).apply { initialUri?.let { putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) } }
+}
+
 /**
- * Files: opens the captures folder (Pictures/Bebird) in the phone's file browser, which then
- * opens each file with its default app. If nothing can show the folder, or there is none yet,
- * a snackbar says where captures go.
+ * Files: the system document picker, opening in today's capture folder (else Pictures/Bebird)
+ * and listing images and videos; the picked file then opens in its default app. Both open over
+ * the app, in its task, so Back returns here (see ExternalLaunch). With no captures yet, or no
+ * app to show a file, a snackbar says so.
  */
 @Composable
 fun FilesButton(vm: ViewerViewModel, host: SnackbarHostState) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val empty = stringResource(R.string.files_empty, CaptureNames.FOLDER)
-    val where = stringResource(R.string.files_where, CaptureNames.FOLDER)
+    val empty = stringResource(R.string.files_empty, CaptureNames.ROOT)
+    val where = stringResource(R.string.files_where, CaptureNames.ROOT)
+    val noViewer = stringResource(R.string.capture_no_viewer)
+    val contract = remember { OpenCapture() }
+    val picker = rememberLauncherForActivityResult(contract) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, context.contentResolver.getType(uri))
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (!vm.launchOver(context, view)) scope.launch { host.showSnackbar(noViewer) }
+    }
     FilledTonalButton(onClick = {
         scope.launch {
-            val outcome = CaptureFolder.open(vm.capturesExist()) { attempt ->
-                val intent = Intent(attempt.action).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                val uri = attempt.uri?.let(Uri::parse)
-                when {
-                    uri != null && attempt.type != null -> intent.setDataAndType(uri, attempt.type)
-                    uri != null -> intent.setData(uri)
-                    attempt.type != null -> intent.setType(attempt.type)
+            when (val plan = vm.capturesPlan()) {
+                CaptureFolder.Plan.Empty -> host.showSnackbar(empty)
+                is CaptureFolder.Plan.Pick -> {
+                    contract.initialUri = Uri.parse(plan.initialUri)
+                    if (!vm.launchOver { picker.launch(CaptureFolder.MIME_TYPES) }) host.showSnackbar(where)
                 }
-                vm.launchOver(context, intent)  // over the app, in its task: Back returns here
-            }
-            when (outcome) {
-                CaptureFolder.Outcome.Empty -> host.showSnackbar(empty)
-                CaptureFolder.Outcome.Explain -> host.showSnackbar(where)
-                is CaptureFolder.Outcome.Opened -> Unit
             }
         }
     }) {

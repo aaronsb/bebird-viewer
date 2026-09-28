@@ -50,24 +50,28 @@ class Capture(resolver: ContentResolver) {
         }
     }
 
-    /** Whether any capture has been saved (the folder exists). Queries MediaStore: not on the main thread. */
+    /** Whether any capture has been saved (so Pictures/Bebird exists). Queries MediaStore: not on the main thread. */
     fun hasCaptures(): Boolean = files.hasCaptures()
+
+    /** Whether the day folder [dir] has captures (so it exists). Not on the main thread. */
+    fun hasCapturesIn(dir: String): Boolean = files.hasCapturesIn(dir)
 
     /** Save [shot] as a JPEG (and a _zoomed one when zoomed in); [done] gets each result. */
     fun snapshot(shot: Shot, done: (Result) -> Unit) = worker.execute {
         val rotated = Frames.rotated(shot.frame, shot.rotation)
         val time = shot.meta.taken.toLocalDateTime()
-        save(CaptureNames.still(time), Frames.composed(rotated.toPixelImage(), shot.renderer, shot.band, shot.overlay), shot.meta, done)
+        val dir = CaptureNames.folder(time.toLocalDate())
+        save(CaptureNames.still(time), dir, Frames.composed(rotated.toPixelImage(), shot.renderer, shot.band, shot.overlay), shot.meta, done)
         shot.zoomRect?.let { rect ->
             val zoomed = Frames.zoomed(rotated, rect, shot.renderer, shot.band, shot.overlay)
-            save(CaptureNames.still(time, zoomed = true), zoomed, shot.meta.copy(zoomed = true), done)
+            save(CaptureNames.still(time, zoomed = true), dir, zoomed, shot.meta.copy(zoomed = true), done)
         }
     }
 
-    private fun save(name: String, image: PixelImage, meta: SnapshotMeta, done: (Result) -> Unit) {
+    private fun save(name: String, dir: String, image: PixelImage, meta: SnapshotMeta, done: (Result) -> Unit) {
         try {
             val jpeg = ByteArrayOutputStream().also { image.toBitmap().compress(Bitmap.CompressFormat.JPEG, 95, it) }.toByteArray()
-            val uri = files.write(MediaStoreFiles.Kind.STILL, name, ExifWriter.insert(jpeg, meta))
+            val uri = files.write(MediaStoreFiles.Kind.STILL, name, dir, ExifWriter.insert(jpeg, meta))
             Log.i(TAG, "saved $name (${image.width}x${image.height})")
             done(Result.Saved(uri, name, video = false))
         } catch (e: Exception) {
@@ -85,7 +89,8 @@ class Capture(resolver: ContentResolver) {
     fun startRecording(name: String, first: Shot, ended: (Result) -> Unit) = worker.execute {
         if (recorder != null) return@execute ended(Result.Failed(name, "already recording"))
         val image = try {
-            videoImage(first).also { recorder = VideoRecorder.create(files, name, it.width, it.height) }
+            val dir = CaptureNames.folder(first.meta.taken.toLocalDate())
+            videoImage(first).also { recorder = VideoRecorder.create(files, name, dir, it.width, it.height) }
         } catch (e: Exception) {
             Log.e(TAG, "recording failed to start", e)
             return@execute ended(Result.Failed(name, e.message ?: e.javaClass.simpleName))
