@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Paths (under assets/) that must be in every built APK: what the code opens, and the licence
+# texts the bundled fonts require. Checked after each assemble; BandFonts.ALL must be listed here.
+fonts/ter-u16n.bdf
+fonts/unifont-16.0.02.hex.gzip
+fonts/Terminus-OFL.txt
+fonts/Unifont-LICENSE.txt

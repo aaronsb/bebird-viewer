@@ -10,7 +10,8 @@ Terminus Font 4.49.1 (ter-u16n.bdf)
   Source: https://terminus-font.sourceforge.net/
   Used for the status band readout.
 
-GNU Unifont 16.0.02 (unifont-16.0.02.hex.gz)
+GNU Unifont 16.0.02 (unifont-16.0.02.hex.gz, stored unmodified as unifont-16.0.02.hex.gzip
+  because the Android build would otherwise unpack it)
   Copyright (C) Roman Czyborra, Paul Hardy, and contributors.
   Dual-licensed: SIL Open Font License, Version 1.1, and GNU GPL version 2 or later with the
   GNU font embedding exception: fonts/Unifont-LICENSE.txt
