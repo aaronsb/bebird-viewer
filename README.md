@@ -63,19 +63,38 @@ sudo ufw allow in on wlan0 from 192.168.5.0/24   # your Wi-Fi interface
 
 Every socket binds to the Wi-Fi interface's address, so nothing meant for the scope can leak onto another network that happens to also use `192.168.5.1`.
 
+## Building
+
+Both builds run in Docker containers, never directly on your machine, so you need **Docker with BuildKit** (the `buildx` plugin; on Arch, install `docker-buildx`) and `make`; nothing else. The containers run as your user, so everything they produce is owned by you, and they mount only the directory the build needs. The build images are defined in [`docker/`](docker/).
+
+| Target | Does |
+|---|---|
+| `make app` | build the desktop binary `dist/bebird-viewer` |
+| `make android-test` | run the Android unit tests (JVM, no device needed) |
+| `make android-apk` | build the Android debug APK |
+| `make android-shell` | open a shell in the Android build container |
+| `make clean` | remove build output (desktop and Android) |
+| `make distclean` | also remove `.venv`, the Gradle cache volume and the build images |
+
+`make app-image` and `make android-image` (re)build the images; the other targets do that for you, and it's quick once Docker has the layers cached. The desktop image installs its Python packages from [`docker/desktop-requirements.lock`](docker/desktop-requirements.lock), pinned by version and hash; `make app-lock` re-resolves it from `docker/desktop-requirements.in`.
+
+Caches stay in Docker rather than in your home directory: Gradle's (dependencies, the Gradle distribution, and the Android debug signing key) in the named volume `bebird-gradle`, and pip's in Docker's build cache while the desktop image is built. `make distclean` removes the volume and the images. The pip cache goes when Docker prunes its build cache; note that `docker builder prune` clears the build cache of every project on the machine, not just this one. Removing the volume also replaces the debug signing key, so a debug APK built afterwards won't install over an earlier one without uninstalling it first.
+
 ## Standalone app
 
-`make app` builds `dist/bebird-viewer`, a single self-contained executable (about 80 MB: Python, Qt and Pillow included). The machine running it needs no Python install. Build it on the oldest distribution you want it to run on, since the result depends on that system's glibc.
+`make app` builds `dist/bebird-viewer`, a single self-contained executable (about 55 MB: Python, Qt and Pillow included). The machine running it needs no Python install. It's built on Ubuntu 22.04, the oldest base the current PyQt6 wheels install on, so it runs on distributions with **glibc 2.35 or newer** (Ubuntu 22.04, Debian 12, Fedora 36 and later). The build container has no network access and sees only the source files, read-only; only `dist/` is writable.
 
 ```sh
-make app                                         # creates .venv (PyQt6, Pillow, PyInstaller) and builds the binary
+make app                                         # builds the image on first use, then the binary
 make app && make install                         # binary to ~/.local/bin, plus a launcher entry and icon
 make app && sudo make install PREFIX=/usr/local  # system-wide
 make uninstall
-make run                                         # or just run from source in the venv
+make run                                         # or run from source (no build involved)
 ```
 
-`make install` only copies an existing build, so the build never runs as root. The binary bundles Python and Qt but still calls host programs: install **ffmpeg** for recording and **NetworkManager** (`nmcli`) for the Wi-Fi controls.
+`make run` is the one target that installs anything on your machine: `make venv` creates `.venv` with PyQt6 and Pillow from pip, for running from source only.
+
+`make install` only copies an existing build, so the build never runs as root. The binary bundles Python, Qt and the X11 libraries Qt needs, but uses the host's OpenGL (`libGL`/`libEGL`) and Wayland client libraries, which any desktop system has. It still calls host programs: install **ffmpeg** for recording and **NetworkManager** (`nmcli`) for the Wi-Fi controls.
 
 The single-file binary unpacks itself to a temporary directory on each launch, so it takes a few seconds to start.
 
@@ -84,11 +103,11 @@ The single-file binary unpacks itself to a temporary directory on each launch, s
 A native Android port (Kotlin, Jetpack Compose, Android 10+) lives in [`android/`](android/), app ID `com.bockelie.bebird`. **Work in progress:** so far it has the protocol core and frame reassembly with unit tests, and a placeholder screen; joining the scope's Wi-Fi and live video come next. Progress is tracked in [#8](https://github.com/aaronsb/bebird-viewer/issues/8).
 
 ```sh
-cd android && ./gradlew assembleDebug   # needs JDK 17 and the Android SDK (platform 35)
-cd android && ./gradlew test            # JVM unit tests, no device needed
+make android-test   # JVM unit tests
+make android-apk    # debug APK
 ```
 
-The debug APK lands in `android/app/build/outputs/apk/debug/`; CI builds one for every change under `android/`.
+The build image carries JDK 17 and the Android SDK (platform 35), so neither is needed on your machine. The debug APK lands in `android/app/build/outputs/apk/debug/`. CI runs the same make targets in an image built from the same Dockerfile for every change under `android/` and uploads the APK.
 
 ## Usage
 
