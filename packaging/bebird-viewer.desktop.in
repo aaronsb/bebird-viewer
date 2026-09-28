@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Bebird Viewer
+GenericName=Otoscope Viewer
+Comment=View a Bebird Wi-Fi ear camera without the vendor app
+Exec=@BIN@
+Icon=bebird-viewer
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=otoscope;ear;camera;bebird;
