@@ -25,12 +25,11 @@ import java.time.LocalDateTime
 import java.time.ZonedDateTime
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.bockelie.bebird.BebirdApp
 import com.bockelie.bebird.band.BandFonts
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.connection.ScopeConnection
 import com.bockelie.bebird.control.RollFilter
-import com.bockelie.bebird.settings.PrefsKeyValue
-import com.bockelie.bebird.settings.Settings
 import com.bockelie.bebird.settings.ThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,12 +39,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Holds the [ScopeConnection] and the view settings for the screen. Clearing the ViewModel
- * disconnects; on viewModelScope, so it also cancels a connect that is still waiting for a release.
+ * The view settings for the screen, and the app's [ScopeConnection] (owned by [BebirdApp], so it
+ * can outlive the screen for the background grace period; MainActivity decides when it ends).
  */
 class ViewerViewModel(app: Application) : AndroidViewModel(app) {
-    private val settings = Settings(PrefsKeyValue(app))
-    val connection = ScopeConnection(app, viewModelScope, settings)
+    private val settings = (app as BebirdApp).settings
+    val connection: ScopeConnection = (app as BebirdApp).connection
+    private val grace = (app as BebirdApp).grace
 
     private val _autoRotate = MutableStateFlow(settings.autoRotate)
     val autoRotate: StateFlow<Boolean> = _autoRotate.asStateFlow()
@@ -53,6 +53,11 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     val trim: StateFlow<Int> = _trim.asStateFlow()
     private val _theme = MutableStateFlow(settings.theme)
     val theme: StateFlow<ThemeMode> = _theme.asStateFlow()
+
+    private val _connectionSettings = MutableStateFlow(
+        ConnectionSettings(settings.autoConnect, settings.graceSeconds, settings.powerOffAfterGrace),
+    )
+    val connectionSettings: StateFlow<ConnectionSettings> = _connectionSettings.asStateFlow()
 
     private val _overlay = MutableStateFlow(settings.overlay)
     val overlay: StateFlow<Boolean> = _overlay.asStateFlow()
@@ -108,6 +113,13 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(mode: ThemeMode) {
         settings.theme = mode
         _theme.value = mode
+    }
+
+    fun setConnectionSettings(c: ConnectionSettings) {
+        settings.autoConnect = c.autoConnect
+        settings.graceSeconds = c.graceSeconds
+        settings.powerOffAfterGrace = c.powerOffOnRelease
+        _connectionSettings.value = c.copy(graceSeconds = settings.graceSeconds)
     }
 
     // --- capture (#15) ---
@@ -174,57 +186,24 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- another app over ours (Files, Open) ---
 
-    private val external = ExternalLaunch()
-
     /**
      * Start [intent] over this app, in its task (Back returns to the viewer). Leaving for it
-     * doesn't disconnect; see [ExternalLaunch]. Returns false if nothing could handle it.
+     * keeps the connection; see [GraceKeeper.launchingOver]. Returns false if nothing could
+     * handle it.
      */
     fun launchOver(context: Context, intent: Intent): Boolean = launchOver { context.startActivity(intent) }
 
     /** Run [start] (which starts another activity over this app, e.g. a picker) under the same cover. */
     fun launchOver(start: () -> Unit): Boolean {
-        external.begin(SystemClock.elapsedRealtime())
+        grace.launchingOver()
         return try {
             start()
             true
         } catch (_: ActivityNotFoundException) {
-            external.returned(); false
+            grace.launchFailed(); false
         } catch (_: SecurityException) {
-            external.returned(); false
+            grace.launchFailed(); false
         }
-    }
-
-    /**
-     * The activity stopped. Recording always stops (nothing renders the frames). The
-     * connection stays up, not decoding, if our own launch covers the app; then the returned
-     * delay (ms) says when to call [coverExpired]. Otherwise it disconnects and returns null.
-     */
-    fun appStopped(): Long? {
-        stopRecording()
-        val now = SystemClock.elapsedRealtime()
-        if (!external.coversStop(now)) {
-            external.returned()
-            connection.disconnect()
-            return null
-        }
-        connection.decoding = false
-        return external.deadline()!! - now
-    }
-
-    /** Called when the cover's time is up: let the scope go, as on leaving the app. */
-    fun coverExpired() {
-        if (!external.expired(SystemClock.elapsedRealtime())) return
-        Log.i("BebirdSpike", "away for too long: disconnecting")
-        external.returned()
-        connection.decoding = true
-        connection.disconnect()
-    }
-
-    /** Back in front: decode again. A stall while covered shows as usual; Reconnect recovers it. */
-    fun appResumed() {
-        external.returned()
-        connection.decoding = true
     }
 
     /** Where Files should open the picker (or that there is nothing yet), from MediaStore. */
@@ -263,6 +242,6 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         Log.i("BebirdSpike", "ViewModel cleared")
         stopRecording()
         capture.close()
-        connection.disconnect()
+        // Not the connection: it belongs to the app and outlives the screen (see GraceKeeper).
     }
 }

@@ -82,7 +82,7 @@ import com.bockelie.bebird.scope.ScopeSession
 import com.bockelie.bebird.wifi.ScopeWifi
 
 /** Joining a network by specifier needs this permission: nearby devices on 13+, location before. */
-private val wifiPermission =
+internal val wifiPermission =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.NEARBY_WIFI_DEVICES
     else Manifest.permission.ACCESS_FINE_LOCATION
 
@@ -157,9 +157,11 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     Text(stringResource(if (idle) R.string.connect else R.string.disconnect))
                 }
                 val theme by vm.theme.collectAsStateWithLifecycle()
+                val connectionSettings by vm.connectionSettings.collectAsStateWithLifecycle()
                 SettingsMenu(
                     theme = theme, onTheme = vm::setTheme, overlay = overlayOn, onOverlay = vm::setOverlay,
                     showScopeId = showScopeId, onShowScopeId = vm::setShowScopeId,
+                    connection = connectionSettings, onConnection = vm::setConnectionSettings,
                     canPowerOff = canPowerOff, onPowerOff = { confirmingPowerOff = true },
                 )
             }

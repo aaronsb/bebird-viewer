@@ -76,4 +76,23 @@
     <string name="files_empty">No captures yet. They will be saved to %1$s.</string>
     <string name="files_where">Saved to %1$s</string>
     <string name="capture_no_viewer">No app on this phone can open that file</string>
+    <string name="connection_settings">Connection…</string>
+    <string name="connection_title">Connection</string>
+    <string name="auto_connect">Connect when the app starts</string>
+    <string name="auto_connect_hint">To the last device, if it can be joined without Android’s network picker.</string>
+    <string name="leave_title">When you leave the app</string>
+    <string name="leave_message">Keep the scope connected for a while, so video carries on at once when you come back.</string>
+    <string name="grace_now">Immediately (don’t keep it)</string>
+    <string name="grace_seconds">%1$d seconds</string>
+    <string name="grace_minute">1 minute</string>
+    <string name="grace_minutes">%1$d minutes</string>
+    <string name="grace_power_off">Power off the scope when the app lets go of it</string>
+    <string name="grace_power_off_hint">When the time above runs out, and when you close the app. Only once video has started; otherwise the app just disconnects.</string>
+    <string name="done">Done</string>
+    <string name="grace_channel">Connection kept in the background</string>
+    <string name="grace_title">Scope still connected</string>
+    <string name="grace_title_device">%1$s still connected</string>
+    <string name="grace_then_power_off">Powers off the scope when the time is up. Tap to carry on.</string>
+    <string name="grace_then_disconnect">Disconnects when the time is up. Tap to carry on.</string>
+    <string name="grace_held">Kept connected while in use. Tap to carry on.</string>
 </resources>

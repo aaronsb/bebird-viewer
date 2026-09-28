@@ -17,8 +17,17 @@
     <uses-permission
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="32" />
+    <!-- Keeping the connection for the grace period after leaving the app (#18). The service's
+         type needs CHANGE_WIFI_STATE / CHANGE_NETWORK_STATE, requested above. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- The CPU keeps running with the screen off during the grace period: the keepalive and the timer. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- The countdown notification; the app works without it. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
+        android:name=".BebirdApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         tools:targetApi="31"
@@ -38,5 +47,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service
+            android:name=".connection.GraceService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>

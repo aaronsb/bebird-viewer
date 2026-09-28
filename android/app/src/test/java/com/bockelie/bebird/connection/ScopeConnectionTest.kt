@@ -3,6 +3,8 @@ package com.bockelie.bebird.connection
 
 import com.bockelie.bebird.devices.BookStore
 import com.bockelie.bebird.devices.DeviceBook
+import com.bockelie.bebird.settings.MemoryKeyValue
+import com.bockelie.bebird.settings.Settings
 import com.bockelie.bebird.wifi.ScopeWifi
 import com.bockelie.bebird.wifi.ScopeWifi.Target
 import com.bockelie.bebird.wifi.WifiControl
@@ -68,6 +70,16 @@ class ScopeConnectionTest {
         }
     }
 
+    /** Another connection on the same Wi-Fi, with its own book and settings. */
+    private fun connection(book: DeviceBook, autoConnect: Boolean = true) = onMain {
+        val s = Settings(MemoryKeyValue()).apply { this.autoConnect = autoConnect }
+        val st = object : BookStore {
+            override fun load() = book
+            override fun save(book: DeviceBook) {}
+        }
+        ScopeConnection(wifi, st, scope, s) { error("no session in these tests") }
+    }
+
     private val exact = Target.Exact("bebird-ES-1", derived)
     private val fallback = Target.Exact("bebird-ES-1", null, suspect = derived)
 
@@ -75,6 +87,59 @@ class ScopeConnectionTest {
         onMain { conn.connect() }
         await("the request") { wifi.starts.size == 1 }
         assertEquals(exact, wifi.starts.single())
+    }
+
+    @Test fun atLaunchTheLastDeviceIsAskedForExactlyOnce() {
+        onMain { conn.connectOnLaunch() }
+        await("the request") { wifi.starts.size == 1 }
+        Thread.sleep(200)
+        assertEquals(listOf<Target>(exact), wifi.starts.toList())
+    }
+
+    @Test fun atLaunchNothingWithoutARememberedDevice() {
+        val c = connection(DeviceBook())
+        onMain { c.connectOnLaunch() }
+        Thread.sleep(200)
+        assertEquals(emptyList<Target>(), wifi.starts.toList())
+    }
+
+    @Test fun atLaunchNothingWithoutAKnownBssid() {
+        // by SSID alone Android would show its picker
+        val c = connection(DeviceBook().seen("bebird-ES-2", null, 100))
+        onMain { c.connectOnLaunch() }
+        Thread.sleep(200)
+        assertEquals(emptyList<Target>(), wifi.starts.toList())
+    }
+
+    @Test fun atLaunchNothingWhenTheSettingIsOff() {
+        val c = connection(store.book, autoConnect = false)
+        onMain { c.connectOnLaunch() }
+        Thread.sleep(200)
+        assertEquals(emptyList<Target>(), wifi.starts.toList())
+    }
+
+    @Test fun atLaunchAConnectionAlreadyWantedIsLeftAlone() {
+        // kept through the grace period
+        onMain { conn.connect() }
+        await("the request") { wifi.starts.size == 1 }
+        onMain { conn.connectOnLaunch() }
+        Thread.sleep(200)
+        assertEquals(1, wifi.starts.size)
+    }
+
+    @Test fun atLaunchAScopeNotFoundGetsNoFallback() {
+        // the scope is off: no SSID-only retry, which could show the picker
+        onMain { conn.connectOnLaunch() }
+        await("the request") { wifi.starts.size == 1 }
+        onMain { wifi.state.value = ScopeWifi.State.Unavailable(exact) }
+        Thread.sleep(300)
+        assertEquals(listOf<Target>(exact), wifi.starts.toList())
+        // Connect pressed afterwards is an ordinary request again, with its fallback
+        onMain { conn.connect() }
+        await("the request") { wifi.starts.size == 2 }
+        onMain { wifi.state.value = ScopeWifi.State.Unavailable(exact) }
+        await("the fallback") { wifi.starts.size == 3 }
+        assertEquals(fallback, wifi.starts[2])
     }
 
     @Test fun anUnavailableExactRequestFallsBackToTheSsidOnce() {

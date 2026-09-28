@@ -58,6 +58,16 @@ class NetworkGate(
         }
     }
 
+    /**
+     * Wait up to [timeoutMs] for the latest release to finish, for when the process may be about
+     * to go (the app closing); true if it has, or there was none.
+     */
+    fun awaitRelease(timeoutMs: Long): Boolean {
+        val t = synchronized(lock) { releasing } ?: return true
+        t.join(timeoutMs)
+        return !t.isAlive
+    }
+
     /** [stopped] is the session's STOP, or null if there was no session to stop. */
     fun disconnect(stopped: Future<*>?) = synchronized(lock) {
         connecting?.cancel()
