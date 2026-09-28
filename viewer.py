@@ -18,13 +18,13 @@ from io import BytesIO
 
 from PIL import Image
 
+import wifi
+
 from PyQt6.QtCore import QObject, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage, QKeySequence, QPainter, QPainterPath, QPixmap, QShortcut, QTransform
-from PyQt6.QtWidgets import (QApplication, QCheckBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
                              QSlider, QSpinBox, QVBoxLayout, QWidget)
 
-# Wi-Fi interface joined to the scope's access point (override with BEBIRD_IFACE)
-IFACE = os.environ.get("BEBIRD_IFACE", "wlan0")
 CAM = "192.168.5.1"
 # The scope streams to every (ip, port) that ever sent START until that same port sends STOP,
 # even if the port is dead. A fixed local port means a restarted viewer reuses its slot
@@ -60,8 +60,9 @@ class Scope(QObject):
     boardinfo = pyqtSignal(dict)         # model, firmware, ... (requested on connect)
     status = pyqtSignal(str)
 
-    def __init__(self):
+    def __init__(self, iface):
         super().__init__()
+        self.iface = iface
         self.video = self.ctrl = None
         self.running = False
         self._info_buf = b""
@@ -75,9 +76,9 @@ class Scope(QObject):
         return s
 
     def start(self):
-        ip = iface_ip(IFACE)
+        ip = iface_ip(self.iface)
         if not ip:
-            self.status.emit(f"not connected to the scope's Wi-Fi ({IFACE})")
+            self.status.emit(f"not connected to the scope's Wi-Fi ({self.iface})")
             return False
         self.video, self.ctrl = self._sock(ip, 58080, VIDEO_CLIENT_PORT), self._sock(ip, 58090)
         self.video.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 5 << 20)
@@ -181,15 +182,36 @@ class Scope(QObject):
             parts = {}
 
 
+class Background(QObject):
+    """Run a blocking call on a thread and deliver its result to a callback on the GUI thread."""
+    done = pyqtSignal(object, object)
+
+    def __init__(self):
+        super().__init__()
+        # a bound method of a QObject living on the GUI thread, so emits from workers are queued
+        self.done.connect(self._deliver)
+
+    def _deliver(self, cb, result):
+        cb(result)
+
+    def run(self, fn, cb):
+        threading.Thread(target=lambda: self.done.emit(cb, fn()), daemon=True).start()
+
+
 class Viewer(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("bebird")
-        self.scope = Scope()
         self.img = None            # last displayed (rotated) QImage
         self.angle = 0
         self.shown_angle = 0
         self.saved = self.load_state()
+        self.iface = os.environ.get("BEBIRD_IFACE") or self.saved.get("iface") or wifi.default_iface()
+        self.scope = Scope(self.iface)
+        self.bg = Background()
+        self.wifi_busy = False     # one nmcli operation at a time
+        self.on_scope_wifi = False
+        self.last_join_try = 0.0
         self.light_level = self.saved.get("light", 100)
         self.light_before_off = self.saved.get("light_before_off", 100)
         self.asserted = False
@@ -226,6 +248,21 @@ class Viewer(QWidget):
         self.rec_btn.clicked.connect(self.toggle_record)
         self.reconnect_btn = QPushButton("Reconnect"); self.reconnect_btn.clicked.connect(self.reconnect)
 
+        self.iface_box = QComboBox(); self.iface_box.setToolTip("Wi-Fi interface used for the scope")
+        self.iface_box.addItems(sorted(set(wifi.wifi_devices()) | {self.iface}))
+        self.iface_box.setCurrentText(self.iface)
+        self.iface_box.currentTextChanged.connect(self.on_iface_changed)
+        self.net_box = QComboBox(); self.net_box.setMinimumWidth(170)
+        self.net_box.setToolTip("scope networks in range (bebird-…)")
+        if self.saved.get("ssid"):
+            self.net_box.addItem(self.saved["ssid"])
+        self.scan_btn = QPushButton("Scan"); self.scan_btn.clicked.connect(lambda: self.scan_wifi("yes"))
+        self.wifi_btn = QPushButton("Connect"); self.wifi_btn.clicked.connect(self.toggle_wifi)
+        self.autojoin = QCheckBox("Auto-join")
+        self.autojoin.setToolTip("rejoin the scope's Wi-Fi and restart video whenever it comes back")
+        self.autojoin.setChecked(self.saved.get("autojoin", True))
+        self.wifi_label = QLabel("Wi-Fi: …")
+
         self.status = QLabel("")
         self.info = QLabel("")
 
@@ -234,10 +271,16 @@ class Viewer(QWidget):
                   self.snap_btn, self.rec_btn, self.reconnect_btn):
             controls.addWidget(w)
         controls.addStretch()
+        wifi_row = QHBoxLayout()
+        for w in (QLabel("Wi-Fi"), self.iface_box, self.net_box, self.scan_btn, self.wifi_btn,
+                  self.autojoin, self.wifi_label):
+            wifi_row.addWidget(w)
+        wifi_row.addStretch()
         bottom = QHBoxLayout()
         bottom.addWidget(self.status); bottom.addStretch(); bottom.addWidget(self.info)
         layout = QVBoxLayout(self)
-        layout.addWidget(self.video, 1); layout.addLayout(controls); layout.addLayout(bottom)
+        layout.addWidget(self.video, 1); layout.addLayout(controls); layout.addLayout(wifi_row)
+        layout.addLayout(bottom)
 
         keys = {"L": self.toggle_light, "Up": lambda: self.nudge_light(1),
                 "Down": lambda: self.nudge_light(-1), "PgUp": lambda: self.nudge_light(10),
@@ -259,9 +302,11 @@ class Viewer(QWidget):
         self.bat_text = ""
         self.board, self.battery = self.saved.get("scope", {}), None
         t = QTimer(self); t.timeout.connect(self.tick); t.start(1000)
-        self.resize(720, 800)
-        if not self.scope.start():
-            self.video.setText("Not connected to the scope's Wi-Fi.\nTurn the scope on, then press Reconnect.")
+        self.resize(760, 840)
+        self.video.setText("Looking for the scope's Wi-Fi…")
+        w = QTimer(self); w.timeout.connect(self.poll_wifi); w.start(3000)
+        self.poll_wifi()
+        self.scan_wifi("auto")
 
     # --- light -------------------------------------------------------------
     def apply_light(self, level):
@@ -442,7 +487,7 @@ class Viewer(QWidget):
 
     def reconnect(self):
         self.scope.stop()
-        self.scope = Scope()
+        self.scope = Scope(self.iface)
         self.scope.frame.connect(self.on_frame)
         self.scope.battery.connect(self.on_battery)
         self.scope.boardinfo.connect(self.on_boardinfo)
@@ -451,7 +496,96 @@ class Viewer(QWidget):
         self.asserted = False
         self.status.setText("reconnecting…")
         if not self.scope.start():
-            self.video.setText("Not connected to the scope's Wi-Fi.\nTurn the scope on, then press Reconnect.")
+            self.video.setText("Not connected to the scope's Wi-Fi.\nTurn the scope on and Connect.")
+
+    # --- Wi-Fi ----------------------------------------------------------------
+    def target_ssid(self):
+        return self.net_box.currentText().strip()
+
+    def wifi_op(self, fn, cb):
+        if self.wifi_busy:
+            return
+        self.wifi_busy = True
+        def finish(result):
+            self.wifi_busy = False
+            cb(result)
+        self.bg.run(fn, finish)
+
+    def poll_wifi(self):
+        self.wifi_op(lambda: wifi.status(self.iface), self.on_wifi_status)
+
+    def on_wifi_status(self, st):
+        was, self.on_scope_wifi = self.on_scope_wifi, st["on_scope"]
+        if st["on_scope"]:
+            self.wifi_label.setText(f"on {st['ssid'] or st['connection']} ({st['ip']})")
+            self.wifi_btn.setText("Disconnect")
+            if st["ssid"] and self.net_box.findText(st["ssid"]) < 0:
+                self.net_box.addItem(st["ssid"])
+            if st["ssid"]:
+                self.net_box.setCurrentText(st["ssid"])
+            if not was:
+                self.reconnect()  # Wi-Fi just came up (or viewer just started): start video
+            return
+        self.wifi_btn.setText("Connect")
+        other = f" (interface is on {st['ssid'] or st['connection']})" if st["connected"] else ""
+        self.wifi_label.setText("not on the scope's Wi-Fi" + other)
+        if was:
+            self.status.setText("scope Wi-Fi lost — scope off or out of range")
+        # auto-join: look for the scope's network every few seconds and join when it appears
+        if self.autojoin.isChecked() and self.target_ssid() and time.time() - self.last_join_try > 6:
+            self.last_join_try = time.time()
+            ssid, iface = self.target_ssid(), self.iface
+            self.wifi_op(lambda: ssid in dict(wifi.scan(iface, "auto")), self.on_autojoin_scan)
+
+    def on_autojoin_scan(self, visible):
+        if visible:
+            self.join(self.target_ssid())
+
+    def join(self, ssid):
+        self.wifi_label.setText(f"joining {ssid}…")
+        iface = self.iface
+        self.wifi_op(lambda: wifi.connect(iface, ssid), self.on_join_result)
+
+    def on_join_result(self, result):
+        ok, msg = result
+        self.status.setText(msg)
+        self.poll_wifi()  # picks up the new state and starts the video
+
+    def toggle_wifi(self):
+        if self.on_scope_wifi:
+            self.autojoin.setChecked(False)  # otherwise it would rejoin straight away
+            self.scope.stop()
+            iface = self.iface
+            self.wifi_op(lambda: wifi.disconnect(iface), lambda r: (self.status.setText(r[1]), self.poll_wifi()))
+        elif self.target_ssid():
+            self.join(self.target_ssid())
+        else:
+            self.status.setText("no scope network selected — press Scan with the scope switched on")
+
+    def scan_wifi(self, rescan):
+        self.scan_btn.setEnabled(False)
+        iface = self.iface
+        self.bg.run(lambda: wifi.scan(iface, rescan), self.on_scan)  # scans may overlap a status poll
+
+    def on_scan(self, nets):
+        self.scan_btn.setEnabled(True)
+        current = self.target_ssid()
+        names = [n for n, _ in nets]
+        for n in names:
+            if self.net_box.findText(n) < 0:
+                self.net_box.addItem(n)
+        if not current and names:
+            self.net_box.setCurrentText(names[0])
+        if nets:
+            self.status.setText("in range: " + ", ".join(f"{n} ({sig}%)" for n, sig in nets))
+        else:
+            self.status.setText("no scope networks in range — is the scope on?")
+
+    def on_iface_changed(self, iface):
+        if iface and iface != self.iface:
+            self.scope.stop()
+            self.iface, self.on_scope_wifi = iface, False
+            self.poll_wifi()
 
     def assert_light(self, level=None):
         """Send the light level (default: the viewer's current one), commit it, then read it back."""
@@ -479,7 +613,8 @@ class Viewer(QWidget):
         with open(STATE_FILE, "w") as f:
             json.dump({"light": self.light_level, "light_before_off": self.light_before_off,
                        "offset": self.offset.value(), "autorotate": self.autorot.isChecked(),
-                       "scope": self.board}, f)
+                       "scope": self.board, "iface": self.iface, "ssid": self.target_ssid(),
+                       "autojoin": self.autojoin.isChecked()}, f)
 
     def closeEvent(self, e):
         self.save_state()

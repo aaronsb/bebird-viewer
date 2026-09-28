@@ -7,6 +7,7 @@ A small Linux viewer for **Bebird "ES" Wi-Fi otoscope / ear cameras** that doesn
 - Auto-rotate from the scope's built-in motion sensor, with a manual trim
 - Snapshots (as displayed, with date, roll, light and battery in the EXIF metadata) and recordings (raw stream, `.mkv`)
 - Battery level and charging state
+- Wi-Fi handling: finds the scope's network, joins it without taking over your normal networking, and rejoins and restarts video when the scope comes back after a power cycle
 
 > Not affiliated with or endorsed by Bebird. The protocol below was worked out for interoperability by observing the device on the network and by studying how the official Android app talks to it. No vendor code or firmware is included in this repository.
 
@@ -19,30 +20,38 @@ Tested with one device: model `ES`, firmware `4.0.24.997`, SoC Beken BK7231U. Ot
 - Linux (the tools use a Linux ioctl to find the Wi-Fi interface address)
 - Python 3.10+ with **PyQt6** and **Pillow** (`pip install PyQt6 Pillow` or your distro's packages)
 - **ffmpeg** for recording (optional); `ffplay` for `grab.py --live` (optional)
-- A Wi-Fi interface you can dedicate to the scope while viewing
+- **NetworkManager** (`nmcli`) for the built-in Wi-Fi controls. Without it, join the scope's network yourself.
+- A Wi-Fi interface you can dedicate to the scope while viewing. If your only internet connection is Wi-Fi on the same card, you'll be offline while connected to the scope.
 
 ## Setup
 
 The scope is an **open access point** named `bebird-ES-XXXXXX` that gives out addresses in `192.168.5.0/24`; the camera is `192.168.5.1`.
 
-If your machine also has a wired connection, join the scope's Wi-Fi *without* letting it take over your default route, so the rest of your networking stays on the wired side. With NetworkManager:
+The viewer handles joining it. Pick the network in the **Wi-Fi** row and press **Connect**. The first time, it creates a NetworkManager connection for that network that
+- never becomes the default route,
+- has IPv6 turned off,
+- doesn't autoconnect on its own,
 
-```sh
-nmcli con add type wifi ifname wlan0 con-name bebird ssid bebird-ES-XXXXXX \
-    ipv4.never-default yes ipv6.method disabled
-nmcli con up bebird
-```
+so a wired link or another network keeps carrying your normal traffic. With **Auto-join** on (the default), the viewer rejoins the scope's network whenever it reappears, for example after the scope switches itself off and you power it back on, and restarts the video.
 
-Tell the tools which interface that is if it isn't `wlan0`:
+The Wi-Fi interface is picked automatically: the one you last used, else the first Wi-Fi device NetworkManager knows. To force one, set `BEBIRD_IFACE`, which also applies to the command-line tools:
 
 ```sh
 export BEBIRD_IFACE=wlp10s0
 ```
 
+To join by hand instead, for example without NetworkManager's GUI rights, use the equivalent command:
+
+```sh
+nmcli con add type wifi ifname wlan0 con-name bebird-ES-XXXXXX ssid bebird-ES-XXXXXX \
+    ipv4.never-default yes ipv6.method disabled connection.autoconnect no
+nmcli con up bebird-ES-XXXXXX
+```
+
 If you run a host firewall that drops inbound UDP (for example ufw's default), allow the scope's subnet on that interface:
 
 ```sh
-sudo ufw allow in on "$BEBIRD_IFACE" from 192.168.5.0/24
+sudo ufw allow in on wlan0 from 192.168.5.0/24   # your Wi-Fi interface
 ```
 
 Every socket binds to the Wi-Fi interface's address, so nothing meant for the scope can leak onto another network that happens to also use `192.168.5.1`.
@@ -50,7 +59,7 @@ Every socket binds to the Wi-Fi interface's address, so nothing meant for the sc
 ## Usage
 
 ```sh
-./live.sh                          # the viewer (brings up the "bebird" connection if needed)
+./live.sh                          # the viewer
 ./grab.py 10 --out frames          # save 10 s of JPEG frames
 ./grab.py --live | ffplay -f mjpeg -i -
 ./light.sh 30                      # raw light level 0-100 (0 = off); no argument reads it
@@ -68,10 +77,11 @@ Every socket binds to the Wi-Fi interface's address, so nothing meant for the sc
 | Trim | `[` `]` | manual rotation added on top, 15° steps |
 | Snapshot | `S` | saves the displayed image to `~/Pictures/bebird/`, with metadata (below) |
 | Record | `R` | records the raw stream to `~/Pictures/bebird/*.mkv` |
-| Reconnect | — | restart the session, e.g. after power-cycling the scope |
+| Reconnect | — | restart the video session |
+| Wi-Fi row | — | interface, scope network, Scan, Connect/Disconnect, Auto-join |
 | | `F` / `Esc` / `Q` | fullscreen / leave fullscreen / quit |
 
-Light level, trim and auto-rotate are remembered in `~/.config/bebird/state.json`. On connect, the viewer waits for video, then re-applies the saved light level so the scope's state matches the UI.
+Light level, trim, auto-rotate, the Wi-Fi interface and network, and Auto-join are remembered in `~/.config/bebird/state.json`. On connect, the viewer waits for video, then re-applies the saved light level so the scope's state matches the UI.
 
 `BEBIRD_DEBUG=1 ./live.sh` prints per-second packet and frame counts.
 

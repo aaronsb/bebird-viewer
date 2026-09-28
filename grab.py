@@ -9,7 +9,10 @@ Same protocol handling as viewer.py: one START, battery poll as keepalive, STOP 
 """
 import argparse, os, signal, socket, sys, time
 
-IFACE = os.environ.get("BEBIRD_IFACE", "wlan0")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wifi import default_iface  # noqa: E402
+
+IFACE = default_iface()  # BEBIRD_IFACE, else the first Wi-Fi device
 CAM = "192.168.5.1"
 VIDEO_CLIENT_PORT = 58081  # fixed, so a restart reuses the scope's client slot
 START, STOP, BATTERY = b"\x20\x36", b"\x20\x37", b"\x66\x3a"
