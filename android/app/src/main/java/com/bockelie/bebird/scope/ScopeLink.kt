@@ -25,6 +25,9 @@ interface ScopeLink {
      */
     fun receive(buf: ByteArray): Int
 
+    /** The sender's IP address of the datagram the last [receive] returned. */
+    val lastSource: String?
+
     fun close()
 }
 
@@ -69,6 +72,7 @@ class NetworkLinks(private val network: Network) : LinkFactory {
         private val packet = DatagramPacket(ByteArray(0), 0)
         override val localPort get() = s.localPort
         override val isClosed get() = s.isClosed
+        override val lastSource: String? get() = packet.address?.hostAddress
 
         override fun send(data: ByteArray) = s.send(DatagramPacket(data, data.size))
 

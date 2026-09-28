@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.SystemClock
 import android.util.Log
+import com.bockelie.bebird.devices.WifiIds
 import com.bockelie.bebird.proto.Beacon
 import com.bockelie.bebird.proto.FrameAssembler
 import com.bockelie.bebird.proto.Protocol
@@ -210,18 +211,32 @@ class ScopeSession(
         }
     }
 
-    /** Until the first beacon: that is all the session needs from it. */
+    /**
+     * Until the first usable beacon: that is all the session needs from it. The scope's network
+     * is open, so anyone on it can broadcast to 58099; only the camera's own beacons count, and
+     * only with a scope SSID and a valid MAC.
+     */
     private fun CoroutineScope.receiveBeacon(b: ScopeLink) {
         val buf = ByteArray(2048)
+        var ignored = 0
         while (isActive) {
             val n = receive(b, buf) ?: return
             if (n < 0) continue
-            val beacon = Beacon.parse(buf, n) ?: continue
+            val beacon = Beacon.parse(buf, n)?.takeIf { b.lastSource == Protocol.CAMERA_HOST && usable(it) }
+            if (beacon == null) {
+                if (ignored++ < 3) Log.w(TAG, "ignoring datagram on :${Protocol.BEACON_PORT} from ${b.lastSource}")
+                continue
+            }
             Log.i(TAG, "beacon: ssid=${beacon.ssid} mac=${beacon.mac} model=${beacon.model}")
             _stats.update { it.copy(beacon = beacon) }
             b.close()
             return
         }
+    }
+
+    private fun usable(b: Beacon): Boolean {
+        val ssid = WifiIds.ssid(b.ssid)
+        return ssid != null && WifiIds.isScope(ssid) && WifiIds.bssid(b.mac) != null
     }
 
     private fun CoroutineScope.receiveCommands(c: ScopeLink) {

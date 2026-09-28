@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import java.util.concurrent.Future
@@ -62,7 +64,9 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
             }
         }
         scope.launch {
-            combine(wifi.state, wifi.identity, _stats) { state, id, stats -> Triple(state, id, stats.beacon) }
+            // Stats change with every frame; only its beacon matters here.
+            val beacons = _stats.map { it.beacon }.distinctUntilChanged()
+            combine(wifi.state, wifi.identity, beacons) { state, id, beacon -> Triple(state, id, beacon) }
                 .collect { (state, id, beacon) ->
                     if (state is ScopeWifi.State.Available) remember(state.target, id, beacon) else remembered = null
                 }
@@ -109,12 +113,12 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
             wifiSsid = id?.ssid, wifiBssid = id?.bssid,
             beaconSsid = beacon?.ssid, beaconMac = beacon?.mac,
         ) ?: return
-        if (result.ssid == remembered?.ssid && result.bssid == remembered?.bssid) return
+        if (result == remembered) return
         remembered = result
         Log.i(TAG, "remembering ${result.ssid} (from ${result.ssidFrom}), bssid ${result.bssid ?: "unknown"}" +
-            (result.bssidFrom?.let { " (from $it)" } ?: "") +
+            (result.bssidFrom?.let { " (from $it, ${if (result.bssidConfirmed) "confirmed" else "unconfirmed"})" } ?: "") +
             "; wifi info ${id?.ssid}/${id?.bssid}, beacon ${beacon?.ssid}/${beacon?.mac}")
-        edit { it.seen(result.ssid, result.bssid, System.currentTimeMillis()) }
+        edit { it.seen(result.ssid, result.bssid, System.currentTimeMillis(), result.bssidConfirmed) }
     }
 
     private fun startSession(state: ScopeWifi.State.Available) {

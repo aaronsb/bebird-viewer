@@ -22,7 +22,9 @@ class ScopeSessionTest {
     private data class Sent(val link: Int, val localPort: Int, val remotePort: Int, val bytes: List<Byte>)
 
     private class FakeLink(val id: Int, override val localPort: Int, val remotePort: Int, private val log: MutableList<Sent>) : ScopeLink {
-        val incoming = LinkedBlockingQueue<Any>()  // ByteArray, or an IOException to throw
+        // ByteArray (from the camera), Pair<ByteArray, String> (bytes, sender), or an IOException to throw
+        val incoming = LinkedBlockingQueue<Any>()
+        @Volatile override var lastSource: String? = null
         @Volatile var sendDelayMs = 0L
         @Volatile override var isClosed = false
 
@@ -37,7 +39,8 @@ class ScopeSessionTest {
             return when (val x = incoming.poll(20, TimeUnit.MILLISECONDS)) {
                 null -> -1
                 is IOException -> throw x
-                else -> (x as ByteArray).let { it.copyInto(buf); it.size }
+                is Pair<*, *> -> (x.first as ByteArray).let { lastSource = x.second as String; it.copyInto(buf); it.size }
+                else -> (x as ByteArray).let { lastSource = Protocol.CAMERA_HOST; it.copyInto(buf); it.size }
             }
         }
 
@@ -204,16 +207,44 @@ class ScopeSessionTest {
         s.stop().get(1, TimeUnit.SECONDS)
     }
 
-    @Test fun theFirstBeaconNamesTheScope() {
+    private fun beaconJson(ssid: String?, mac: String?) = buildString {
+        append("""{"brand":"bebird","model":"ES"""")
+        mac?.let { append(""","mac":"$it"""") }
+        ssid?.let { append(""","ssid":"$it"""") }
+        append("}")
+    }.toByteArray()
+
+    @Test fun theFirstGoodBeaconNamesTheScope() {
         val s = session()
         s.start()
         await("START") { starts() == 1 }
         val beacon = synchronized(opened) { opened.single { it.localPort == Protocol.BEACON_PORT } }
-        beacon.incoming.put("""{"brand":"bebird","model":"ES","mac":"aa:bb:cc:00:11:22","ssid":"bebird-ES-123456"}""".toByteArray())
+        beacon.incoming.put(beaconJson("bebird-ES-123456", "aa:bb:cc:00:11:22"))
         await("beacon") { s.stats.value.beacon != null }
         assertEquals("bebird-ES-123456", s.stats.value.beacon?.ssid)
         assertEquals("aa:bb:cc:00:11:22", s.stats.value.beacon?.mac)
         await("beacon link closed after the first one") { beacon.isClosed }
+        s.stop().get(1, TimeUnit.SECONDS)
+    }
+
+    @Test fun badBeaconsAreIgnored() {
+        val s = session()
+        s.start()
+        await("START") { starts() == 1 }
+        val beacon = synchronized(opened) { opened.single { it.localPort == Protocol.BEACON_PORT } }
+        val good = beaconJson("bebird-ES-123456", "aa:bb:cc:00:11:22")
+        beacon.incoming.put(good to "192.168.5.100")                           // another phone on the open AP
+        beacon.incoming.put(beaconJson("bebird-" + "x".repeat(30), "aa:bb:cc:00:11:22"))  // SSID over 32 bytes
+        beacon.incoming.put(beaconJson("HomeWifi", "aa:bb:cc:00:11:22"))      // not a scope
+        beacon.incoming.put(beaconJson("bebird-ES-123456", null))             // no MAC
+        beacon.incoming.put(beaconJson("bebird-ES-123456", "…"))              // invalid MAC
+        beacon.incoming.put(beaconJson(null, "aa:bb:cc:00:11:22"))            // no SSID
+        Thread.sleep(200)
+        assertEquals(null, s.stats.value.beacon)
+        assertTrue(!beacon.isClosed)  // still listening
+        beacon.incoming.put(good)
+        await("the good beacon") { s.stats.value.beacon != null }
+        assertEquals("bebird-ES-123456", s.stats.value.beacon?.ssid)
         s.stop().get(1, TimeUnit.SECONDS)
     }
 

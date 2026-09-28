@@ -31,6 +31,30 @@ class IdentifyTest {
         assertEquals(Identify.Result("bebird-A", null, "wifi info", null), Identify.resolve(wifiSsid = "bebird-A"))
     }
 
+    @Test fun beaconSsidMustBeAScope() {
+        assertNull(Identify.resolve(beaconSsid = "HomeWifi", beaconMac = "cc:cc:cc:cc:cc:cc"))
+        assertNull(Identify.resolve(beaconSsid = "bebird-" + "x".repeat(30), beaconMac = "cc:cc:cc:cc:cc:cc"))
+    }
+
+    @Test fun wifiInfoSsidMustBeAScope() {
+        // the picker only offered bebird*, so anything else is not what we joined
+        assertNull(Identify.resolve(wifiSsid = "\"HomeWifi\""))
+    }
+
+    @Test fun beaconMacOnlyWhenItsSsidIsTheResolvedOne() {
+        val r = Identify.resolve(exactSsid = "bebird-A", beaconSsid = "bebird-B", beaconMac = "cc:cc:cc:cc:cc:cc")
+        assertEquals(Identify.Result("bebird-A", null, "request", null), r)
+        val same = Identify.resolve(exactSsid = "bebird-A", beaconSsid = "bebird-A", beaconMac = "cc:cc:cc:cc:cc:cc")
+        assertEquals("CC:CC:CC:CC:CC:CC", same?.bssid)
+        assertEquals(false, same?.bssidConfirmed)
+    }
+
+    @Test fun confirmedUnlessFromTheBeacon() {
+        assertEquals(true, Identify.resolve(exactSsid = "bebird-A", exactBssid = "aa:aa:aa:aa:aa:aa")?.bssidConfirmed)
+        assertEquals(true, Identify.resolve(wifiSsid = "bebird-A", wifiBssid = "aa:aa:aa:aa:aa:aa")?.bssidConfirmed)
+        assertEquals(false, Identify.resolve(exactSsid = "bebird-A")?.bssidConfirmed)
+    }
+
     @Test fun nothingKnownIsNull() {
         assertNull(Identify.resolve(wifiSsid = WifiIds.REDACTED_SSID, beaconMac = "cc:cc:cc:cc:cc:cc"))
     }

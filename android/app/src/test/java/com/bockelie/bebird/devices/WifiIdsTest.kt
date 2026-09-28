@@ -14,6 +14,9 @@ class WifiIdsTest {
         assertNull(WifiIds.ssid(WifiIds.REDACTED_SSID))
         assertNull(WifiIds.ssid("\"\""))
         assertNull(WifiIds.ssid(null))
+        assertEquals("x".repeat(32), WifiIds.ssid("x".repeat(32)))
+        assertNull(WifiIds.ssid("x".repeat(33)))
+        assertNull(WifiIds.ssid("é".repeat(17)))  // 17 characters, 34 UTF-8 bytes
     }
 
     @Test fun bssid() {

@@ -10,10 +10,13 @@ object WifiIds {
 
     private val MAC = Regex("^[0-9A-Fa-f]{2}([:-]?[0-9A-Fa-f]{2}){5}$")
 
-    /** A usable SSID: quotes stripped, null if blank or redacted. */
+    /** 802.11 limit; WifiNetworkSpecifier.Builder.setSsid throws beyond it. */
+    const val MAX_SSID_BYTES = 32
+
+    /** A usable SSID: quotes stripped; null if blank, redacted or longer than 32 UTF-8 bytes. */
     fun ssid(raw: String?): String? {
         val s = raw?.trim()?.removeSurrounding("\"") ?: return null
-        return s.takeUnless { it.isEmpty() || it == REDACTED_SSID }
+        return s.takeUnless { it.isEmpty() || it == REDACTED_SSID || it.toByteArray(Charsets.UTF_8).size > MAX_SSID_BYTES }
     }
 
     /** A usable BSSID as upper-case "AA:BB:CC:DD:EE:FF"; null if missing, malformed, redacted or all zero. */

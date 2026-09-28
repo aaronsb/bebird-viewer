@@ -71,22 +71,29 @@ class ScopeWifi(context: Context) {
 
     /** File the network request for [target]. Does nothing while a request is already filed. */
     fun start(target: Target) {
-        val specifier = WifiNetworkSpecifier.Builder().apply {
-            when (target) {
-                // PatternMatcher has no case-insensitive mode, so unlike wifi.py (which
-                // lowercases) a network named "Bebird..." would not match.
-                Target.AnyScope -> setSsidPattern(PatternMatcher(SSID_PREFIX, PatternMatcher.PATTERN_PREFIX))
-                is Target.Exact -> {
-                    setSsid(target.ssid)
-                    target.bssid?.let { setBssid(MacAddress.fromString(it)) }
+        // Built inside a try: a bad stored SSID or BSSID must fail this request, not the app.
+        val request = try {
+            val specifier = WifiNetworkSpecifier.Builder().apply {
+                when (target) {
+                    // PatternMatcher has no case-insensitive mode, so unlike wifi.py (which
+                    // lowercases) a network named "Bebird..." would not match.
+                    Target.AnyScope -> setSsidPattern(PatternMatcher(SSID_PREFIX, PatternMatcher.PATTERN_PREFIX))
+                    is Target.Exact -> {
+                        setSsid(target.ssid)
+                        target.bssid?.let { setBssid(MacAddress.fromString(it)) }
+                    }
                 }
-            }
-        }.build()
-        val request = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)  // the scope has none
-            .setNetworkSpecifier(specifier)
-            .build()
+            }.build()
+            NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)  // the scope has none
+                .setNetworkSpecifier(specifier)
+                .build()
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "invalid network $target", e)
+            synchronized(lock) { if (current == null) _state.value = State.Failed("invalid network: ${e.message}") }
+            return
+        }
         val kind = when (target) {
             Target.AnyScope -> "prefix \"$SSID_PREFIX\" (picker expected)"
             is Target.Exact -> if (target.bssid != null) "exact ssid=${target.ssid} bssid=${target.bssid}"
