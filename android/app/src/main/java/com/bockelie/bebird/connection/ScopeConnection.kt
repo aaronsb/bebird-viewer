@@ -61,7 +61,7 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
                     is ScopeWifi.State.Available -> startSession(state)
                     is ScopeWifi.State.Unavailable -> {
                         stopSession()
-                        exactFailed(state.target)
+                        fallBack(state.target)
                     }
                     else -> stopSession()
                 }
@@ -113,20 +113,16 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
     }
 
     /**
-     * An exact request with a BSSID found nothing. If that BSSID was only derived from the
-     * beacon, drop it from the device. Either way ask once more by SSID alone, which Android
-     * may show its picker for; a request without a BSSID has no fallback, so this never loops.
+     * An exact request with a BSSID found nothing: the BSSID is wrong, or the scope is off, or
+     * the user cancelled. Ask once more by SSID alone (Android may show its picker). Only if
+     * that joins is the BSSID known to be wrong (see [remember]); if it also finds nothing,
+     * the BSSID is kept for next time. A request without a BSSID has no fallback, so this
+     * never loops.
      */
-    private fun exactFailed(target: Target) {
-        val exact = target as? Target.Exact ?: return
-        val fallback = target.fallback() ?: return
-        val bssid = exact.bssid!!
-        val derived = _book.value.devices.any { it.bssid == bssid && !it.bssidConfirmed }
-        Log.w(TAG, "exact request ssid=${exact.ssid} bssid=$bssid found nothing; " +
-            (if (derived) "dropping that derived BSSID; " else "keeping that confirmed BSSID; ") +
-            "retrying by SSID only (a picker here means the BSSID was wrong or the scope is off)")
-        edit { it.exactFailed(bssid, bssid) }
-        request(fallback, "fallback after bssid $bssid found nothing")
+    private fun fallBack(target: Target) {
+        val fallback = BssidFallback.afterUnavailable(target) ?: return
+        Log.w(TAG, "exact request ssid=${fallback.ssid} bssid=${fallback.suspect} found nothing; retrying by SSID only")
+        request(fallback, "fallback after bssid ${fallback.suspect} found nothing")
     }
 
     private fun edit(change: (DeviceBook) -> DeviceBook) {
@@ -136,6 +132,11 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
 
     private fun remember(target: Target, id: ScopeWifi.Identity?, beacon: Beacon?) {
         val exact = target as? Target.Exact
+        if (exact?.suspect != null && BssidFallback.afterJoin(_book.value, target) != _book.value) {
+            // The fallback joined, so the scope was there and that BSSID was wrong.
+            Log.w(TAG, "joined ${exact.ssid} by SSID after bssid ${exact.suspect} found nothing: rejecting that derived BSSID")
+            edit { BssidFallback.afterJoin(it, target) }
+        }
         val result = Identify.resolve(
             exactSsid = exact?.ssid, exactBssid = exact?.bssid,
             wifiSsid = id?.ssid, wifiBssid = id?.bssid,

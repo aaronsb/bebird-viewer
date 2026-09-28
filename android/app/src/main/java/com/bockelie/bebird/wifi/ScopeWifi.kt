@@ -51,10 +51,15 @@ class ScopeWifi(context: Context) {
          * This exact access point. With a BSSID, Android remembers the user's approval and joins
          * without the picker from the second time on; with only an SSID it still asks.
          */
-        data class Exact(val ssid: String, val bssid: String?) : Target
+        data class Exact(
+            val ssid: String,
+            val bssid: String?,
+            /** On a fallback: the BSSID that found nothing. If this joins, that BSSID was wrong. */
+            val suspect: String? = null,
+        ) : Target
 
         /** What to ask for when this found nothing: the SSID alone, once; null if nothing is left. */
-        fun fallback(): Target? = (this as? Exact)?.takeIf { it.bssid != null }?.copy(bssid = null)
+        fun fallback(): Target? = (this as? Exact)?.takeIf { it.bssid != null }?.let { Exact(it.ssid, null, suspect = it.bssid) }
     }
 
     /** The connected network as Android reports it; either field is null when redacted. */

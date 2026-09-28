@@ -10,7 +10,8 @@ class TargetTest {
     @Test fun anExactRequestWithABssidFallsBackToTheSsidOnce() {
         val first = Target.Exact("bebird-ES-1", "12:34:56:78:9A:9F")
         val second = first.fallback()
-        assertEquals(Target.Exact("bebird-ES-1", null), second)
+        // it carries the BSSID under test, to be rejected only if this SSID-only request joins
+        assertEquals(Target.Exact("bebird-ES-1", null, suspect = "12:34:56:78:9A:9F"), second)
         assertNull(second?.fallback())  // no third try: the fallback can't loop
     }
 

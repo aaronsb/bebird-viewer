@@ -73,12 +73,14 @@ data class DeviceBook(val devices: List<KnownDevice> = emptyList(), val lastKey:
     }
 
     /**
-     * An exact request for [key]'s [bssid] found nothing. An unconfirmed (derived) BSSID is
-     * dropped and remembered as rejected, so the next request names the SSID only. A confirmed
-     * one is kept: the scope is more likely off than moved.
+     * The scope was joined by SSID right after an exact request for [bssid] found nothing, so
+     * that BSSID is wrong. If it is only derived (unconfirmed), drop it and remember it as
+     * rejected, so it isn't adopted again and the next request names the SSID only. A
+     * confirmed BSSID is kept: Android itself reported it once.
      */
-    fun exactFailed(key: String, bssid: String): DeviceBook {
-        val d = devices.firstOrNull { it.key == key && it.bssid == bssid && !it.bssidConfirmed } ?: return this
+    fun disprove(bssid: String): DeviceBook {
+        val d = devices.firstOrNull { it.bssid == bssid && !it.bssidConfirmed } ?: return this
+        val key = d.key
         val updated = d.copy(bssid = null, rejectedBssid = bssid)
         val rest = devices.filter { it !== d && it.key != updated.key }
         return DeviceBook(rest + updated, if (lastKey == key) updated.key else lastKey)

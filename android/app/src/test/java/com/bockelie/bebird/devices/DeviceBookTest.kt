@@ -78,8 +78,8 @@ class DeviceBookTest {
         assertEquals(book, DeviceBook.decode(book.encode()))
     }
 
-    @Test fun aFailedDerivedBssidIsDroppedAndNotAdoptedAgain() {
-        val book = DeviceBook().seen("bebird-1", a, 100).rename(a, "mine").exactFailed(a, a)
+    @Test fun aDisprovedDerivedBssidIsDroppedAndNotAdoptedAgain() {
+        val book = DeviceBook().seen("bebird-1", a, 100).rename(a, "mine").disprove(a)
         assertEquals(KnownDevice("bebird-1", null, "mine", 100, rejectedBssid = a), book.devices.single())
         assertEquals("ssid:bebird-1", book.lastKey)  // Connect now asks by SSID alone
         // the next join (by SSID, picker) derives the same value again: it is not taken
@@ -90,9 +90,9 @@ class DeviceBookTest {
         assertEquals(KnownDevice("bebird-1", a, "mine", 300, bssidConfirmed = true), confirmed.devices.single())
     }
 
-    @Test fun aFailedConfirmedBssidIsKept() {
+    @Test fun aConfirmedBssidIsNeverDisproved() {
         val book = DeviceBook().seen("bebird-1", a, 100, confirmed = true)
-        assertEquals(book, book.exactFailed(a, a))
+        assertEquals(book, book.disprove(a))
     }
 
     @Test fun select() {
