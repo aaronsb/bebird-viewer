@@ -137,32 +137,37 @@ class BandRenderer(private val font: GlyphSource) {
     }
 
     /**
-     * Saved output: the (already rotated) [frame], optionally with a hair-thin [circle] at the
-     * image circle's edge, and with the [band] below it, so the result is frame.width wide and
-     * frame.height + band height tall. With both off, the frame itself is returned. The
-     * frame's pixels are copied as they are; only the circle, if on, changes any of them.
+     * Saved output with the overlay: the (already rotated) [frame] with a hair-thin circle at
+     * the image circle's edge, the pixels outside that circle filled with the band's background
+     * (so image and band read as one panel), and the band below, making the result
+     * frame.width wide and frame.height + band height tall. Pixels inside the circle are copied
+     * unchanged. With the overlay off, the frame itself is returned.
      */
-    fun compose(frame: PixelImage, d: BandData, band: Boolean, circle: Boolean): PixelImage {
-        if (!band && !circle) return frame
+    fun compose(frame: PixelImage, d: BandData, overlay: Boolean): PixelImage {
+        if (!overlay) return frame
         val w = frame.width
-        val bandImage = if (band) render(d, w) else null
-        val h = frame.height + (bandImage?.height ?: 0)
-        val out = IntArray(w * h)
+        val band = render(d, w)
+        val out = IntArray(w * (frame.height + band.height))
         frame.pixels.copyInto(out)
-        if (circle) drawCircle(out, w, frame.height)
-        bandImage?.pixels?.copyInto(out, frame.width * frame.height)
-        return PixelImage(w, h, out)
+        frameCircle(out, w, frame.height)
+        band.pixels.copyInto(out, w * frame.height)
+        return PixelImage(w, frame.height + band.height, out)
     }
 
-    /** A 1-pixel circle inscribed in the w × h frame area of [px]. */
-    private fun drawCircle(px: IntArray, w: Int, h: Int) {
+    /**
+     * In the w × h frame area of [px]: a ring about one pixel thin on the inscribed circle (pixel
+     * centres within half a pixel of its radius), and the band's background outside it.
+     */
+    private fun frameCircle(px: IntArray, w: Int, h: Int) {
         val cx = (w - 1) / 2.0
         val cy = (h - 1) / 2.0
         val r = minOf(w, h) / 2.0 - 0.5
-        // Pixels whose centres lie within half a pixel of the radius: a ring about one pixel thin.
         for (y in 0 until h) for (x in 0 until w) {
-            val d = Math.hypot(x - cx, y - cy)
-            if (kotlin.math.abs(d - r) < 0.5) px[y * w + x] = CIRCLE
+            val d = Math.hypot(x - cx, y - cy) - r
+            when {
+                d >= 0.5 -> px[y * w + x] = BACKGROUND
+                d > -0.5 -> px[y * w + x] = CIRCLE
+            }
         }
     }
 

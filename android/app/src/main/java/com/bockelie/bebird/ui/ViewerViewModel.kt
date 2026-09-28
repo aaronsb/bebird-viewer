@@ -33,10 +33,8 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     private val _theme = MutableStateFlow(settings.theme)
     val theme: StateFlow<ThemeMode> = _theme.asStateFlow()
 
-    private val _band = MutableStateFlow(settings.band)
-    val band: StateFlow<Boolean> = _band.asStateFlow()
-    private val _circle = MutableStateFlow(settings.circle)
-    val circle: StateFlow<Boolean> = _circle.asStateFlow()
+    private val _overlay = MutableStateFlow(settings.overlay)
+    val overlay: StateFlow<Boolean> = _overlay.asStateFlow()
     private val _label = MutableStateFlow(settings.label)
     val label: StateFlow<String> = _label.asStateFlow()
 
@@ -54,14 +52,9 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setBand(on: Boolean) {
-        settings.band = on
-        _band.value = on
-    }
-
-    fun setCircle(on: Boolean) {
-        settings.circle = on
-        _circle.value = on
+    fun setOverlay(on: Boolean) {
+        settings.overlay = on
+        _overlay.value = on
     }
 
     /** A blank label clears it. */

@@ -92,7 +92,7 @@ private fun bandDescription(d: BandData): String {
             },
             d.device?.let { res.getString(R.string.band_device, it) },
             d.time?.let { res.getString(R.string.band_time, it.hour, it.minute) },
-            d.label?.let { res.getString(R.string.band_name, it) },
+            d.label?.let { res.getString(R.string.band_label, it) },
         ).joinToString("; ")
     }
 }

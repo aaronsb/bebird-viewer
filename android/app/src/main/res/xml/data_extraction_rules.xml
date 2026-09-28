@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Nothing leaves the phone: no cloud backup and no device-to-device transfer of the app's
-     settings (which can hold a person's name) or remembered scopes. -->
+     settings (which can hold a label, e.g. a name) or remembered scopes. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="root" />

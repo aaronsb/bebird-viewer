@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -40,20 +39,15 @@ import com.bockelie.bebird.settings.Labels
 import com.bockelie.bebird.settings.ThemeMode
 
 /**
- * The gear menu: status band and circle outline, the name/label, and the theme. It takes
- * values and callbacks only, so it can be previewed and extended (e.g. power-off, #19).
+ * The gear menu: the overlay (status band and circle) and the theme. It takes values and
+ * callbacks only, so it can be previewed and extended (e.g. power-off, #19).
  */
 @Composable
 fun SettingsMenu(
     theme: ThemeMode,
     onTheme: (ThemeMode) -> Unit,
-    band: Boolean,
-    onBand: (Boolean) -> Unit,
-    circle: Boolean,
-    onCircle: (Boolean) -> Unit,
-    label: String,
-    onEditLabel: () -> Unit,
-    onClearLabel: () -> Unit,
+    overlay: Boolean,
+    onOverlay: (Boolean) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -61,20 +55,7 @@ fun SettingsMenu(
             Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            CheckItem(stringResource(R.string.status_band), band) { onBand(!band) }
-            CheckItem(stringResource(R.string.circle_outline), circle) { onCircle(!circle) }
-            DropdownMenuItem(
-                text = { Text(if (label.isEmpty()) stringResource(R.string.label_set) else stringResource(R.string.label_edit, label)) },
-                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                onClick = { open = false; onEditLabel() },
-            )
-            if (label.isNotEmpty()) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.label_clear)) },
-                    leadingIcon = { Icon(Icons.Default.Clear, contentDescription = null) },
-                    onClick = onClearLabel,
-                )
-            }
+            CheckItem(stringResource(R.string.overlay), overlay) { onOverlay(!overlay) }
             HorizontalDivider()
             Text(
                 stringResource(R.string.theme), style = MaterialTheme.typography.labelMedium,
@@ -114,7 +95,7 @@ private fun CheckItem(text: String, checked: Boolean, onClick: () -> Unit) {
     )
 }
 
-/** The free-text name/label: typed once, kept until changed or cleared. */
+/** The free-text label: typed once, kept until changed or cleared. */
 @Composable
 fun LabelDialog(current: String, onDone: (String) -> Unit, onCancel: () -> Unit) {
     var text by remember { mutableStateOf(current) }
@@ -128,7 +109,7 @@ fun LabelDialog(current: String, onDone: (String) -> Unit, onCancel: () -> Unit)
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                 label = { Text(stringResource(R.string.label_field)) },
-                // It may be a person's name: say plainly where it goes.
+                // It may identify someone: say plainly where it goes.
                 supportingText = { Text(stringResource(R.string.label_privacy)) },
                 trailingIcon = {
                     if (text.isNotEmpty()) {

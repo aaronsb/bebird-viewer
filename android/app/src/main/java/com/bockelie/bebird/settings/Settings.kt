@@ -51,15 +51,15 @@ class Settings(private val kv: KeyValue) {
     var trim: Int
         get() = kv.getInt("trim", 0).coerceIn(-180, 180)
         set(v) = kv.putInt("trim", v)
-    /** The status band under the image (and, with #15, under saved stills). */
-    var band: Boolean
+    /**
+     * The overlay: the status band under the image and a hair-thin circle at the image circle's
+     * edge, on screen and (with #15) in saved stills. Stored under its first key, "band"; an
+     * older separate "circle" setting is ignored.
+     */
+    var overlay: Boolean
         get() = kv.getBoolean("band", true)
         set(v) = kv.putBoolean("band", v)
-    /** A hair-thin circle at the image circle's edge. */
-    var circle: Boolean
-        get() = kv.getBoolean("circle", false)
-        set(v) = kv.putBoolean("circle", v)
-    /** Free-text name/label shown in the band and saved in files; empty when cleared. */
+    /** The free-text label shown in the band and saved in files; empty when cleared. */
     var label: String
         get() = Labels.limit(kv.getString("label", ""))
         set(v) = kv.putString("label", Labels.limit(v.trim()))

@@ -107,7 +107,7 @@ class BandTest {
 
     @Test fun writesAPreview() {
         // For eyeballing: build/band-preview.ppm, the band at 1x and 2x under a grey frame.
-        val out = renderer.compose(PixelImage(480, 120, IntArray(480 * 120) { 0xFF404040.toInt() }), full.copy(label = "Жанна 山田 left ear", fps = 11, droppedPerSecond = 3), band = true, circle = false)
+        val out = renderer.compose(PixelImage(480, 480, IntArray(480 * 480) { 0xFF404040.toInt() }), full.copy(label = "Жанна 山田 left ear", fps = 11, droppedPerSecond = 3), overlay = true)
         val f = java.io.File("build/band-preview.ppm")
         f.outputStream().buffered().use { o ->
             o.write("P6 ${out.width} ${out.height} 255\n".toByteArray())
@@ -149,32 +149,45 @@ class BandTest {
         assertNotEquals(a.pixels.toList(), b.pixels.toList())
     }
 
-    @Test fun composingAddsExactlyTheBandBelowUntouchedImagePixels() {
+    /** Where a frame pixel falls relative to the inscribed circle's ring. */
+    private fun ringDistance(i: Int, w: Int = 480) = Math.hypot(i % w - (w - 1) / 2.0, i / w - (w - 1) / 2.0) - (w / 2.0 - 0.5)
+
+    @Test fun theOverlayAddsExactlyTheBandBelow() {
         val f = frame()
-        val out = renderer.compose(f, full, band = true, circle = false)
+        val out = renderer.compose(f, full, overlay = true)
         assertEquals(480, out.width)
         assertEquals(480 + renderer.height(480), out.height)
-        assertArrayEquals(f.pixels, out.pixels.copyOfRange(0, f.pixels.size))
         assertArrayEquals(renderer.render(full, 480).pixels, out.pixels.copyOfRange(f.pixels.size, out.pixels.size))
     }
 
-    @Test fun bothOffIsTheFrameItself() {
+    @Test fun theOverlayLeavesThePictureInsideTheCircleUntouched() {
         val f = frame()
-        assertSame(f, renderer.compose(f, full, band = false, circle = false))
+        val out = renderer.compose(f, full, overlay = true)
+        var inside = 0
+        for (i in f.pixels.indices) if (ringDistance(i) <= -0.5) {
+            assertEquals("pixel ${i % 480},${i / 480}", f.pixels[i], out.pixels[i])
+            inside++
+        }
+        assertTrue(inside > 170_000)  // about pi * 239^2
     }
 
-    @Test fun theCircleTouchesOnlyARingAtTheEdge() {
-        val f = frame()
-        val out = renderer.compose(f, full, band = false, circle = true)
-        assertEquals(f.height, out.height)
-        val changed = f.pixels.indices.filter { f.pixels[it] != out.pixels[it] }
-        assertTrue(changed.isNotEmpty())
-        for (i in changed) {
-            val d = Math.hypot(i % 480 - 239.5, i / 480 - 239.5)
-            assertTrue("pixel ${i % 480},${i / 480} at $d", kotlin.math.abs(d - 239.5) < 0.5)
-            assertEquals(BandRenderer.CIRCLE, out.pixels[i])
+    @Test fun theOverlayDrawsAThinRingAndBandColourOutside() {
+        val out = renderer.compose(frame(), full, overlay = true)
+        for (i in 0 until 480 * 480) {
+            val d = ringDistance(i)
+            when {
+                d >= 0.5 -> assertEquals(BandRenderer.BACKGROUND, out.pixels[i])
+                d > -0.5 -> assertEquals(BandRenderer.CIRCLE, out.pixels[i])
+            }
         }
-        // closed ring: every row that crosses the circle has a ring pixel on each side
-        for (y in 1 until 479) assertEquals("row $y", 2, changed.count { it / 480 == y }.coerceAtMost(2))
+        // the corners, and every row's ends, are band colour; the ring is closed in every row
+        assertEquals(BandRenderer.BACKGROUND, out.pixels[0])
+        assertEquals(BandRenderer.BACKGROUND, out.pixels[480 * 480 - 1])
+        for (y in 0 until 480) assertTrue("row $y", (0 until 480).count { out.pixels[y * 480 + it] == BandRenderer.CIRCLE } >= 2)
+    }
+
+    @Test fun overlayOffIsTheFrameItself() {
+        val f = frame()
+        assertSame(f, renderer.compose(f, full, overlay = false))
     }
 }

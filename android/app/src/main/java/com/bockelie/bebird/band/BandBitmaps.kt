@@ -38,5 +38,5 @@ fun Bitmap.toPixelImage(): PixelImage {
 }
 
 /** [BandRenderer.compose] for a Bitmap frame, for saving stills (#15). */
-fun BandRenderer.compose(frame: Bitmap, d: BandData, band: Boolean, circle: Boolean): Bitmap =
-    if (!band && !circle) frame else compose(frame.toPixelImage(), d, band, circle).toBitmap()
+fun BandRenderer.compose(frame: Bitmap, d: BandData, overlay: Boolean): Bitmap =
+    if (!overlay) frame else compose(frame.toPixelImage(), d, overlay = true).toBitmap()

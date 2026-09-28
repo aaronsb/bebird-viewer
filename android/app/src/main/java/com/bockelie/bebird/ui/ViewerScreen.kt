@@ -57,6 +57,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -139,8 +140,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
     val shownRoll by conn.shownRoll.collectAsStateWithLifecycle()
     val autoRotate by vm.autoRotate.collectAsStateWithLifecycle()
     val trim by vm.trim.collectAsStateWithLifecycle()
-    val bandOn by vm.band.collectAsStateWithLifecycle()
-    val circleOn by vm.circle.collectAsStateWithLifecycle()
+    val overlayOn by vm.overlay.collectAsStateWithLifecycle()
     val label by vm.label.collectAsStateWithLifecycle()
     val renderer by vm.bandRenderer.collectAsStateWithLifecycle()
     val online = wifi is ScopeWifi.State.Available
@@ -168,12 +168,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     Text(stringResource(if (idle) R.string.connect else R.string.disconnect))
                 }
                 val theme by vm.theme.collectAsStateWithLifecycle()
-                SettingsMenu(
-                    theme = theme, onTheme = vm::setTheme,
-                    band = bandOn, onBand = vm::setBand,
-                    circle = circleOn, onCircle = vm::setCircle,
-                    label = label, onEditLabel = { editingLabel = true }, onClearLabel = { vm.setLabel("") },
-                )
+                SettingsMenu(theme = theme, onTheme = vm::setTheme, overlay = overlayOn, onOverlay = vm::setOverlay)
             }
             Text(
                 statusLine(wifi, stats), style = MaterialTheme.typography.bodySmall,
@@ -182,13 +177,13 @@ fun ViewerScreen(vm: ViewerViewModel) {
             ZoomableCircle(
                 frame = stats.frame,
                 rotation = RollFilter.rotation(shownRoll, autoRotate, trim),
-                outline = circleOn,
+                outline = overlayOn,
                 modifier = Modifier.fillMaxWidth().weight(1f),
             )
             val device = book.last?.takeIf { online }
             StatusBandSlot(
                 renderer = renderer,
-                showBand = bandOn,
+                showBand = overlayOn,
                 data = BandData(
                     batteryPercent = stats.battery?.percent,
                     charging = stats.battery?.state == 2,
@@ -225,6 +220,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     Text(stringResource(R.string.trim_plus))
                 }
             }
+            LabelRow(label, onEdit = { editingLabel = true }, onClear = { vm.setLabel("") })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Capture comes with #15.
                 FilledTonalButton(onClick = {}, enabled = false) { Text(stringResource(R.string.snapshot)) }
@@ -444,7 +440,9 @@ private fun LightRow(light: ScopeConnection.Light, onToggle: () -> Unit, onLevel
 private fun ZoomableCircle(frame: Bitmap?, rotation: Int, outline: Boolean, modifier: Modifier) {
     var zoom by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
-    BoxWithConstraints(modifier.clipToBounds(), contentAlignment = Alignment.Center) {
+    // Outside the image circle the viewport is the band's black, not the theme's surface, so
+    // image and band read as one panel (as in saved stills with the overlay).
+    BoxWithConstraints(modifier.clipToBounds().background(Color(BandRenderer.BACKGROUND)), contentAlignment = Alignment.Center) {
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
         val side = minOf(w, h)
@@ -497,3 +495,29 @@ private fun ZoomableCircle(frame: Bitmap?, rotation: Int, outline: Boolean, modi
     }
 }
 
+/**
+ * The label, like Trim a control of its own: the current text (or a prompt) opens the editing
+ * dialog, and a clear button next to it. Its height doesn't depend on the text.
+ */
+@Composable
+private fun LabelRow(label: String, onEdit: () -> Unit, onClear: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.label), Modifier.padding(end = 8.dp))
+        val description = if (label.isEmpty()) stringResource(R.string.label_add) else stringResource(R.string.label_edit_description, label)
+        OutlinedButton(
+            onClick = onEdit,
+            modifier = Modifier.weight(1f).semantics { contentDescription = description },
+        ) {
+            Text(
+                label.ifEmpty { stringResource(R.string.label_add) },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        // Disabled rather than hidden when there's nothing to clear, so the row never changes shape.
+        IconButton(onClick = onClear, enabled = label.isNotEmpty()) {
+            Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.label_clear))
+        }
+    }
+}
