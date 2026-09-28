@@ -516,7 +516,7 @@ class Viewer(QWidget):
             # raw (unrotated) MJPEG stream copied as-is; wall-clock timestamps for variable fps
             self.recorder = subprocess.Popen(
                 ["ffmpeg", "-loglevel", "error", "-use_wallclock_as_timestamps", "1", "-f", "mjpeg",
-                 "-i", "-", "-c", "copy", path], stdin=subprocess.PIPE)
+                 "-i", "-", "-c", "copy", path], stdin=subprocess.PIPE, env=wifi.host_env())
             self.status.setText(f"recording {path}")
         elif not on and self.recorder:
             self.recorder.stdin.close(); self.recorder.wait(timeout=5); self.recorder = None
@@ -729,6 +729,7 @@ if __name__ == "__main__":
     import signal
     qInstallMessageHandler(qt_messages)
     app = QApplication(sys.argv)
+    app.setDesktopFileName("bebird-viewer")  # matches the installed .desktop, so the window gets its icon
     w = Viewer(); w.show()
     # Ctrl-C / kill: close the window properly so STOP is sent (otherwise the scope keeps streaming)
     for sig in (signal.SIGINT, signal.SIGTERM):

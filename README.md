@@ -61,12 +61,14 @@ Every socket binds to the Wi-Fi interface's address, so nothing meant for the sc
 `make app` builds `dist/bebird-viewer`, a single self-contained executable (about 80 MB: Python, Qt and Pillow included). The machine running it needs no Python install. Build it on the oldest distribution you want it to run on, since the result depends on that system's glibc.
 
 ```sh
-make app                 # creates .venv (PyQt6, Pillow, PyInstaller) and builds the binary
-make install             # binary to ~/.local/bin, plus a launcher entry and icon
-make install PREFIX=/usr/local   # system-wide (run with sudo)
+make app                                         # creates .venv (PyQt6, Pillow, PyInstaller) and builds the binary
+make app && make install                         # binary to ~/.local/bin, plus a launcher entry and icon
+make app && sudo make install PREFIX=/usr/local  # system-wide
 make uninstall
-make run                 # or just run from source in the venv
+make run                                         # or just run from source in the venv
 ```
+
+`make install` only copies an existing build, so the build never runs as root. The binary bundles Python and Qt but still calls host programs: install **ffmpeg** for recording and **NetworkManager** (`nmcli`) for the Wi-Fi controls.
 
 The single-file binary unpacks itself to a temporary directory on each launch, so it takes a few seconds to start.
 

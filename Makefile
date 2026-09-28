@@ -33,17 +33,18 @@ dist/$(APP): $(SOURCES) $(VENV)/.ok
 		--name $(APP) $(EXCLUDES) viewer.py
 	@ls -lh $@
 
-install: dist/$(APP)  ## install the binary and a desktop launcher under PREFIX (default ~/.local)
-	install -Dm755 dist/$(APP) $(PREFIX)/bin/$(APP)
-	install -Dm644 packaging/$(APP).svg $(PREFIX)/share/icons/hicolor/scalable/apps/$(APP).svg
-	@mkdir -p $(PREFIX)/share/applications
-	sed 's|@BIN@|$(PREFIX)/bin/$(APP)|' packaging/$(APP).desktop.in > $(PREFIX)/share/applications/$(APP).desktop
-	-update-desktop-database $(PREFIX)/share/applications 2>/dev/null
+install:  ## install the built binary and a desktop launcher under PREFIX (default ~/.local)
+	@test -f dist/$(APP) || { echo "dist/$(APP) not found: run 'make app' first (as your user, not root)"; exit 1; }
+	install -Dm755 dist/$(APP) "$(PREFIX)/bin/$(APP)"
+	install -Dm644 packaging/$(APP).svg "$(PREFIX)/share/icons/hicolor/scalable/apps/$(APP).svg"
+	@mkdir -p "$(PREFIX)/share/applications"
+	sed 's|@BIN@|$(PREFIX)/bin/$(APP)|' packaging/$(APP).desktop.in > "$(PREFIX)/share/applications/$(APP).desktop"
+	-update-desktop-database "$(PREFIX)/share/applications" 2>/dev/null
 	@echo "installed $(PREFIX)/bin/$(APP)"
 
 uninstall:  ## remove what install added
-	rm -f $(PREFIX)/bin/$(APP) $(PREFIX)/share/applications/$(APP).desktop \
-		$(PREFIX)/share/icons/hicolor/scalable/apps/$(APP).svg
+	rm -f "$(PREFIX)/bin/$(APP)" "$(PREFIX)/share/applications/$(APP).desktop" \
+		"$(PREFIX)/share/icons/hicolor/scalable/apps/$(APP).svg"
 
 clean:  ## remove build output
 	rm -rf build dist $(APP).spec __pycache__
