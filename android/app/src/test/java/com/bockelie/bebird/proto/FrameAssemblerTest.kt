@@ -81,6 +81,33 @@ class FrameAssemblerTest {
         assertEquals(1, a.dropped)
     }
 
+    @Test fun lastPacketBeforeEarlierIndexDropsFrame() {
+        // viewer.py checks for gaps when the flagged packet arrives; a late earlier index can't save it
+        val a = FrameAssembler()
+        val ps = packets(4, jpeg, 4)          // indices 1, 2, 3 (3 is last)
+        assertEquals(0, a.feed(listOf(ps[0], ps[2], ps[1])).size)
+        assertEquals(1, a.dropped)
+        assertEquals(0, a.done)
+    }
+
+    @Test fun repeatedIndexReplacesEarlierPayload() {
+        val ps = packets(4, jpeg, 6)          // indices 1, 2 (2 is last)
+        val stale = packet(4, 0, 1, 0, b(9, 9, 9, 9, 9, 9))
+        val frames = FrameAssembler().feed(listOf(stale, ps[0], ps[1]))
+        assertEquals(1, frames.size)
+        assertArrayEquals(jpeg, frames[0].jpeg)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun lengthBeyondPacketRejected() {
+        FrameAssembler().accept(packet(1, 1, 1, 0, jpeg), 4 + jpeg.size + 1)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun negativeLengthRejected() {
+        FrameAssembler().accept(packet(1, 1, 1, 0, jpeg), -1)
+    }
+
     @Test fun runtPacketsIgnored() {
         val a = FrameAssembler()
         assertNull(a.accept(b(1, 1, 1, 0)))  // header only

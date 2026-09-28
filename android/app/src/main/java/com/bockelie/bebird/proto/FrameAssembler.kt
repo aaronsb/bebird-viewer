@@ -24,6 +24,7 @@ class FrameAssembler {
 
     /** Feed one datagram (the first [length] bytes of [packet]); returns a frame when one completes. */
     fun accept(packet: ByteArray, length: Int = packet.size): Frame? {
+        require(length in 0..packet.size) { "length $length outside 0..${packet.size}" }
         if (length < HEADER + 1) return null  // header only, or runt
         packets++
         val id = packet[0].toInt() and 0xFF

@@ -3,7 +3,9 @@ package com.bockelie.bebird.proto
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.roundToInt
 
@@ -26,6 +28,24 @@ class ProtocolTest {
         assertArrayEquals(hex("66 39 01 01"), Protocol.BOARD_INFO)
         assertArrayEquals(hex("66 3C 1E"), Protocol.lightSet(30))
     }
+
+    @Test fun noPublicCommandIsForbidden() {
+        // 66 3E powers the scope off; 66 3F 01 .. switches the ES camera off until a power cycle.
+        // Enumerate every public no-argument ByteArray accessor, plus the parameterised builders.
+        val accessors = Protocol::class.java.methods.filter {
+            it.parameterCount == 0 && it.returnType == ByteArray::class.java
+        }
+        assertTrue("found ${accessors.map { it.name }}", accessors.size >= 6)
+        val commands = accessors.map { it.invoke(Protocol) as ByteArray } +
+            (0..100).flatMap { Protocol.lightCommands(it) }
+        for (c in commands) {
+            val u = c.map { it.toInt() and 0xFF }
+            assertFalse("forbidden ${hexOf(c)}", u.size >= 2 && u[0] == 0x66 && u[1] == 0x3E)
+            assertFalse("forbidden ${hexOf(c)}", u.size >= 3 && u[0] == 0x66 && u[1] == 0x3F && u[2] == 0x01)
+        }
+    }
+
+    private fun hexOf(c: ByteArray) = c.joinToString(" ") { "%02X".format(it) }
 
     @Test fun commandsAreFreshCopies() {
         Protocol.START[0] = 0
