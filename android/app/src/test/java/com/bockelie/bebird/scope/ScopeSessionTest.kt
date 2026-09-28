@@ -6,12 +6,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 import java.net.PortUnreachableException
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -19,43 +21,9 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** The session's hard rules, against fake links and real threads with shortened timings. */
 class ScopeSessionTest {
-    private data class Sent(val link: Int, val localPort: Int, val remotePort: Int, val bytes: List<Byte>)
-
-    private class FakeLink(val id: Int, override val localPort: Int, val remotePort: Int, private val log: MutableList<Sent>) : ScopeLink {
-        // ByteArray (from the camera), Pair<ByteArray, String> (bytes, sender), or an IOException to throw
-        val incoming = LinkedBlockingQueue<Any>()
-        @Volatile override var lastSource: String? = null
-        @Volatile var sendDelayMs = 0L
-        @Volatile override var isClosed = false
-
-        override fun send(data: ByteArray) {
-            if (isClosed) throw IOException("closed")
-            if (sendDelayMs > 0) Thread.sleep(sendDelayMs)
-            synchronized(log) { log += Sent(id, localPort, remotePort, data.toList()) }
-        }
-
-        override fun receive(buf: ByteArray): Int {
-            if (isClosed) throw IOException("closed")
-            return when (val x = incoming.poll(20, TimeUnit.MILLISECONDS)) {
-                null -> -1
-                is IOException -> throw x
-                is Pair<*, *> -> (x.first as ByteArray).let { lastSource = x.second as String; it.copyInto(buf); it.size }
-                else -> (x as ByteArray).let { lastSource = Protocol.CAMERA_HOST; it.copyInto(buf); it.size }
-            }
-        }
-
-        override fun close() { isClosed = true }
-    }
-
-    private val log = mutableListOf<Sent>()
-    private val opened = mutableListOf<FakeLink>()
-    private val links = object : LinkFactory {
-        override fun open(localPort: Int, remotePort: Int, timeoutMs: Int) = synchronized(opened) {
-            FakeLink(opened.size, if (localPort == 0) 40000 else localPort, remotePort, log).also { opened += it }
-        }
-
-        override fun listen(localPort: Int, timeoutMs: Int) = open(localPort, -1, timeoutMs)
-    }
+    private val links = FakeLinks()
+    private val log = links.log
+    private val opened = links.opened
     private val videoOps = Executors.newSingleThreadExecutor()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val realClock = { System.nanoTime() / 1_000_000 }
@@ -63,10 +31,11 @@ class ScopeSessionTest {
     @After fun tearDown() {
         scope.cancel()
         videoOps.shutdownNow()
-        // Whatever a test did, the session only ever said START, STOP or battery; never 66 3F / 66 3E.
-        val allowed = listOf(Protocol.START, Protocol.STOP, Protocol.BATTERY).map { it.toList() }
-        synchronized(log) { log.forEach { assertTrue("sent ${it.bytes}", it.bytes in allowed) } }
+        // Whatever a test did, the session only ever sent documented commands; never 66 3F / 66 3E.
+        synchronized(log) { log.forEach { assertTrue("sent ${it.bytes}", allowed(it.bytes)) } }
     }
+
+    private fun allowed(b: List<Byte>) = FakeLinks.allowed(b)
 
     private fun session(
         timing: ScopeSession.Timing = ScopeSession.Timing(preStartMs = 20, tickMs = 20, retryMs = 60_000),
@@ -79,16 +48,9 @@ class ScopeSessionTest {
     private fun video() = synchronized(opened) { opened.last { it.remotePort == Protocol.DATA_PORT } }
 
     /** A one-packet frame; the stubbed decoder refuses it, so it shows up as undecodable. */
-    private fun frame(): ByteArray =
-        byteArrayOf(7, 1, 1, 0, 0xFF.toByte(), 0xD8.toByte(), 1, 2, 0xFF.toByte(), 0xD9.toByte())
+    private fun frame() = FakeLinks.frame()
 
-    private fun await(what: String, timeoutMs: Long = 2000, cond: () -> Boolean) {
-        val until = System.nanoTime() + timeoutMs * 1_000_000
-        while (!cond()) {
-            if (System.nanoTime() > until) throw AssertionError("timed out waiting for $what")
-            Thread.sleep(2)
-        }
-    }
+    private fun await(what: String, timeoutMs: Long = 2000, cond: () -> Boolean) = FakeLinks.await(what, timeoutMs, cond)
 
     @Test fun stopThenExactlyOneStartThenStop_allFrom58081() {
         val s = session()
@@ -169,18 +131,77 @@ class ScopeSessionTest {
             sends.filter { it.link != linkA.id }.map { it.bytes })
     }
 
-    @Test fun onlyStartStopAndBatteryAreSent() {
-        // a busy session: retries, then video, then stop (tearDown checks every test the same way)
+    @Test fun onlyDocumentedCommandsAreSent() {
+        // a busy session: retries, video, light, then stop (tearDown checks every test the same way)
         val s = session(ScopeSession.Timing(preStartMs = 10, tickMs = 10, retryGapMs = 5, retryMs = 30))
         s.start()
         await("a retry") { starts() == 2 }
         video().incoming.put(frame())
         await("the frame") { s.stats.value.undecodable == 1 }
+        s.setLight(0)
+        s.setLight(50)
+        s.queryLight()
+        await("light sent") { commandSends().size >= 5 }
         s.stop().get(1, TimeUnit.SECONDS)
-        val allowed = listOf(Protocol.START, Protocol.STOP, Protocol.BATTERY).map { it.toList() }
         val sent = synchronized(log) { log.map { it.bytes } }
         assertTrue(sent.isNotEmpty())
-        assertEquals(emptyList<List<Byte>>(), sent.filter { it !in allowed })
+        assertEquals(emptyList<List<Byte>>(), sent.filter { !allowed(it) })
+    }
+
+    private fun commandSends() = synchronized(log) {
+        log.filter { it.remotePort == Protocol.COMMAND_PORT && it.bytes != Protocol.BATTERY.toList() }.map { it.bytes }
+    }
+
+    private fun command() = synchronized(opened) { opened.last { it.remotePort == Protocol.COMMAND_PORT } }
+
+    @Test fun lightIsSetThenCommittedAndReadBack() {
+        val s = session()
+        val reports = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        scope.launch { s.lightReports.collect { reports += it } }
+        s.start()
+        await("START") { starts() == 1 }
+        s.setLight(36)
+        s.queryLight()
+        await("light commands") { commandSends().size == 3 }
+        assertEquals(listOf(listOf<Byte>(0x66, 0x3C, 36), listOf<Byte>(0x66, 0x3C, 0xFF.toByte()), listOf<Byte>(0x66, 0x3C, 0xFE.toByte())), commandSends())
+        // a 1-byte reply is a light level; a repeat of the same value still arrives
+        command().incoming.put(byteArrayOf(36))
+        command().incoming.put(byteArrayOf(36))
+        await("the replies") { reports.size == 2 }
+        assertEquals(listOf(36, 36), reports.toList())
+        s.stop().get(1, TimeUnit.SECONDS)
+    }
+
+    @Test fun commandsQueuedBeforeStopDoNotGoOutAfterIt() {
+        // Light and keepalive commands already queued when stop() runs must be dropped on the
+        // executor, not sent after STOP.
+        val s = session(ScopeSession.Timing(preStartMs = 10, tickMs = 10, retryMs = 60_000))
+        s.start()
+        await("START") { starts() == 1 }
+        val gate = CountDownLatch(1)
+        videoOps.execute { gate.await() }  // hold the executor
+        s.setLight(40)
+        s.queryLight()
+        Thread.sleep(100)                  // several keepalive ticks queue up behind it
+        s.stop()
+        val before = synchronized(log) { log.size }
+        gate.countDown()
+        s.stop().get(1, TimeUnit.SECONDS)
+        Thread.sleep(100)
+        val after = synchronized(log) { log.drop(before) }
+        assertEquals(listOf(Protocol.STOP.toList()), after.map { it.bytes })
+        assertEquals(Protocol.DATA_PORT, after.single().remotePort)
+    }
+
+    @Test fun noLightCommandAfterStop() {
+        val s = session()
+        s.start()
+        await("START") { starts() == 1 }
+        s.stop()        // STOP is queued on the executor...
+        s.setLight(40)  // ...and a light command after it never goes out
+        s.queryLight()
+        Thread.sleep(200)
+        assertEquals(emptyList<List<Byte>>(), commandSends())
     }
 
     @Test fun retriesStopThenStartWhileNoVideo_capped() {

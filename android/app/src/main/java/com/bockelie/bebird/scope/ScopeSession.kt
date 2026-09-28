@@ -17,7 +17,10 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -28,6 +31,7 @@ import java.io.IOException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -69,6 +73,10 @@ class ScopeSession(
 
     private val _stats = MutableStateFlow(Stats())
     val stats: StateFlow<Stats> = _stats.asStateFlow()
+
+    // Every `66 3C FE` reply, including repeats of the same value (a StateFlow would merge them).
+    private val _lightReports = MutableSharedFlow<Int>(extraBufferCapacity = 8)
+    val lightReports: SharedFlow<Int> = _lightReports.asSharedFlow()
 
     private val stopped = AtomicBoolean(false)
     private val onVideoOps = videoOps.asCoroutineDispatcher()
@@ -155,7 +163,9 @@ class ScopeSession(
 
         var stalled = false
         while (isActive) {
-            send(c, Protocol.BATTERY)  // the keepalive: without it video stops within ~1 s
+            // The keepalive: without it video stops within ~1 s. Queued like every command, so a
+            // poll can't reach the scope after STOP.
+            command(null, listOf(Protocol.BATTERY))
             delay(timing.tickMs)
             val now = clock()
             val fps = frameCount.getAndSet(0)
@@ -174,6 +184,30 @@ class ScopeSession(
                 Log.w(TAG, if (stalled) "video stopped: scope off or wedged" else "video resumed")
                 _stats.update { it.copy(status = if (stalled) "video stopped (power-cycle the scope?)" else "streaming") }
             }
+        }
+    }
+
+    /**
+     * Set and commit the tip light's raw level (`66 3C raw`, `66 3C FF`) on the command link.
+     * Like every command, it is queued on videoOps, so it can't slip in after STOP.
+     */
+    fun setLight(raw: Int) = command("light $raw", Protocol.lightCommands(raw))
+
+    /** Ask for the light level (`66 3C FE`); the reply arrives on [lightReports]. */
+    fun queryLight() = command("light query", listOf(Protocol.LIGHT_QUERY))
+
+    /** Send [data] on the command link from videoOps, unless stopped by then. [what] null: don't log. */
+    private fun command(what: String?, data: List<ByteArray>) {
+        if (stopped.get()) return
+        try {
+            videoOps.execute {
+                val c = ctrl ?: return@execute
+                if (stopped.get()) return@execute
+                val sent = data.all { send(c, it) }
+                if (what != null) Log.i(TAG, if (sent) "$what sent" else "$what could not be sent")
+            }
+        } catch (_: RejectedExecutionException) {
+            // the executor is shut down (tests only; the shared one never is)
         }
     }
 
@@ -244,9 +278,14 @@ class ScopeSession(
         while (isActive) {
             val n = receive(c, buf) ?: break
             if (n < 0) continue
-            Protocol.decodeBattery(buf.copyOf(n))?.let { b ->
+            val reply = buf.copyOf(n)
+            Protocol.decodeBattery(reply)?.let { b ->
                 if (_stats.value.battery != b) Log.i(TAG, "battery ${b.percent}% (${b.stateName})")
                 _stats.update { it.copy(battery = b) }
+            }
+            Protocol.decodeLightLevel(reply)?.let { raw ->
+                Log.i(TAG, "light reported: $raw")
+                _lightReports.tryEmit(raw)
             }
         }
     }
