@@ -100,7 +100,7 @@ The single-file binary unpacks itself to a temporary directory on each launch, s
 
 ## Android app
 
-A native Android port (Kotlin, Jetpack Compose, Android 10+) lives in [`android/`](android/), app ID `com.bockelie.bebird`. **Work in progress:** so far it joins the scope's Wi-Fi (as an app-only network, so the phone's normal networking is untouched) and shows live video, rotated upright, with fps and battery. Light, snapshots and the rest come next. `adb logcat -s BebirdSpike` shows the session's progress. Progress is tracked in [#8](https://github.com/aaronsb/bebird-viewer/issues/8).
+A native Android port (Kotlin, Jetpack Compose, Android 10+) lives in [`android/`](android/), app ID `com.bockelie.bebird`. **Work in progress:** so far it joins the scope's Wi-Fi (as an app-only network, so the phone's normal networking is untouched) and shows live video, rotated upright, with fps and battery. It remembers the scopes you've used (with an optional nickname; choose, rename or forget them from the device menu) and reconnects to the last one by its exact network name and BSSID (on a Pixel 8 Pro with Android 17, reconnecting this way joined without a dialog right after the first join through the picker); **Pick a different device** shows Android's list of every `bebird*` network. Light, snapshots and the rest come next. `adb logcat -s BebirdSpike` shows the session's progress. Progress is tracked in [#8](https://github.com/aaronsb/bebird-viewer/issues/8).
 
 ```sh
 make android-test   # JVM unit tests
@@ -207,7 +207,7 @@ The scope broadcasts a JSON status beacon about ten times a second, for example:
  "wifi_encrypt":false,"ipaddr":"192.168.5.1","button":1,"video_on":0,"battery":65636}
 ```
 
-`battery` uses the same state/percent packing as `66 3A`. The `password` field is base64 (`12345678`) and is broadcast in the clear even though the access point is open.
+`battery` uses the same state/percent packing as `66 3A`. `mac` is the Wi-Fi chip's station MAC, not the access point's BSSID: on the tested ES the BSSID is that address plus one (the 48-bit value + 1, e.g. `…9E` → `…9F`), a common convention for these chips' soft-AP. The Android app uses this to reconnect to a known scope by BSSID when Android won't reveal the BSSID itself. The `password` field is base64 (`12345678`) and is broadcast in the clear even though the access point is open.
 
 ## Security notes
 

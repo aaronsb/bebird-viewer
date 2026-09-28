@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.SystemClock
 import android.util.Log
+import com.bockelie.bebird.devices.WifiIds
+import com.bockelie.bebird.proto.Beacon
 import com.bockelie.bebird.proto.FrameAssembler
 import com.bockelie.bebird.proto.Protocol
 import kotlinx.coroutines.CancellationException
@@ -62,6 +64,7 @@ class ScopeSession(
         val dropped: Int = 0,     // FrameAssembler dropped + superseded
         val undecodable: Int = 0, // reassembled but the decoder refused it
         val status: String = "starting",
+        val beacon: Beacon? = null,  // the first beacon heard: which scope this is
     )
 
     private val _stats = MutableStateFlow(Stats())
@@ -72,6 +75,7 @@ class ScopeSession(
     // Written on videoOps; read by the receive loops after the write (happens-before via withContext).
     @Volatile private var video: ScopeLink? = null
     @Volatile private var ctrl: ScopeLink? = null
+    @Volatile private var beacon: ScopeLink? = null
     @Volatile private var job: Job? = null
     private var stopDone: Future<*>? = null
 
@@ -111,6 +115,7 @@ class ScopeSession(
                 it.close()
             }
             ctrl?.close()
+            beacon?.close()
         }.also { stopDone = it }
     }
 
@@ -119,6 +124,13 @@ class ScopeSession(
         val v = links.open(Protocol.CLIENT_VIDEO_PORT, Protocol.DATA_PORT, 100)
         video = v
         ctrl = links.open(0, Protocol.COMMAND_PORT, 200)  // if this throws, stop() still closes v
+        // Optional: the beacon names the scope (SSID, MAC) without any location permission.
+        beacon = try {
+            links.listen(Protocol.BEACON_PORT, 200)
+        } catch (e: Exception) {
+            Log.w(TAG, "can't listen for the beacon on :${Protocol.BEACON_PORT}: $e")
+            null
+        }
         Log.i(TAG, "links open: video :${v.localPort}, command :${ctrl?.localPort}")
         true
     }
@@ -127,6 +139,7 @@ class ScopeSession(
         val v = video!!
         val c = ctrl!!
         launch { receiveCommands(c) }
+        beacon?.let { b -> launch { receiveBeacon(b) } }
 
         onVideo(v, Protocol.STOP, "STOP (clear our port)")
         delay(timing.preStartMs)
@@ -196,6 +209,34 @@ class ScopeSession(
             }
             first = false
         }
+    }
+
+    /**
+     * Until the first usable beacon: that is all the session needs from it. The scope's network
+     * is open, so anyone on it can broadcast to 58099; only the camera's own beacons count, and
+     * only with a scope SSID and a valid MAC.
+     */
+    private fun CoroutineScope.receiveBeacon(b: ScopeLink) {
+        val buf = ByteArray(2048)
+        var ignored = 0
+        while (isActive) {
+            val n = receive(b, buf) ?: return
+            if (n < 0) continue
+            val beacon = Beacon.parse(buf, n)?.takeIf { b.lastSource == Protocol.CAMERA_HOST && usable(it) }
+            if (beacon == null) {
+                if (ignored++ < 3) Log.w(TAG, "ignoring datagram on :${Protocol.BEACON_PORT} from ${b.lastSource}")
+                continue
+            }
+            Log.i(TAG, "beacon: ssid=${beacon.ssid} mac=${beacon.mac} model=${beacon.model}")
+            _stats.update { it.copy(beacon = beacon) }
+            b.close()
+            return
+        }
+    }
+
+    private fun usable(b: Beacon): Boolean {
+        val ssid = WifiIds.ssid(b.ssid)
+        return ssid != null && WifiIds.isScope(ssid) && WifiIds.bssid(b.mac) != null
     }
 
     private fun CoroutineScope.receiveCommands(c: ScopeLink) {
