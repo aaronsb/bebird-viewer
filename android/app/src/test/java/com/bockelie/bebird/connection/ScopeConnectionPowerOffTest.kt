@@ -41,9 +41,12 @@ class ScopeConnectionPowerOffTest {
         override val identity = MutableStateFlow<ScopeWifi.Identity?>(null)
         /** What the fake links had sent at each release. */
         val releases = CopyOnWriteArrayList<List<Sent>>()
-        override fun start(target: Target, why: String?) {}
+        val starts = CopyOnWriteArrayList<Target>()
+        override fun start(target: Target, why: String?) { starts += target }
+        @Volatile var releaseMs = 0L  // how long the network takes to go
         override fun stop() {
             releases += links.sends()
+            Thread.sleep(releaseMs)
             state.value = ScopeWifi.State.Idle
         }
         override fun scopesInRange(): List<ScopeWifi.Identity>? = null
@@ -87,6 +90,9 @@ class ScopeConnectionPowerOffTest {
     private fun <T> onMain(block: () -> T): T = runBlocking { withContext(main) { block() } }
 
     private fun join() {
+        onMain { conn.connect() }
+        await("the request") { wifi.starts.isNotEmpty() }  // after connect()'s own release
+        wifi.releases.clear()
         onMain { wifi.state.value = ScopeWifi.State.Available(blank<Network>(), Target.AnyScope) }
         await("START") { links.starts() >= 1 }
     }
@@ -117,6 +123,25 @@ class ScopeConnectionPowerOffTest {
         assertFalse(conn.isStreaming.value)
         assertEquals("powered off", conn.stats.value.status)
         assertEquals("bebird-ES-1", conn.book.value.last?.ssid)  // still remembered
+    }
+
+    @Test fun nothingStartsBetween663EAndTheRelease() {
+        // Reconnect, or the network coming back, while the release is still waiting for 66 3E.
+        join()
+        stream()
+        links.last(Protocol.COMMAND_PORT).sendDelayMs = 300
+        wifi.releaseMs = 300  // the network is still Available while this runs
+        assertTrue(powerOff())
+        onMain {
+            conn.reconnect()
+            wifi.state.value = ScopeWifi.State.Available(blank<Network>(), Target.AnyScope)
+        }
+        await("the release") { wifi.releases.isNotEmpty() }
+        await("Idle") { wifi.state.value == ScopeWifi.State.Idle }
+        Thread.sleep(100)
+        assertEquals(1, links.starts())
+        assertEquals(POWER_OFF, links.sends().last().bytes)
+        assertEquals(wifi.releases.first(), links.sends())
     }
 
     @Test fun powerOffBeforeVideoSendsNothingAndKeepsTheConnection() {

@@ -77,7 +77,7 @@ class ScopeConnection(
             _streaming.value = value
         }
     private val _streaming = MutableStateFlow(false)
-    /** The current session has shown a frame: what [powerOff] needs. */
+    /** The current session has shown a frame (video may have stalled since): what [powerOff] needs. */
     val isStreaming: StateFlow<Boolean> = _streaming.asStateFlow()
     private var remembered: Identify.Result? = null  // for the current network
     // The request the user last asked for; null after disconnect(). A fallback runs only for it,
@@ -98,7 +98,9 @@ class ScopeConnection(
         scope.launch {
             wifi.state.collect { state ->
                 when (state) {
-                    is ScopeWifi.State.Available -> startSession(state)
+                    // Not after disconnect() or powerOff(): the network is on its way out, and a
+                    // new session would send STOP/START after the old one's STOP (or 66 3E).
+                    is ScopeWifi.State.Available -> if (wanted != null) startSession(state)
                     is ScopeWifi.State.Unavailable -> {
                         stopSession()
                         if (state.target == wanted) fallBack(state.target)
@@ -146,6 +148,7 @@ class ScopeConnection(
 
     /** Restart the video session on the same network, as the desktop's Reconnect does. */
     fun reconnect() {
+        if (wanted == null) return  // disconnect() or powerOff() in progress: the network is being released
         val state = wifi.state.value as? ScopeWifi.State.Available ?: return
         Log.i(TAG, "reconnect")
         startSession(state)
@@ -159,8 +162,8 @@ class ScopeConnection(
 
     /**
      * Switch the scope off (see [ScopeSession.powerOff]), then release the network once that
-     * has gone out, as [disconnect] does; the device stays remembered. Only while video is
-     * streaming, so the scope is known to be there and listening: otherwise nothing is sent
+     * has gone out, as [disconnect] does; the device stays remembered. Only once video has
+     * started, so the scope is known to be there and listening: otherwise nothing is sent
      * and this returns false. For the menu item, and for the end of the background grace
      * period (#18), which disconnects instead when this returns false.
      */

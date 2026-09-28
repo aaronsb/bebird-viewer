@@ -154,6 +154,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
             value = LocalDateTime.now()
         }
     }
+    // Video gone while the confirmation is open: Power off would do nothing, so close it.
+    LaunchedEffect(canPowerOff) { if (!canPowerOff) confirmingPowerOff = false }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
         Column(
