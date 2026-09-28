@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Join a Bebird scope's Wi-Fi through NetworkManager (nmcli), without disturbing other networking.
 
 Connections created here never become the default route and have IPv6 off, so a wired or

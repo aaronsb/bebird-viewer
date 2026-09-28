@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Set the tip light's raw level: light.sh 0-100 (0 = off), or no argument to read it.
 # The level only takes effect after the commit byte (66 3C FF). On the ES the LED is
 # invisible below ~20 and stops getting brighter around ~48; viewer.py maps its slider

@@ -189,4 +189,6 @@ See [docs/app-analysis.md](docs/app-analysis.md) for what the official app does 
 
 ## License
 
-[MIT](LICENSE)
+Copyright (C) 2026 Aaron Bockelie. Licensed under the [GNU General Public License v3.0 or later](LICENSE) (`GPL-3.0-or-later`).
+
+Versions up to and including commit `398f346` were released under the MIT License, and copies obtained under those terms stay MIT.

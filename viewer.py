@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Bebird ES otoscope viewer with controls (PyQt6).
 
 Protocol (recovered from the official app + live testing):
