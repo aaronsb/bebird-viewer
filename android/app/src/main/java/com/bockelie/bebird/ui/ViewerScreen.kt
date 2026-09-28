@@ -37,6 +37,17 @@ import com.bockelie.bebird.band.BandData
 import com.bockelie.bebird.band.BandRenderer
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
+import android.content.Intent
+import android.os.SystemClock
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Stable
+import com.bockelie.bebird.capture.Capture
+import com.bockelie.bebird.capture.ZoomCrop
 import android.os.Build
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -157,7 +168,12 @@ fun ViewerScreen(vm: ViewerViewModel) {
     // Video gone while the confirmation is open: Power off would do nothing, so close it.
     LaunchedEffect(canPowerOff) { if (!canPowerOff) confirmingPowerOff = false }
 
-    Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
+    val zoomView = remember { ZoomView() }
+    val recordingSince by vm.recordingSince.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    CaptureSnackbar(vm, snackbar)
+
+    Scaffold(modifier = Modifier.fillMaxSize(), snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -181,29 +197,21 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 statusLine(wifi, stats), style = MaterialTheme.typography.bodySmall,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-            ZoomableCircle(
-                frame = stats.frame,
-                rotation = RollFilter.rotation(shownRoll, autoRotate, trim),
-                outline = overlayOn,
-                modifier = Modifier.fillMaxWidth().weight(1f),
-            )
-            val device = book.last?.takeIf { online }
-            StatusBandSlot(
-                renderer = renderer,
-                showBand = overlayOn,
-                data = BandData(
-                    batteryPercent = stats.battery?.percent,
-                    charging = stats.battery?.state == 2,
-                    lightPercent = light.level.takeIf { online },
-                    roll = shownRoll.takeIf { stats.frame != null },
-                    trim = trim,
-                    fps = stats.fps.takeIf { online },
-                    droppedPerSecond = if (online) stats.droppedPerSecond else 0,
-                    device = device?.let { it.nickname ?: it.ssid.removePrefix("bebird-") },
-                    time = now,
-                    label = label.ifEmpty { null },
-                ),
-            ) { Readouts(stats, shownRoll) }
+            // Viewport and band as one panel: no gap between them.
+            Column(Modifier.fillMaxWidth().weight(1f)) {
+                ZoomableCircle(
+                    frame = stats.frame,
+                    rotation = RollFilter.rotation(shownRoll, autoRotate, trim),
+                    outline = overlayOn,
+                    view = zoomView,
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
+                StatusBandSlot(
+                    renderer = renderer,
+                    showBand = overlayOn,
+                    data = bandDataOf(stats, light, shownRoll, trim, book.last, online, label, now),
+                ) { Readouts(stats, shownRoll) }
+            }
             LightRow(light, onToggle = conn::toggleLight, onLevel = conn::setLight)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The switch and its label are one control, so TalkBack names it.
@@ -229,9 +237,13 @@ fun ViewerScreen(vm: ViewerViewModel) {
             }
             LabelRow(label, onEdit = { editingLabel = true }, onClear = { vm.setLabel("") })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Capture comes with #15.
-                FilledTonalButton(onClick = {}, enabled = false) { Text(stringResource(R.string.snapshot)) }
-                FilledTonalButton(onClick = {}, enabled = false) { Text(stringResource(R.string.record)) }
+                // Only while frames are arriving; captures never talk to the scope.
+                val streaming = online && stats.frame != null
+                FilledTonalButton(
+                    onClick = { vm.snapshot(zoomView.zoom, stats.frame?.let { zoomView.crop(it.width) }) },
+                    enabled = streaming,
+                ) { Text(stringResource(R.string.snapshot)) }
+                RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording)
                 Spacer(Modifier.weight(1f))
                 OutlinedButton(onClick = conn::reconnect, enabled = online) {
                     Icon(Icons.Default.Refresh, contentDescription = null)
@@ -447,33 +459,32 @@ private fun LightRow(light: ScopeConnection.Light, onToggle: () -> Unit, onLevel
  * to the viewport; double-tap resets. Display only: nothing here changes what is received.
  */
 @Composable
-private fun ZoomableCircle(frame: Bitmap?, rotation: Int, outline: Boolean, modifier: Modifier) {
-    var zoom by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
+private fun ZoomableCircle(frame: Bitmap?, rotation: Int, outline: Boolean, view: ZoomView, modifier: Modifier) {
     // Outside the image circle the viewport is the band's black, not the theme's surface, so
     // image and band read as one panel (as in saved stills with the overlay).
     BoxWithConstraints(modifier.clipToBounds().background(Color(BandRenderer.BACKGROUND)), contentAlignment = Alignment.Center) {
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
         val side = minOf(w, h)
+        SideEffect { view.viewportW = w; view.viewportH = h }  // for the zoomed snapshot's crop
         // How far the circle may move: only as far as it overhangs the viewport.
         fun clamp(o: Offset, z: Float) = Offset(
             o.x.coerceIn(-maxOf(0f, (side * z - w) / 2), maxOf(0f, (side * z - w) / 2)),
             o.y.coerceIn(-maxOf(0f, (side * z - h) / 2), maxOf(0f, (side * z - h) / 2)),
         )
         // A resize (rotation, multi-window) keeps the view inside the new bounds.
-        LaunchedEffect(w, h) { offset = clamp(offset, zoom) }
+        LaunchedEffect(w, h) { view.offset = clamp(view.offset, view.zoom) }
         Box(
             Modifier.fillMaxSize()
-                .pointerInput(Unit) { detectTapGestures(onDoubleTap = { zoom = 1f; offset = Offset.Zero }) }
+                .pointerInput(Unit) { detectTapGestures(onDoubleTap = { view.zoom = 1f; view.offset = Offset.Zero }) }
                 .pointerInput(w, h) {
                     detectTransformGestures { centroid, pan, gestureZoom, _ ->
-                        val newZoom = (zoom * gestureZoom).coerceIn(1f, 6f)
+                        val newZoom = (view.zoom * gestureZoom).coerceIn(1f, 6f)
                         // Keep the point under the fingers where it is: relative to the viewport
                         // centre, o' = (o - p) * z'/z + p, then add the pan.
                         val p = centroid - Offset(w / 2, h / 2)
-                        offset = clamp((offset - p) * (newZoom / zoom) + p + pan, newZoom)
-                        zoom = newZoom
+                        view.offset = clamp((view.offset - p) * (newZoom / view.zoom) + p + pan, newZoom)
+                        view.zoom = newZoom
                     }
                 },
             contentAlignment = Alignment.Center,
@@ -481,10 +492,10 @@ private fun ZoomableCircle(frame: Bitmap?, rotation: Int, outline: Boolean, modi
             Box(
                 Modifier.size(with(LocalDensity.current) { side.toDp() })
                     .graphicsLayer {
-                        scaleX = zoom
-                        scaleY = zoom
-                        translationX = offset.x
-                        translationY = offset.y
+                        scaleX = view.zoom
+                        scaleY = view.zoom
+                        translationX = view.offset.x
+                        translationY = view.offset.y
                     }
                     .clip(CircleShape)
                     .background(Color.Black)
@@ -528,6 +539,63 @@ private fun LabelRow(label: String, onEdit: () -> Unit, onClear: () -> Unit) {
         // Disabled rather than hidden when there's nothing to clear, so the row never changes shape.
         IconButton(onClick = onClear, enabled = label.isNotEmpty()) {
             Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.label_clear))
+        }
+    }
+}
+
+/** The viewport's zoom and pan, kept outside it so a snapshot can crop what is visible. */
+@Stable
+class ZoomView {
+    var zoom by mutableFloatStateOf(1f)
+    var offset by mutableStateOf(Offset.Zero)
+    var viewportW = 0f
+    var viewportH = 0f
+
+    /** The visible part of a [frameSize]-px frame, or null when not zoomed in. */
+    fun crop(frameSize: Int): ZoomCrop.Rect? =
+        ZoomCrop.visible(frameSize, viewportW, viewportH, minOf(viewportW, viewportH), zoom, offset.x, offset.y)
+}
+
+/** Record, or Stop with the elapsed time (fixed-width digits) while recording. */
+@Composable
+private fun RecordButton(since: Long?, enabled: Boolean, onClick: () -> Unit) {
+    val elapsed by produceState(0L, since) {
+        while (since != null) {
+            value = (SystemClock.elapsedRealtime() - since) / 1000
+            delay(250)
+        }
+    }
+    FilledTonalButton(onClick = onClick, enabled = enabled || since != null) {
+        if (since == null) {
+            Text(stringResource(R.string.record))
+        } else {
+            Text(stringResource(R.string.record_stop, "%d:%02d".format(elapsed / 60, elapsed % 60)), style = LocalTextStyle.current.merge(tabular))
+        }
+    }
+}
+
+/** A short M3 snackbar for each saved capture, with Open. */
+@Composable
+private fun CaptureSnackbar(vm: ViewerViewModel, host: SnackbarHostState) {
+    val context = LocalContext.current
+    val saved = stringResource(R.string.capture_saved)
+    val failed = stringResource(R.string.capture_failed)
+    val open = stringResource(R.string.capture_open)
+    LaunchedEffect(Unit) {
+        vm.captureResults.collect { result ->
+            when (result) {
+                is Capture.Result.Saved -> {
+                    val action = host.showSnackbar(saved.format(result.name), actionLabel = open, duration = SnackbarDuration.Short)
+                    if (action == SnackbarResult.ActionPerformed) {
+                        val type = if (result.video) "video/mp4" else "image/jpeg"
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(result.uri, type)
+                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                        }
+                    }
+                }
+                is Capture.Result.Failed -> host.showSnackbar(failed.format(result.what, result.reason))
+            }
         }
     }
 }

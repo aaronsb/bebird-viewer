@@ -47,6 +47,9 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         // Leaving the app sends STOP and drops the scope's network; a rotation keeps both.
-        if (!isChangingConfigurations) vm.connection.disconnect()
+        if (!isChangingConfigurations) {
+            vm.stopRecording()  // recording is foreground-only until #18's service
+            vm.connection.disconnect()
+        }
     }
 }

@@ -66,4 +66,8 @@
     <string name="power_off">Power off</string>
     <string name="power_off_title">Power off scope</string>
     <string name="power_off_message">The scope will switch off. Press its power button to turn it on again.</string>
+    <string name="record_stop">Stop %1$s</string>
+    <string name="capture_saved">Saved %1$s</string>
+    <string name="capture_failed">Couldn\'t save %1$s: %2$s</string>
+    <string name="capture_open">Open</string>
 </resources>

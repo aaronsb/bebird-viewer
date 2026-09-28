@@ -3,6 +3,7 @@ package com.bockelie.bebird.ui
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -34,8 +36,12 @@ fun StatusBandSlot(renderer: BandRenderer?, showBand: Boolean, data: BandData, r
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val width = constraints.maxWidth
         val height = with(LocalDensity.current) { maxOf(BandRenderer.height(width), readoutPx).toDp() }
-        Box(Modifier.fillMaxWidth().height(height), contentAlignment = Alignment.Center) {
-            if (showBand && renderer != null) StatusBand(renderer, data, width) else readouts()
+        val band = showBand && renderer != null
+        // With the band, the whole slot is the band's black, so it joins the viewport above
+        // without a strip of theme colour even when the slot is taller than the band.
+        val background = if (band) Modifier.background(Color(BandRenderer.BACKGROUND)) else Modifier
+        Box(Modifier.fillMaxWidth().height(height).then(background), contentAlignment = Alignment.Center) {
+            if (band) StatusBand(renderer!!, data, width) else readouts()
         }
     }
 }

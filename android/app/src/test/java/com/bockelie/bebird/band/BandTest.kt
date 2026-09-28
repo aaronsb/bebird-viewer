@@ -205,6 +205,18 @@ class BandTest {
         for (y in 0 until 480) assertTrue("row $y", (0 until 480).count { out.pixels[y * 480 + it] == BandRenderer.CIRCLE } >= 2)
     }
 
+    @Test fun theOverlayCanFollowACircleOtherThanTheInscribedOne() {
+        // a zoomed crop: the scope's circle centred off to the left, larger than the crop
+        val f = frame()
+        val c = BandRenderer.Circle(cx = -100.0, cy = 239.5, r = 500.0)
+        val out = renderer.compose(f, full, overlay = true, circle = c)
+        for (i in f.pixels.indices) {
+            val d = Math.hypot(i % 480 - c.cx, i / 480 - c.cy) - c.r
+            val expected = when { d >= 0.5 -> BandRenderer.BACKGROUND; d > -0.5 -> BandRenderer.CIRCLE; else -> f.pixels[i] }
+            assertEquals(expected, out.pixels[i])
+        }
+    }
+
     @Test fun overlayOffIsTheFrameItself() {
         val f = frame()
         assertSame(f, renderer.compose(f, full, overlay = false))

@@ -3,6 +3,21 @@ package com.bockelie.bebird.ui
 
 import android.app.Application
 import android.util.Log
+import android.os.SystemClock
+import com.bockelie.bebird.band.BandData
+import com.bockelie.bebird.capture.Capture
+import com.bockelie.bebird.capture.CaptureNames
+import com.bockelie.bebird.capture.SnapshotMeta
+import com.bockelie.bebird.capture.ZoomCrop
+import com.bockelie.bebird.proto.Protocol
+import com.bockelie.bebird.wifi.ScopeWifi
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import java.time.LocalDateTime
+import java.time.ZonedDateTime
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bockelie.bebird.band.BandFonts
@@ -80,8 +95,89 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         _theme.value = mode
     }
 
+    // --- capture (#15) ---
+
+    private val capture = Capture(app.contentResolver)
+    private val _recordingSince = MutableStateFlow<Long?>(null)  // elapsedRealtime at start
+    /** When the current recording started (elapsedRealtime ms), or null when not recording. */
+    val recordingSince: StateFlow<Long?> = _recordingSince.asStateFlow()
+    private var recordingName = ""
+    private var recordingOverlay = false  // fixed for the whole file
+    private val _captureResults = MutableSharedFlow<Capture.Result>(extraBufferCapacity = 4)
+    /** Each saved (or failed) snapshot or recording, for the snackbar. */
+    val captureResults: SharedFlow<Capture.Result> = _captureResults.asSharedFlow()
+
+    init {
+        viewModelScope.launch {
+            connection.stats.map { it.frame }.distinctUntilChanged().collect { frame ->
+                if (_recordingSince.value == null) return@collect
+                if (frame == null) stopRecording()  // the stream stopped
+                else shot(overlay = recordingOverlay)?.let { capture.addVideoFrame(it, SystemClock.elapsedRealtimeNanos()) }
+            }
+        }
+    }
+
+    private val online get() = connection.wifiState.value is ScopeWifi.State.Available
+
+    /** The band as it shows now; the screen uses the same function, so captures match it. */
+    fun bandData(now: LocalDateTime): BandData = bandDataOf(
+        connection.stats.value, connection.lightState.value, connection.shownRoll.value, _trim.value,
+        connection.book.value.last, online, _label.value, now,
+    )
+
+    /** The current frame as shown, with its metadata; null when there is no frame. */
+    private fun shot(overlay: Boolean = _overlay.value, zoom: Float = 1f, zoomRect: ZoomCrop.Rect? = null): Capture.Shot? {
+        val stats = connection.stats.value
+        val frame = stats.frame ?: return null
+        val taken = ZonedDateTime.now()
+        val light = connection.lightState.value
+        val rotation = RollFilter.rotation(connection.shownRoll.value, _autoRotate.value, _trim.value)
+        val meta = SnapshotMeta(
+            taken = taken,
+            roll = stats.angle,
+            rotationApplied = rotation,
+            autoRotate = _autoRotate.value,
+            trim = _trim.value,
+            lightPercent = light.level,
+            lightRaw = Protocol.lightPercentToRaw(light.level),
+            batteryPercent = stats.battery?.percent,
+            batteryState = stats.battery?.stateName,
+            fps = stats.fps,
+            zoom = zoom.toDouble(),
+            zoomed = false,
+            label = _label.value.ifEmpty { null },
+            device = deviceName(connection.book.value.last?.takeIf { online }),
+            model = stats.beacon?.model,
+        )
+        return Capture.Shot(frame, rotation, overlay, _bandRenderer.value, bandData(taken.toLocalDateTime()), meta, zoomRect)
+    }
+
+    /** Save the frame as shown; when zoomed in ([zoomRect] non-null), the visible crop too. */
+    fun snapshot(zoom: Float, zoomRect: ZoomCrop.Rect?) {
+        val shot = shot(zoom = zoom, zoomRect = zoomRect) ?: return
+        capture.snapshot(shot) { _captureResults.tryEmit(it) }
+    }
+
+    fun toggleRecording() = if (_recordingSince.value == null) startRecording() else stopRecording()
+
+    private fun startRecording() {
+        recordingOverlay = _overlay.value
+        val first = shot(overlay = recordingOverlay) ?: return
+        recordingName = CaptureNames.video(first.meta.taken.toLocalDateTime())
+        capture.startRecording(recordingName, first) { _captureResults.tryEmit(it); _recordingSince.value = null }
+        _recordingSince.value = SystemClock.elapsedRealtime()
+    }
+
+    /** Finish the recording, if any (also when leaving the app: recording is foreground-only for now). */
+    fun stopRecording() {
+        if (_recordingSince.value == null) return
+        _recordingSince.value = null
+        capture.stopRecording(recordingName) { _captureResults.tryEmit(it) }
+    }
+
     override fun onCleared() {
         Log.i("BebirdSpike", "ViewModel cleared")
+        stopRecording()
         connection.disconnect()
     }
 }
