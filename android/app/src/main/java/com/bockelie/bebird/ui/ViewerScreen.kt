@@ -238,7 +238,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
             LabelRow(label, onEdit = { editingLabel = true }, onClear = { vm.setLabel("") })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Only while frames are arriving; captures never talk to the scope.
-                val streaming = online && stats.frame != null
+                // canPowerOff is ScopeConnection.isStreaming: this session has shown a frame
+                val streaming = canPowerOff && stats.frame != null
                 FilledTonalButton(
                     onClick = { vm.snapshot(zoomView.zoom, stats.frame?.let { zoomView.crop(it.width) }) },
                     enabled = streaming,
