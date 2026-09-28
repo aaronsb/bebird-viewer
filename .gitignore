@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+frames/
+*.pcap
+*.pcapng
+# vendor material (decompiled app, firmware images) must never be committed
+re/
+fw/
+*.apk
+*.xapk
+*.rbl
+*.bin
