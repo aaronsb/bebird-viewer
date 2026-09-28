@@ -37,6 +37,23 @@ class BandTest {
         }
     }
 
+    @Test fun theLabelIsATaggedFieldOfItsOwn() {
+        fun row1(d: BandData) = BandLayout.place(d, font).filter { it.row == 1 && it.col >= 30 }
+        fun text(p: List<BandLayout.Placed>) = String(p.map { it.codepoint }.toIntArray(), 0, p.size)
+        val set = row1(full.copy(label = "left ear"))
+        assertEquals("LABEL", text(set.filter { !it.bright }))
+        assertEquals((30 until 35).toList(), set.filter { !it.bright }.map { it.col })
+        assertEquals("left ear", text(set.filter { it.bright }))
+        assertEquals(36, set.first { it.bright }.col)  // left-aligned right after the tag
+        // empty or missing: the tag stays, with "--" like the other fields
+        for (empty in listOf(full.copy(label = null), full.copy(label = ""))) {
+            val p = row1(empty)
+            assertEquals("LABEL", text(p.filter { !it.bright }))
+            assertEquals("--", text(p.filter { it.bright }))
+            assertEquals(36, p.first { it.bright }.col)
+        }
+    }
+
     @Test fun droppedFramesShowAfterTheFpsInTheSameField() {
         fun fps(d: BandData) = BandLayout.place(d, font).filter { it.row == 0 && it.col in 40 until 49 && it.bright }
         val with = fps(full.copy(fps = 11, droppedPerSecond = 3))
@@ -77,17 +94,19 @@ class BandTest {
 
     @Test fun longNamesAreCutWithAnEllipsis() {
         val placed = BandLayout.place(full.copy(label = "Maximiliana Rosalind Featherstonehaugh-Smythe"), font)
-            .filter { it.row == 1 && it.col >= 30 }
-        assertEquals(28, placed.sumOf { it.cells })
+            .filter { it.row == 1 && it.col >= 30 && it.bright }
+        assertEquals(36, placed.first().col)  // after "LABEL "
+        assertTrue(placed.last().col + placed.last().cells <= 58)
         assertEquals(0x2026, placed.last().codepoint)
-        assertEquals("Maximiliana Rosalind Feathe", String(placed.dropLast(1).map { it.codepoint }.toIntArray(), 0, placed.size - 1))
+        // cut to the 22-cell field, trailing space dropped before the ellipsis
+        assertEquals("Maximiliana Rosalind", String(placed.dropLast(1).map { it.codepoint }.toIntArray(), 0, placed.size - 1))
     }
 
     @Test fun wideGlyphsAreNeverSplit() {
-        // 16 wide characters = 32 cells: 13 fit before the ellipsis (26 cells + 1, of 28)
-        val placed = BandLayout.place(full.copy(label = "山".repeat(16)), font).filter { it.row == 1 && it.col >= 30 }
-        assertEquals(13, placed.count { it.codepoint == '山'.code })
-        assertTrue(placed.sumOf { it.cells } <= 28)
+        // 16 wide characters = 32 cells: 10 fit before the ellipsis (20 cells + 1, of 22)
+        val placed = BandLayout.place(full.copy(label = "山".repeat(16)), font).filter { it.row == 1 && it.col >= 30 && it.bright }
+        assertEquals(10, placed.count { it.codepoint == '山'.code })
+        assertTrue(placed.sumOf { it.cells } <= 22)
         assertEquals(0x2026, placed.last().codepoint)
     }
 

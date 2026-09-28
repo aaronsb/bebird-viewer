@@ -47,10 +47,10 @@ object BandLayout {
         // fps, then frames dropped in the last second if any: "11 −3"
         Field(0, 40, 9, "FPS", (d.fps?.toString() ?: "--") + if (d.droppedPerSecond > 0) " \u2212${d.droppedPerSecond}" else "", Align.RIGHT),
         Field(0, 50, 8, "", d.time?.let { "%02d:%02d:%02d".format(it.hour, it.minute, it.second) } ?: "--:--:--", Align.RIGHT),
-        // row 1: 0 device (18) | 19 date | 30 label (28)
+        // row 1: 0 device (18) | 19 date | 30 LABEL text (22 cells after the tag)
         Field(1, 0, 18, "", d.device ?: "--", Align.LEFT),
         Field(1, 19, 10, "", d.time?.let { "%04d-%02d-%02d".format(it.year, it.monthValue, it.dayOfMonth) } ?: "----------", Align.LEFT),
-        Field(1, 30, 28, "", d.label.orEmpty(), Align.LEFT),
+        Field(1, 30, 28, "LABEL", d.label?.ifEmpty { null } ?: "--", Align.LEFT),
     )
 
     /**
@@ -86,6 +86,7 @@ object BandLayout {
             out += cp
             used += w
         }
+        while (out.isNotEmpty() && Character.isWhitespace(out.last())) out.removeAt(out.size - 1)  // "Rosalind…", not "Rosalind …"
         return out + ELLIPSIS
     }
 
