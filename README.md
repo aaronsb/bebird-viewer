@@ -100,7 +100,7 @@ The single-file binary unpacks itself to a temporary directory on each launch, s
 
 ## Android app
 
-A native Android port (Kotlin, Jetpack Compose, Android 10+) lives in [`android/`](android/), app ID `com.bockelie.bebird`. **Work in progress:** so far it has the protocol core and frame reassembly with unit tests, and a placeholder screen; joining the scope's Wi-Fi and live video come next. Progress is tracked in [#8](https://github.com/aaronsb/bebird-viewer/issues/8).
+A native Android port (Kotlin, Jetpack Compose, Android 10+) lives in [`android/`](android/), app ID `com.bockelie.bebird`. **Work in progress:** so far it joins the scope's Wi-Fi (as an app-only network, so the phone's normal networking is untouched) and shows live video, rotated upright, with fps and battery. Light, snapshots and the rest come next. `adb logcat -s BebirdSpike` shows the session's progress. Progress is tracked in [#8](https://github.com/aaronsb/bebird-viewer/issues/8).
 
 ```sh
 make android-test   # JVM unit tests

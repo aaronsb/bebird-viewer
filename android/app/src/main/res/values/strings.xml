@@ -2,5 +2,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <resources>
     <string name="app_name">Bebird Viewer</string>
-    <string name="status_not_connected">Bebird Viewer — not connected</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
 </resources>
