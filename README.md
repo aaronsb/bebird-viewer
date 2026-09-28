@@ -5,7 +5,7 @@ A small Linux viewer for **Bebird "ES" Wi-Fi otoscope / ear cameras** that doesn
 - Live video (MJPEG, ~10 fps at 480×480)
 - Tip-light dimmer mapped onto the LED's visible range, applied after a short debounce and read back to confirm
 - Auto-rotate from the scope's built-in motion sensor, with a manual trim
-- Snapshots (as displayed) and recordings (raw stream, `.mkv`)
+- Snapshots (as displayed, with date, roll, light and battery in the EXIF metadata) and recordings (raw stream, `.mkv`)
 - Battery level and charging state
 
 > Not affiliated with or endorsed by Bebird. The protocol below was worked out for interoperability by observing the device on the network and by studying how the official Android app talks to it. No vendor code or firmware is included in this repository.
@@ -17,7 +17,7 @@ Tested with one device: model `ES`, firmware `4.0.24.997`, SoC Beken BK7231U. Ot
 ## Requirements
 
 - Linux (the tools use a Linux ioctl to find the Wi-Fi interface address)
-- Python 3.10+ with **PyQt6** (`pip install PyQt6` or your distro's package)
+- Python 3.10+ with **PyQt6** and **Pillow** (`pip install PyQt6 Pillow` or your distro's packages)
 - **ffmpeg** for recording (optional); `ffplay` for `grab.py --live` (optional)
 - A Wi-Fi interface you can dedicate to the scope while viewing
 
@@ -66,7 +66,7 @@ Every socket binds to the Wi-Fi interface's address, so nothing meant for the sc
 | Auto-rotate | `A` | keep the picture upright using the motion sensor |
 | Roll | — | live roll angle from the sensor |
 | Trim | `[` `]` | manual rotation added on top, 15° steps |
-| Snapshot | `S` | saves the displayed image to `~/Pictures/bebird/` |
+| Snapshot | `S` | saves the displayed image to `~/Pictures/bebird/`, with metadata (below) |
 | Record | `R` | records the raw stream to `~/Pictures/bebird/*.mkv` |
 | Reconnect | — | restart the session, e.g. after power-cycling the scope |
 | | `F` / `Esc` / `Q` | fullscreen / leave fullscreen / quit |
@@ -74,6 +74,20 @@ Every socket binds to the Wi-Fi interface's address, so nothing meant for the sc
 Light level, trim and auto-rotate are remembered in `~/.config/bebird/state.json`. On connect, the viewer waits for video, then re-applies the saved light level so the scope's state matches the UI.
 
 `BEBIRD_DEBUG=1 ./live.sh` prints per-second packet and frame counts.
+
+### Snapshot metadata
+
+Each snapshot records how it was taken, which makes a series of images (for example a daily healing log) self-describing:
+
+- **Standard EXIF:** date and time taken with timezone offset, Make/Model (`Bebird` / `ES`), Software (`bebird-viewer`), and Orientation "normal", since the rotation is already applied to the pixels.
+- **ImageDescription:** a readable line, e.g. `roll 47 deg, rotated 47 deg (auto) + trim 0 deg, light 100% (scope 50), battery 100% (battery)`.
+- **UserComment:** the same data as JSON, plus the scope's model, hardware and firmware.
+
+The scope's serial number and unique ID are deliberately left out, because these pictures tend to get shared. The scope seems to answer the board-info request only soon after power-on, so the viewer caches the last answer in `~/.config/bebird/state.json`.
+
+```sh
+exiftool -ImageDescription -UserComment ~/Pictures/bebird/*.jpg
+```
 
 ## Protocol
 

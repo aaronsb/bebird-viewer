@@ -14,6 +14,9 @@ Keys: L light on/off, Up/Down light +/-1, PgUp/PgDn light +/-10, A auto-rotate,
 """
 import fcntl, json, os, socket, struct, subprocess, sys, threading, time
 from datetime import datetime
+from io import BytesIO
+
+from PIL import Image
 
 from PyQt6.QtCore import QObject, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage, QKeySequence, QPainter, QPainterPath, QPixmap, QShortcut, QTransform
@@ -54,12 +57,14 @@ class Scope(QObject):
     frame = pyqtSignal(bytes, int)       # jpeg, angle in degrees
     battery = pyqtSignal(int, int)       # state, percent
     light = pyqtSignal(int)              # current light level from the scope
+    boardinfo = pyqtSignal(dict)         # model, firmware, ... (requested on connect)
     status = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
         self.video = self.ctrl = None
         self.running = False
+        self._info_buf = b""
 
     def _sock(self, ip, port, local_port=0):
         # Bind to the Wi-Fi address so nothing goes out the wired LAN (which also has a 192.168.5.1)
@@ -101,7 +106,16 @@ class Scope(QObject):
         self.send(b"\x66\x3c\xff")  # commit: the level only takes effect after this
 
     def _handle_ctrl(self, b):
-        if len(b) == 4:
+        # board info is JSON and may span several datagrams
+        if self._info_buf or b.lstrip().startswith(b"{"):
+            self._info_buf += b
+            if self._info_buf.rstrip().endswith(b"}"):
+                try:
+                    self.boardinfo.emit(json.loads(self._info_buf))
+                except ValueError:
+                    pass
+                self._info_buf = b""
+        elif len(b) == 4:
             state, pct = int.from_bytes(b[:2], "big"), int.from_bytes(b[2:], "big")
             self.battery.emit(state, pct)
         elif len(b) == 1:
@@ -111,7 +125,16 @@ class Scope(QObject):
         parts, fid, frames = {}, None, 0
         self.stats = {"pkts": 0, "done": 0, "dropped": 0, "superseded": 0}
         t_start = last_poll = last_rx = time.time()
-        self.video.send(STOP); time.sleep(0.1)  # clear any session left on our port
+        self.video.send(STOP)                   # clear any session left on our port
+        # board info (for snapshot metadata). The scope seems to answer this only soon after
+        # power-on, so the viewer also caches the last answer it got.
+        self.send(b"\x66\x39\x01\x01")
+        deadline = time.time() + 0.6
+        while time.time() < deadline:
+            try:
+                self._handle_ctrl(self.ctrl.recv(4096))
+            except (BlockingIOError, ConnectionRefusedError, OSError):
+                time.sleep(0.02)
         self.video.send(START)                  # then exactly one START
         lost = False
         while self.running:
@@ -120,7 +143,7 @@ class Scope(QObject):
                 self.send(BATTERY); last_poll = now
             try:
                 while True:
-                    self._handle_ctrl(self.ctrl.recv(64))
+                    self._handle_ctrl(self.ctrl.recv(4096))  # board info is ~1.4 KB
             except (BlockingIOError, ConnectionRefusedError, OSError):
                 pass
             if frames == 0 and now - t_start > 2:  # app does this only before the first frame
@@ -230,9 +253,11 @@ class Viewer(QWidget):
         self.autorot.setChecked(self.saved.get("autorotate", True))
         self.scope.frame.connect(self.on_frame)
         self.scope.battery.connect(self.on_battery)
+        self.scope.boardinfo.connect(self.on_boardinfo)
         self.scope.light.connect(self.on_reported_light)
         self.scope.status.connect(self.status.setText)
         self.bat_text = ""
+        self.board, self.battery = self.saved.get("scope", {}), None
         t = QTimer(self); t.timeout.connect(self.tick); t.start(1000)
         self.resize(720, 800)
         if not self.scope.start():
@@ -323,7 +348,14 @@ class Viewer(QWidget):
         super().resizeEvent(e)
         self.show_image()
 
+    def on_boardinfo(self, info):
+        # keep only non-identifying fields; cached so snapshots have them even when the
+        # scope doesn't answer (it seems to reply only soon after power-on)
+        self.board = {k: info[k] for k in ("brand", "model", "hardware", "firmware", "soc") if k in info}
+        self.save_state()
+
     def on_battery(self, state, pct):
+        self.battery = (pct, BAT_STATE.get(state, str(state)))
         self.bat_text = f"battery {pct}% ({BAT_STATE.get(state, state)})"
 
     def tick(self):
@@ -340,10 +372,50 @@ class Viewer(QWidget):
         return os.path.join(OUT_DIR, datetime.now().strftime(f"bebird-%Y%m%d-%H%M%S.{ext}"))
 
     def snapshot(self):
-        if self.img is not None:
-            path = self._path("jpg")
-            self.img.save(path, "JPEG", 95)
-            self.status.setText(f"saved {path}")
+        if self.img is None:
+            return
+        now = datetime.now().astimezone()
+        auto = self.autorot.isChecked()
+        trim = self.offset.value()
+        applied = (trim + (self.shown_angle if auto else 0)) % 360
+        meta = {
+            "taken": now.isoformat(timespec="seconds"),
+            "roll_deg": self.angle,
+            "rotation_applied_deg": applied,
+            "auto_rotate": auto,
+            "trim_deg": trim,
+            "light_pct": self.light_level,
+            "light_scope_level": self.to_scope(self.light_level),
+            "battery_pct": self.battery[0] if self.battery else None,
+            "battery_state": self.battery[1] if self.battery else None,
+            # deliberately no serial/uuid: snapshots get shared with doctors and others
+            "scope": {k: self.board.get(k) for k in ("brand", "model", "hardware", "firmware", "soc")
+                      if self.board.get(k) is not None},
+        }
+        # EXIF text fields are ASCII-only, so no degree signs here
+        desc = (f"roll {self.angle} deg, rotated {applied} deg ({'auto' if auto else 'manual'}) + trim {trim} deg, "
+                f"light {self.light_level}% (scope {meta['light_scope_level']})")
+        if self.battery:
+            desc += f", battery {self.battery[0]}% ({self.battery[1]})"
+
+        exif = Image.Exif()
+        exif[0x0112] = 1                                     # Orientation: rotation is already in the pixels
+        exif[0x010E] = desc                                  # ImageDescription
+        exif[0x010F] = "Bebird"                              # Make
+        exif[0x0110] = str(self.board.get("model", "ES"))    # Model
+        exif[0x0131] = "bebird-viewer"                       # Software
+        exif[0x0132] = now.strftime("%Y:%m:%d %H:%M:%S")     # DateTime
+        sub = exif.get_ifd(0x8769)                           # Exif sub-IFD
+        sub[0x9003] = now.strftime("%Y:%m:%d %H:%M:%S")      # DateTimeOriginal
+        sub[0x9011] = now.strftime("%z")[:3] + ":" + now.strftime("%z")[3:]  # OffsetTimeOriginal
+        sub[0x9286] = b"ASCII\0\0\0" + json.dumps(meta).encode()  # UserComment (machine-readable)
+
+        rgb = self.img.convertToFormat(QImage.Format.Format_RGB888)
+        pil = Image.frombuffer("RGB", (rgb.width(), rgb.height()), rgb.constBits().asstring(rgb.sizeInBytes()),
+                               "raw", "RGB", rgb.bytesPerLine(), 1)
+        path = self._path("jpg")
+        pil.save(path, "JPEG", quality=95, exif=exif)
+        self.status.setText(f"saved {path}")
 
     def toggle_record(self, on=None):
         on = self.rec_btn.isChecked() if on is None else on
@@ -373,6 +445,7 @@ class Viewer(QWidget):
         self.scope = Scope()
         self.scope.frame.connect(self.on_frame)
         self.scope.battery.connect(self.on_battery)
+        self.scope.boardinfo.connect(self.on_boardinfo)
         self.scope.light.connect(self.on_reported_light)
         self.scope.status.connect(self.status.setText)
         self.asserted = False
@@ -405,7 +478,8 @@ class Viewer(QWidget):
         os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
         with open(STATE_FILE, "w") as f:
             json.dump({"light": self.light_level, "light_before_off": self.light_before_off,
-                       "offset": self.offset.value(), "autorotate": self.autorot.isChecked()}, f)
+                       "offset": self.offset.value(), "autorotate": self.autorot.isChecked(),
+                       "scope": self.board}, f)
 
     def closeEvent(self, e):
         self.save_state()
