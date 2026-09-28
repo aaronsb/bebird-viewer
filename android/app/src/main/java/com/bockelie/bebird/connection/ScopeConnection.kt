@@ -72,6 +72,13 @@ class ScopeConnection(
     private var session: ScopeSession? = null
     private var sessionJobs: Job? = null  // following the session's stats and light replies
     private var streaming = false          // the current session has shown a frame
+        set(value) {
+            field = value
+            _streaming.value = value
+        }
+    private val _streaming = MutableStateFlow(false)
+    /** The current session has shown a frame: what [powerOff] needs. */
+    val isStreaming: StateFlow<Boolean> = _streaming.asStateFlow()
     private var remembered: Identify.Result? = null  // for the current network
     // The request the user last asked for; null after disconnect(). A fallback runs only for it,
     // so a late Unavailable can't file a request after Disconnect or leaving the app.
@@ -148,6 +155,21 @@ class ScopeConnection(
     fun disconnect() {
         wanted = null
         gate.disconnect(stopSession())
+    }
+
+    /**
+     * Switch the scope off (see [ScopeSession.powerOff]), then release the network once that
+     * has gone out, as [disconnect] does; the device stays remembered. Only while video is
+     * streaming, so the scope is known to be there and listening: otherwise nothing is sent
+     * and this returns false. For the menu item, and for the end of the background grace
+     * period (#18), which disconnects instead when this returns false.
+     */
+    fun powerOff(): Boolean {
+        if (session == null || !streaming) return false
+        Log.i(TAG, "power off")
+        wanted = null
+        gate.disconnect(stopSession(ScopeSession::powerOff, "powered off"))
+        return true
     }
 
     fun rename(device: KnownDevice, nickname: String?) = edit { it.rename(device.key, nickname) }
@@ -228,15 +250,15 @@ class ScopeConnection(
         s.start()
     }
 
-    private fun stopSession(): Future<*>? {
+    private fun stopSession(end: (ScopeSession) -> Future<*> = ScopeSession::stop, status: String = "stopped"): Future<*>? {
         val s = session ?: return null
         session = null
         streaming = false
         sessionJobs?.cancel()
         sessionJobs = null
         pumpLight()  // offline now: drop any check in progress
-        _stats.value = s.stats.value.copy(frame = null, fps = 0, status = "stopped", beacon = null)
-        return s.stop()
+        _stats.value = s.stats.value.copy(frame = null, fps = 0, status = status, beacon = null)
+        return end(s)
     }
 
     /**

@@ -15,6 +15,7 @@ import java.io.IOException
 import java.net.PortUnreachableException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -28,14 +29,25 @@ class ScopeSessionTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val realClock = { System.nanoTime() / 1_000_000 }
 
+    // Set by the tests that call powerOff(): the only ones that may send 66 3E.
+    private var poweringOff = false
+
     @After fun tearDown() {
         scope.cancel()
         videoOps.shutdownNow()
-        // Whatever a test did, the session only ever sent documented commands; never 66 3F / 66 3E.
-        synchronized(log) { log.forEach { assertTrue("sent ${it.bytes}", allowed(it.bytes)) } }
+        // Whatever a test did, the session only ever sent documented commands: never 66 3F, and
+        // 66 3E only when the test called powerOff().
+        synchronized(log) {
+            log.forEach { assertTrue("sent ${it.bytes}", allowed(it.bytes) || poweringOff && it.bytes == POWER_OFF) }
+        }
     }
 
     private fun allowed(b: List<Byte>) = FakeLinks.allowed(b)
+
+    private fun powerOff(s: ScopeSession): Future<*> {
+        poweringOff = true
+        return s.powerOff()
+    }
 
     private fun session(
         timing: ScopeSession.Timing = ScopeSession.Timing(preStartMs = 20, tickMs = 20, retryMs = 60_000),
@@ -281,6 +293,88 @@ class ScopeSessionTest {
         assertTrue(stopSeenAtRelease)
     }
 
+    @Test fun powerOffSendsStopThen663EAndNothingAfter() {
+        val s = session()
+        s.start()
+        await("START") { starts() == 1 }
+        Thread.sleep(100)  // several keepalive ticks
+        powerOff(s).get(1, TimeUnit.SECONDS)
+        s.setLight(40)     // too late: the session is stopped
+        s.queryLight()
+        s.stop()
+        Thread.sleep(200)  // any tick still in flight would show up now
+
+        val sends = synchronized(log) { log.toList() }
+        assertEquals(1, sends.count { it.bytes == POWER_OFF })
+        val tail = sends.takeLast(2)
+        assertEquals(listOf(Protocol.STOP.toList(), POWER_OFF), tail.map { it.bytes })
+        assertEquals(Protocol.CLIENT_VIDEO_PORT, tail[0].localPort)
+        assertEquals(Protocol.DATA_PORT, tail[0].remotePort)
+        assertEquals(Protocol.COMMAND_PORT, tail[1].remotePort)
+        assertTrue(video().isClosed && command().isClosed)
+        assertEquals(listOf(Protocol.STOP, Protocol.START, Protocol.STOP).map { it.toList() }, videoSends().map { it.bytes })
+        assertEquals("powered off", s.stats.value.status)
+    }
+
+    @Test fun powerOffBeforeTheLinksOpenSendsNothing() {
+        val s = session()
+        powerOff(s).get(1, TimeUnit.SECONDS)
+        s.start()
+        Thread.sleep(200)
+        assertEquals(emptyList<Sent>(), links.sends())
+    }
+
+    @Test fun powerOffAfterStopSendsNothing() {
+        val s = session()
+        s.start()
+        await("START") { starts() == 1 }
+        val stopped = s.stop()
+        stopped.get(1, TimeUnit.SECONDS)
+        val before = links.sends().size
+        assertTrue(powerOff(s) === stopped)
+        Thread.sleep(100)
+        assertEquals(before, links.sends().size)
+        assertTrue(links.sends().none { it.bytes == POWER_OFF })
+    }
+
+    @Test fun commandsQueuedBeforePowerOffDoNotGoOutAfterIt() {
+        // Light and keepalive commands already queued when powerOff() runs are dropped on the
+        // executor: STOP and 66 3E are the last two datagrams.
+        val s = session(ScopeSession.Timing(preStartMs = 10, tickMs = 10, retryMs = 60_000))
+        s.start()
+        await("START") { starts() == 1 }
+        val gate = CountDownLatch(1)
+        videoOps.execute { gate.await() }  // hold the executor
+        s.setLight(40)
+        s.queryLight()
+        Thread.sleep(100)                  // several keepalive ticks queue up behind it
+        val done = powerOff(s)
+        s.setLight(60)                     // and one more after it
+        val before = synchronized(log) { log.size }
+        gate.countDown()
+        done.get(1, TimeUnit.SECONDS)
+        Thread.sleep(100)
+        val after = synchronized(log) { log.drop(before) }
+        assertEquals(listOf(Protocol.STOP.toList(), POWER_OFF), after.map { it.bytes })
+        assertEquals(listOf(Protocol.DATA_PORT, Protocol.COMMAND_PORT), after.map { it.remotePort })
+    }
+
+    @Test fun releaseWaitsForThePowerOffSends() {
+        val s = session()
+        s.start()
+        await("START") { starts() == 1 }
+        video().sendDelayMs = 100    // a slow STOP...
+        command().sendDelayMs = 200  // ...and a slow 66 3E
+        var seenAtRelease: List<Byte>? = null
+        var closedAtRelease = false
+        afterStop(powerOff(s), timeoutMs = 2000) {
+            seenAtRelease = links.sends().last().bytes
+            closedAtRelease = video().isClosed && command().isClosed
+        }.join(3000)
+        assertEquals(POWER_OFF, seenAtRelease)
+        assertTrue(closedAtRelease)
+    }
+
     @Test fun releaseHappensEvenIfStopHangs() {
         val s = session()
         s.start()
@@ -291,5 +385,9 @@ class ScopeSessionTest {
         afterStop(s.stop(), timeoutMs = 100) { released = true }.join(2000)
         assertTrue(released)
         assertTrue((System.nanoTime() - t0) / 1_000_000 < 1000)
+    }
+
+    private companion object {
+        val POWER_OFF = listOf<Byte>(0x66, 0x3E)
     }
 }

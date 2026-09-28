@@ -39,8 +39,9 @@ import com.bockelie.bebird.settings.Labels
 import com.bockelie.bebird.settings.ThemeMode
 
 /**
- * The gear menu: the overlay (status band and circle) and the theme. It takes values and
- * callbacks only, so it can be previewed and extended (e.g. power-off, #19).
+ * The gear menu: the overlay (status band and circle), the theme, and last Power off scope,
+ * which works only once video has started ([onPowerOff] should ask for confirmation first).
+ * It takes values and callbacks only, so it can be previewed and extended.
  */
 @Composable
 fun SettingsMenu(
@@ -48,6 +49,8 @@ fun SettingsMenu(
     onTheme: (ThemeMode) -> Unit,
     overlay: Boolean,
     onOverlay: (Boolean) -> Unit,
+    canPowerOff: Boolean,
+    onPowerOff: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -77,6 +80,12 @@ fun SettingsMenu(
                     },
                 )
             }
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.power_off_title)) },
+                enabled = canPowerOff,
+                onClick = { open = false; onPowerOff() },
+            )
         }
     }
 }
@@ -121,6 +130,18 @@ fun LabelDialog(current: String, onDone: (String) -> Unit, onCancel: () -> Unit)
             )
         },
         confirmButton = { TextButton(onClick = { onDone(text) }) { Text(stringResource(R.string.save)) } },
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+/** Confirm Power off scope: the scope stays off until its power button is pressed. */
+@Composable
+fun PowerOffDialog(onConfirm: () -> Unit, onCancel: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(R.string.power_off_title)) },
+        text = { Text(stringResource(R.string.power_off_message)) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(stringResource(R.string.power_off)) } },
         dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
     )
 }

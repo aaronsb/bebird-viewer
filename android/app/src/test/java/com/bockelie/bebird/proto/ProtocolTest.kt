@@ -7,6 +7,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import kotlin.math.roundToInt
 
 class ProtocolTest {
@@ -29,20 +30,47 @@ class ProtocolTest {
         assertArrayEquals(hex("66 3C 1E"), Protocol.lightSet(30))
     }
 
-    @Test fun noPublicCommandIsForbidden() {
+    private fun isPowerOff(u: List<Int>) = u.size >= 2 && u[0] == 0x66 && u[1] == 0x3E
+    private fun isCameraOff(u: List<Int>) = u.size >= 3 && u[0] == 0x66 && u[1] == 0x3F && u[2] == 0x01
+
+    @Test fun powerOffIsTheOnlyProducerOf663E_and663F01IsNeverBuilt() {
         // 66 3E powers the scope off; 66 3F 01 .. switches the ES camera off until a power cycle.
-        // Enumerate every public no-argument ByteArray accessor, plus the parameterised builders.
+        // Enumerate every no-argument ByteArray accessor the JVM sees (internal ones included,
+        // under a mangled name), plus the parameterised builders.
         val accessors = Protocol::class.java.methods.filter {
             it.parameterCount == 0 && it.returnType == ByteArray::class.java
         }
-        assertTrue("found ${accessors.map { it.name }}", accessors.size >= 6)
-        val commands = accessors.map { it.invoke(Protocol) as ByteArray } +
-            (0..100).flatMap { Protocol.lightCommands(it) }
-        for (c in commands) {
+        assertTrue("found ${accessors.map { it.name }}", accessors.size >= 7)
+        val producers = mutableListOf<String>()
+        for (m in accessors) {
+            val c = m.invoke(Protocol) as ByteArray
             val u = c.map { it.toInt() and 0xFF }
-            assertFalse("forbidden ${hexOf(c)}", u.size >= 2 && u[0] == 0x66 && u[1] == 0x3E)
-            assertFalse("forbidden ${hexOf(c)}", u.size >= 3 && u[0] == 0x66 && u[1] == 0x3F && u[2] == 0x01)
+            assertFalse("forbidden ${hexOf(c)} from ${m.name}", isCameraOff(u))
+            if (isPowerOff(u)) producers += m.name
         }
+        assertEquals(1, producers.size)
+        assertTrue(producers.single(), producers.single().startsWith("powerOff"))
+        for (c in (0..100).flatMap { Protocol.lightCommands(it) }) {
+            val u = c.map { it.toInt() and 0xFF }
+            assertFalse("forbidden ${hexOf(c)}", isPowerOff(u) || isCameraOff(u))
+        }
+        assertArrayEquals(hex("66 3E"), Protocol.powerOff())
+    }
+
+    @Test fun powerOffIsCalledOnlyByScopeSessionPowerOff() {
+        // The fence in the sources: one call site, in ScopeSession, and no other 0x3E byte anywhere.
+        val root = File("src/main/java")
+        assertTrue("run from the module directory: ${root.absolutePath}", root.isDirectory)
+        val sources = root.walk().filter { it.isFile && it.extension == "kt" }.toList()
+        assertTrue(sources.size > 10)
+        fun count(f: File, what: Regex) = what.findAll(f.readText()).count()
+        // Everything else (ScopeConnection, the UI, #18's grace period) goes through ScopeSession.powerOff.
+        val call = Regex("""Protocol\.powerOff\b""")
+        assertEquals(listOf("ScopeSession.kt"), sources.filter { count(it, call) > 0 }.map { it.name })
+        assertEquals(1, count(sources.single { it.name == "ScopeSession.kt" }, call))
+        val literal = Regex("""0x3[Ee]\b""")
+        assertEquals(listOf("Protocol.kt"), sources.filter { count(it, literal) > 0 }.map { it.name })
+        assertEquals(1, count(sources.single { it.name == "Protocol.kt" }, literal))
     }
 
     private fun hexOf(c: ByteArray) = c.joinToString(" ") { "%02X".format(it) }
