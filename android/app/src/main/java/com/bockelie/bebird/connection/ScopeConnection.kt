@@ -45,9 +45,9 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
     private val _book = MutableStateFlow(store.load())
     val book: StateFlow<DeviceBook> = _book.asStateFlow()
 
-    private val _inRange = MutableStateFlow<List<ScopeWifi.Identity>>(emptyList())
-    /** Scopes in the phone's last Wi-Fi scan; see [refreshInRange]. */
-    val inRange: StateFlow<List<ScopeWifi.Identity>> = _inRange.asStateFlow()
+    private val _inRange = MutableStateFlow<List<ScopeWifi.Identity>?>(null)
+    /** Scopes in the phone's last Wi-Fi scan, or null if scans aren't available; see [refreshInRange]. */
+    val inRange: StateFlow<List<ScopeWifi.Identity>?> = _inRange.asStateFlow()
 
     private val gate = NetworkGate(scope, wifi::stop, STOP_TIMEOUT_MS)
     private var session: ScopeSession? = null
@@ -59,6 +59,10 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
             wifi.state.collect { state ->
                 when (state) {
                     is ScopeWifi.State.Available -> startSession(state)
+                    is ScopeWifi.State.Unavailable -> {
+                        stopSession()
+                        exactFailed(state.target)
+                    }
                     else -> stopSession()
                 }
             }
@@ -78,6 +82,13 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
 
     fun connectTo(ssid: String, bssid: String?) = request(Target.Exact(ssid, bssid))
 
+    /** Make [device] the one Connect goes to; if connected, switch to it now. */
+    fun select(device: KnownDevice) {
+        val active = wifi.state.value.let { it !is ScopeWifi.State.Idle && it !is ScopeWifi.State.Unavailable && it !is ScopeWifi.State.Failed }
+        edit { it.select(device.key) }
+        if (active) connect()
+    }
+
     /** The picker, listing every "bebird*" network, to join a different scope. */
     fun pickDifferent() = request(Target.AnyScope)
 
@@ -96,9 +107,26 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) { _inRange.value = wifi.scopesInRange() }
     }
 
-    private fun request(t: Target) {
+    private fun request(t: Target, why: String? = null) {
         disconnect()  // whatever is filed or streaming now; the gate orders the new request after it
-        gate.connect { wifi.start(t) }
+        gate.connect { wifi.start(t, why) }
+    }
+
+    /**
+     * An exact request with a BSSID found nothing. If that BSSID was only derived from the
+     * beacon, drop it from the device. Either way ask once more by SSID alone, which Android
+     * may show its picker for; a request without a BSSID has no fallback, so this never loops.
+     */
+    private fun exactFailed(target: Target) {
+        val exact = target as? Target.Exact ?: return
+        val fallback = target.fallback() ?: return
+        val bssid = exact.bssid!!
+        val derived = _book.value.devices.any { it.bssid == bssid && !it.bssidConfirmed }
+        Log.w(TAG, "exact request ssid=${exact.ssid} bssid=$bssid found nothing; " +
+            (if (derived) "dropping that derived BSSID; " else "keeping that confirmed BSSID; ") +
+            "retrying by SSID only (a picker here means the BSSID was wrong or the scope is off)")
+        edit { it.exactFailed(bssid, bssid) }
+        request(fallback, "fallback after bssid $bssid found nothing")
     }
 
     private fun edit(change: (DeviceBook) -> DeviceBook) {

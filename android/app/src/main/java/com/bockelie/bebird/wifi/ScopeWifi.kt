@@ -37,8 +37,8 @@ class ScopeWifi(context: Context) {
         /** [target] is the request that joined it, so callers know which scope this is. */
         data class Available(val network: Network, val target: Target) : State
         data object Lost : State
-        /** The user dismissed the system's network picker, or no scope was found. */
-        data object Unavailable : State
+        /** The user dismissed the system's picker, or [target] was not found. */
+        data class Unavailable(val target: Target) : State
         /** The request could not be filed, e.g. the permission was revoked. */
         data class Failed(val reason: String) : State
     }
@@ -52,6 +52,9 @@ class ScopeWifi(context: Context) {
          * without the picker from the second time on; with only an SSID it still asks.
          */
         data class Exact(val ssid: String, val bssid: String?) : Target
+
+        /** What to ask for when this found nothing: the SSID alone, once; null if nothing is left. */
+        fun fallback(): Target? = (this as? Exact)?.takeIf { it.bssid != null }?.copy(bssid = null)
     }
 
     /** The connected network as Android reports it; either field is null when redacted. */
@@ -70,7 +73,7 @@ class ScopeWifi(context: Context) {
     private var current: Callback? = null  // guarded by lock
 
     /** File the network request for [target]. Does nothing while a request is already filed. */
-    fun start(target: Target) {
+    fun start(target: Target, why: String? = null) {
         // Built inside a try: a bad stored SSID or BSSID must fail this request, not the app.
         val request = try {
             val specifier = WifiNetworkSpecifier.Builder().apply {
@@ -98,7 +101,7 @@ class ScopeWifi(context: Context) {
             Target.AnyScope -> "prefix \"$SSID_PREFIX\" (picker expected)"
             is Target.Exact -> if (target.bssid != null) "exact ssid=${target.ssid} bssid=${target.bssid}"
                 else "exact ssid=${target.ssid}, no bssid (picker expected)"
-        }
+        } + (why?.let { ", $it" } ?: "")
         val cb = newCallback(target, kind)
         // Held across requestNetwork so a fast first callback waits until `current` is set.
         synchronized(lock) {
@@ -132,19 +135,27 @@ class ScopeWifi(context: Context) {
 
     /**
      * Scope networks in the phone's last Wi-Fi scan, as (SSID, BSSID) with BSSID null where
-     * redacted. Doesn't start a scan. Empty (and logged) if the permission doesn't allow it.
+     * redacted. Doesn't start a scan. Null when scan results aren't available to the app
+     * (refused, or no networks at all, which is what Android returns without location access).
      */
     @Suppress("DEPRECATION")  // ScanResult.SSID: its replacement getWifiSsid() is API 33+
-    fun scopesInRange(): List<Identity> = try {
-        val all = wm.scanResults.orEmpty()
+    fun scopesInRange(): List<Identity>? {
+        val all = try {
+            wm.scanResults.orEmpty()
+        } catch (e: SecurityException) {
+            Log.w(TAG, "scan results not allowed: ${e.message}")
+            return null
+        }
+        if (all.isEmpty()) {
+            Log.i(TAG, "scan results: none (no location access?); hiding in-range info")
+            return null
+        }
         val scopes = all.filter { WifiIds.isScope(it.SSID) }.map { Identity(WifiIds.ssid(it.SSID), WifiIds.bssid(it.BSSID)) }
         Log.i(TAG, "scan results: ${all.size} networks, scopes: " +
             scopes.joinToString { "${it.ssid}/${it.bssid ?: "bssid redacted"}" }.ifEmpty { "none" })
-        scopes.distinct()
-    } catch (e: SecurityException) {
-        Log.w(TAG, "scan results not allowed: ${e.message}")
-        emptyList()
+        return scopes.distinct()
     }
+
 
     private fun newCallback(target: Target, kind: String): Callback {
         val now = SystemClock.elapsedRealtime()
@@ -214,7 +225,7 @@ class ScopeWifi(context: Context) {
         override fun onUnavailable() = ifCurrent {
             val ms = SystemClock.elapsedRealtime() - requestedAt
             Log.i(TAG, "unavailable after $ms ms (request: $kind)")
-            _state.value = State.Unavailable
+            _state.value = State.Unavailable(target)
             current = null  // the framework has already released the request
         }
     }

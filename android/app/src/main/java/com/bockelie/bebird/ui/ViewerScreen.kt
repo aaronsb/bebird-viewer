@@ -9,22 +9,36 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,12 +57,12 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bockelie.bebird.R
 import com.bockelie.bebird.connection.ScopeConnection
+import com.bockelie.bebird.devices.DeviceBook
 import com.bockelie.bebird.devices.KnownDevice
 import com.bockelie.bebird.scope.ScopeSession
 import com.bockelie.bebird.wifi.ScopeWifi
@@ -66,7 +80,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
     val book by conn.book.collectAsStateWithLifecycle()
     val inRange by conn.inRange.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val idle = wifi == ScopeWifi.State.Idle || wifi == ScopeWifi.State.Unavailable || wifi is ScopeWifi.State.Failed
+    val idle = wifi == ScopeWifi.State.Idle || wifi is ScopeWifi.State.Unavailable || wifi is ScopeWifi.State.Failed
 
     // Every way of joining needs the permission first; the pending action runs once it's granted.
     var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -83,8 +97,9 @@ fun ViewerScreen(vm: ViewerViewModel) {
         }
     }
 
+    var choosing by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<KnownDevice?>(null) }
-    LaunchedEffect(idle) { if (idle) conn.refreshInRange() }
+    LaunchedEffect(idle, choosing) { if (idle || choosing) conn.refreshInRange() }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
         Column(
@@ -92,18 +107,14 @@ fun ViewerScreen(vm: ViewerViewModel) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            val last = book.last
-            Button(onClick = { if (idle) withPermission(conn::connect) else conn.disconnect() }) {
-                Text(
-                    when {
-                        !idle -> stringResource(R.string.disconnect)
-                        last != null -> stringResource(R.string.connect_to, last.label)
-                        else -> stringResource(R.string.connect)
-                    }
-                )
+            val current = book.last
+            // The device selector: what Connect goes to, and where devices are managed.
+            OutlinedButton(onClick = { choosing = true }) {
+                Text(current?.label ?: stringResource(R.string.no_device))
+                Icon(Icons.Default.ArrowDropDown, contentDescription = stringResource(R.string.choose_device))
             }
-            TextButton(onClick = { withPermission(conn::pickDifferent) }) {
-                Text(stringResource(R.string.pick_different))
+            Button(onClick = { if (idle) withPermission(conn::connect) else conn.disconnect() }) {
+                Text(stringResource(if (idle) R.string.connect else R.string.disconnect))
             }
             Text(statusLine(wifi, stats), style = MaterialTheme.typography.bodyMedium)
             Box(
@@ -120,50 +131,104 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     )
                 }
             }
-            Devices(conn, book.sorted, inRange, onRename = { renaming = it }, withPermission = ::withPermission)
         }
     }
 
-    renaming?.let { device -> RenameDialog(device, onDone = { name -> conn.rename(device, name); renaming = null }, onCancel = { renaming = null }) }
+    if (choosing) {
+        DeviceSheet(
+            book = book,
+            inRange = inRange,
+            onDismiss = { choosing = false },
+            onSelect = { choosing = false; conn.select(it) },
+            onPickDifferent = { choosing = false; withPermission(conn::pickDifferent) },
+            onConnectNew = { s -> choosing = false; withPermission { conn.connectTo(s.ssid!!, s.bssid) } },
+            onRename = { renaming = it },
+            onForget = conn::forget,
+        )
+    }
+    renaming?.let { device ->
+        RenameDialog(device, onDone = { name -> conn.rename(device, name); renaming = null }, onCancel = { renaming = null })
+    }
+}
+
+/**
+ * Known devices (select one to make it current), each with Rename / Forget in an overflow
+ * menu, and "Pick a different device". Scopes in range come from the phone's last scan; when
+ * the app can't see scans (no location access), nothing about range is shown.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DeviceSheet(
+    book: DeviceBook,
+    inRange: List<ScopeWifi.Identity>?,
+    onDismiss: () -> Unit,
+    onSelect: (KnownDevice) -> Unit,
+    onPickDifferent: () -> Unit,
+    onConnectNew: (ScopeWifi.Identity) -> Unit,
+    onRename: (KnownDevice) -> Unit,
+    onForget: (KnownDevice) -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
+            Text(
+                stringResource(R.string.known_devices),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            if (book.devices.isEmpty()) {
+                Text(
+                    stringResource(R.string.no_known_devices),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+            for (d in book.sorted) {
+                val near = inRange?.any { d.matches(it.ssid, it.bssid) }
+                ListItem(
+                    modifier = Modifier.clickable { onSelect(d) },
+                    leadingContent = { RadioButton(selected = d.key == book.lastKey, onClick = { onSelect(d) }) },
+                    headlineContent = { Text(d.label) },
+                    supportingContent = {
+                        Text(
+                            listOfNotNull(
+                                d.ssid.takeIf { d.nickname != null },
+                                DateUtils.getRelativeTimeSpanString(d.lastSeen).toString(),
+                                stringResource(R.string.in_range).takeIf { near == true },
+                            ).joinToString(" · ")
+                        )
+                    },
+                    trailingContent = { DeviceMenu(onRename = { onRename(d) }, onForget = { onForget(d) }) },
+                )
+            }
+            // Scopes in the last scan that aren't known yet (only when scans are visible at all).
+            inRange.orEmpty().filter { s -> s.ssid != null && book.devices.none { it.matches(s.ssid, s.bssid) } }.forEach { s ->
+                ListItem(
+                    modifier = Modifier.clickable { onConnectNew(s) },
+                    headlineContent = { Text(s.ssid!!) },
+                    supportingContent = { Text(stringResource(R.string.in_range_new)) },
+                )
+            }
+            HorizontalDivider()
+            ListItem(
+                modifier = Modifier.clickable(onClick = onPickDifferent),
+                leadingContent = { Icon(Icons.Default.Add, contentDescription = null) },
+                headlineContent = { Text(stringResource(R.string.pick_different)) },
+                supportingContent = { Text(stringResource(R.string.pick_different_hint)) },
+            )
+        }
+    }
 }
 
 @Composable
-private fun Devices(
-    conn: ScopeConnection,
-    devices: List<KnownDevice>,
-    inRange: List<ScopeWifi.Identity>,
-    onRename: (KnownDevice) -> Unit,
-    withPermission: (() -> Unit) -> Unit,
-) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(stringResource(R.string.known_devices), style = MaterialTheme.typography.titleSmall)
-        if (devices.isEmpty()) Text(stringResource(R.string.no_known_devices), style = MaterialTheme.typography.bodySmall)
-        for (d in devices) {
-            HorizontalDivider()
-            val near = inRange.any { d.matches(it.ssid, it.bssid) }
-            Text(d.label, fontWeight = FontWeight.Bold)
-            Text(
-                listOfNotNull(
-                    d.ssid.takeIf { d.nickname != null },
-                    d.bssid ?: stringResource(R.string.bssid_unknown),
-                    DateUtils.getRelativeTimeSpanString(d.lastSeen).toString(),
-                    stringResource(R.string.in_range).takeIf { near },
-                ).joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Row {
-                TextButton(onClick = { withPermission { conn.connectTo(d.ssid, d.bssid) } }) { Text(stringResource(R.string.connect)) }
-                TextButton(onClick = { onRename(d) }) { Text(stringResource(R.string.rename)) }
-                TextButton(onClick = { conn.forget(d) }) { Text(stringResource(R.string.forget)) }
-            }
+private fun DeviceMenu(onRename: () -> Unit, onForget: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.device_actions))
         }
-        // Scopes in the last scan that we haven't joined yet; Android asks once for each.
-        val unknown = inRange.filter { s -> s.ssid != null && devices.none { it.matches(s.ssid, s.bssid) } }
-        for (s in unknown) {
-            HorizontalDivider()
-            Text(s.ssid!!, fontWeight = FontWeight.Bold)
-            Text(listOfNotNull(s.bssid, stringResource(R.string.in_range_new)).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { withPermission { conn.connectTo(s.ssid, s.bssid) } }) { Text(stringResource(R.string.connect)) }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text(stringResource(R.string.rename)) }, onClick = { open = false; onRename() })
+            DropdownMenuItem(text = { Text(stringResource(R.string.forget)) }, onClick = { open = false; onForget() })
         }
     }
 }
@@ -188,7 +253,7 @@ private fun statusLine(wifi: ScopeWifi.State, s: ScopeSession.Stats): String {
         ScopeWifi.State.Requesting -> "joining scope Wi-Fi…"
         is ScopeWifi.State.Available -> "on scope Wi-Fi"
         ScopeWifi.State.Lost -> "scope Wi-Fi lost"
-        ScopeWifi.State.Unavailable -> "no scope network (cancelled or not found)"
+        is ScopeWifi.State.Unavailable -> "no scope network (cancelled or not found)"
         is ScopeWifi.State.Failed -> "could not request the network: ${wifi.reason}"
     }
     val battery = s.battery?.let { "${it.percent}% (${it.stateName})" } ?: "–"

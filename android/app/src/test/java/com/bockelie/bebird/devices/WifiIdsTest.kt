@@ -30,6 +30,19 @@ class WifiIdsTest {
         assertNull(WifiIds.bssid(null))
     }
 
+    @Test fun apBssidIsStationMacPlusOne() {
+        // the pattern seen on the ES (values made up): station ...9E, access point ...9F
+        assertEquals("12:34:56:78:9A:9F", WifiIds.apBssidFromStationMac("123456789A9E"))
+        // carry across one byte, and across several
+        assertEquals("12:34:56:78:9B:00", WifiIds.apBssidFromStationMac("12:34:56:78:9A:FF"))
+        assertEquals("12:35:00:00:00:00", WifiIds.apBssidFromStationMac("12:34:FF:FF:FF:FF"))
+        // wrapping would give the all-zero address, which is no BSSID
+        assertNull(WifiIds.apBssidFromStationMac("FF:FF:FF:FF:FF:FF"))
+        assertNull(WifiIds.apBssidFromStationMac("FF:FF:FF:FF:FF:FE"))  // + 1 is broadcast
+        assertNull(WifiIds.apBssidFromStationMac("…"))
+        assertNull(WifiIds.apBssidFromStationMac(null))
+    }
+
     @Test fun isScope() {
         assertTrue(WifiIds.isScope("bebird-ES-1"))
         assertTrue(WifiIds.isScope("Bebird-X"))

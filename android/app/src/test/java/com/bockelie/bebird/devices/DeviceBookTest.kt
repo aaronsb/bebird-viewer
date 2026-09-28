@@ -78,6 +78,34 @@ class DeviceBookTest {
         assertEquals(book, DeviceBook.decode(book.encode()))
     }
 
+    @Test fun aFailedDerivedBssidIsDroppedAndNotAdoptedAgain() {
+        val book = DeviceBook().seen("bebird-1", a, 100).rename(a, "mine").exactFailed(a, a)
+        assertEquals(KnownDevice("bebird-1", null, "mine", 100, rejectedBssid = a), book.devices.single())
+        assertEquals("ssid:bebird-1", book.lastKey)  // Connect now asks by SSID alone
+        // the next join (by SSID, picker) derives the same value again: it is not taken
+        val again = book.seen("bebird-1", a, 200)
+        assertNull(again.devices.single().bssid)
+        // a first-hand BSSID is, and clears the rejection if it is that one
+        val confirmed = again.seen("bebird-1", a, 300, confirmed = true)
+        assertEquals(KnownDevice("bebird-1", a, "mine", 300, bssidConfirmed = true), confirmed.devices.single())
+    }
+
+    @Test fun aFailedConfirmedBssidIsKept() {
+        val book = DeviceBook().seen("bebird-1", a, 100, confirmed = true)
+        assertEquals(book, book.exactFailed(a, a))
+    }
+
+    @Test fun select() {
+        val book = DeviceBook().seen("bebird-1", a, 100, confirmed = true).seen("bebird-2", b, 200, confirmed = true)
+        assertEquals(a, book.select(a).lastKey)
+        assertEquals(book, book.select("nope"))
+    }
+
+    @Test fun readsVersion2() {
+        val book = DeviceBook.decode("v2\t$a\nbebird-1\t$a\tnick\t100\t1\n")
+        assertEquals(DeviceBook(listOf(KnownDevice("bebird-1", a, "nick", 100, bssidConfirmed = true)), a), book)
+    }
+
     @Test fun readsVersion1AsUnconfirmed() {
         val book = DeviceBook.decode("v1\t$a\nbebird-1\t$a\tnick\t100\n")
         assertEquals(DeviceBook(listOf(KnownDevice("bebird-1", a, "nick", 100, bssidConfirmed = false)), a), book)
@@ -87,20 +115,21 @@ class DeviceBookTest {
         assertEquals(DeviceBook(), DeviceBook.decode(null))
         assertEquals(DeviceBook(), DeviceBook.decode(""))
         assertEquals(DeviceBook(), DeviceBook.decode("v9\tx\nbebird\t\t\t1\t0\n"))
-        val good = "bebird-1\t$a\t\t100\t1"
+        val good = "bebird-1\t$a\t\t100\t1\t"
         val text = listOf(
-            "v2\tgone",
+            "v3\tgone",
             good,
             "broken line",
-            "\t\t\t5\t0",                               // empty SSID
-            "bebird-${"x".repeat(30)}\t\t\t5\t0",       // SSID over 32 bytes
-            "bebird-2\tnot-a-mac\t\t5\t0",              // bad BSSID
-            "bebird-3\taa:bb:cc:dd:ee:ff\t\t5\t0",      // BSSID not in canonical form
-            "bebird-4\t\t\tsoon\t0",                    // bad time
-            "bebird-5\t\t\t-1\t0",                      // negative time
-            "bebird-6\t\t\t5\tyes",                     // bad flag
-            "bebird-7\t\t\t5",                          // v1 row in a v2 book
-            "bebird-8\t\t\t5\t0\textra",                // extra column
+            "\t\t\t5\t0\t",                               // empty SSID
+            "bebird-${"x".repeat(30)}\t\t\t5\t0\t",       // SSID over 32 bytes
+            "bebird-2\tnot-a-mac\t\t5\t0\t",              // bad BSSID
+            "bebird-3\taa:bb:cc:dd:ee:ff\t\t5\t0\t",      // BSSID not in canonical form
+            "bebird-4\t\t\tsoon\t0\t",                    // bad time
+            "bebird-5\t\t\t-1\t0\t",                      // negative time
+            "bebird-6\t\t\t5\tyes\t",                     // bad flag
+            "bebird-7\t\t\t5\t0",                       // v2 row in a v3 book
+            "bebird-8\t\t\t5\t0\t\textra",             // extra column
+            "bebird-9\t\t\t5\t0\tbad-mac",               // bad rejected BSSID
             good,                                       // duplicate key
         ).joinToString("\n")
         val book = DeviceBook.decode(text)
@@ -109,7 +138,7 @@ class DeviceBookTest {
     }
 
     @Test fun confirmedNeedsABssid() {
-        assertFalse(DeviceBook.decode("v2\t\nbebird-1\t\t\t5\t1\n").devices.single().bssidConfirmed)
+        assertFalse(DeviceBook.decode("v3\t\nbebird-1\t\t\t5\t1\t\n").devices.single().bssidConfirmed)
     }
 
     @Test fun matches() {

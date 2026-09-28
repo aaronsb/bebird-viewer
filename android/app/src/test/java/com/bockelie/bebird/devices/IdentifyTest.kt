@@ -19,7 +19,9 @@ class IdentifyTest {
             wifiSsid = WifiIds.REDACTED_SSID, wifiBssid = WifiIds.REDACTED_BSSID,
             beaconSsid = "bebird-C", beaconMac = "cc:cc:cc:cc:cc:cc",
         )
-        assertEquals(Identify.Result("bebird-C", "CC:CC:CC:CC:CC:CC", "beacon", "beacon"), r)
+        // the beacon's MAC is the station MAC; the access point is that + 1
+        assertEquals(Identify.Result("bebird-C", "CC:CC:CC:CC:CC:CD", Identify.BEACON, Identify.DERIVED), r)
+        assertEquals(false, r?.bssidConfirmed)
     }
 
     @Test fun anExactRequestWithoutBssidTakesItFromWifiInfo() {
@@ -45,7 +47,7 @@ class IdentifyTest {
         val r = Identify.resolve(exactSsid = "bebird-A", beaconSsid = "bebird-B", beaconMac = "cc:cc:cc:cc:cc:cc")
         assertEquals(Identify.Result("bebird-A", null, "request", null), r)
         val same = Identify.resolve(exactSsid = "bebird-A", beaconSsid = "bebird-A", beaconMac = "cc:cc:cc:cc:cc:cc")
-        assertEquals("CC:CC:CC:CC:CC:CC", same?.bssid)
+        assertEquals("CC:CC:CC:CC:CC:CD", same?.bssid)
         assertEquals(false, same?.bssidConfirmed)
     }
 

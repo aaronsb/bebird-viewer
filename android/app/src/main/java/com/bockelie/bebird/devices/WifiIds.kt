@@ -28,6 +28,17 @@ object WifiIds {
         return mac.takeUnless { it == REDACTED_BSSID || it == "00:00:00:00:00:00" || it == "FF:FF:FF:FF:FF:FF" }
     }
 
+    /**
+     * The access point's likely BSSID from the beacon's "mac": on the ES that is the chip's
+     * station MAC, and the soft-AP's BSSID is one more (the 48-bit value + 1, with carry).
+     * Null if [mac] isn't usable or the result wouldn't be.
+     */
+    fun apBssidFromStationMac(mac: String?): String? {
+        val m = bssid(mac) ?: return null
+        val next = (m.replace(":", "").toLong(16) + 1) and 0xFFFF_FFFF_FFFFL
+        return bssid("%012X".format(next))
+    }
+
     /** Scope networks are "bebird-<model>-<number>"; like wifi.py, case doesn't matter here. */
     fun isScope(ssid: String?): Boolean = ssid?.lowercase()?.startsWith("bebird") == true
 }

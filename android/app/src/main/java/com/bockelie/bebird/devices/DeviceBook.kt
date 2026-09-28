@@ -4,7 +4,8 @@ package com.bockelie.bebird.devices
 /**
  * A scope the app has joined before. [bssid] is what lets a later request name this exact
  * access point (SSID + BSSID). [bssidConfirmed] says it came first-hand (Android joined or
- * reported it) rather than from the scope's beacon alone.
+ * reported it) rather than derived from the scope's beacon. [rejectedBssid] is a derived one
+ * that an exact request failed to find, so it isn't adopted again.
  */
 data class KnownDevice(
     val ssid: String,
@@ -12,6 +13,7 @@ data class KnownDevice(
     val nickname: String? = null,
     val lastSeen: Long,       // epoch milliseconds
     val bssidConfirmed: Boolean = false,
+    val rejectedBssid: String? = null,
 ) {
     val key: String get() = bssid ?: "ssid:$ssid"
     val label: String get() = nickname ?: ssid
@@ -48,7 +50,9 @@ data class DeviceBook(val devices: List<KnownDevice> = emptyList(), val lastKey:
      *   keeping its confirmed BSSID;
      * - a confirmed BSSID different from every confirmed one with the SSID: a new entry.
      */
-    fun seen(ssid: String, bssid: String?, at: Long, confirmed: Boolean = false): DeviceBook {
+    fun seen(ssid: String, seenBssid: String?, at: Long, confirmed: Boolean = false): DeviceBook {
+        // A derived BSSID that already failed an exact request for this SSID is not a BSSID.
+        val bssid = seenBssid?.takeUnless { !confirmed && devices.any { d -> d.ssid == ssid && d.rejectedBssid == it } }
         val sameSsid = devices.filter { it.ssid == ssid }.sortedByDescending { it.lastSeen }
         val match = when {
             bssid != null -> devices.firstOrNull { it.bssid == bssid }
@@ -62,11 +66,26 @@ data class DeviceBook(val devices: List<KnownDevice> = emptyList(), val lastKey:
             match.bssid == bssid -> match.copy(ssid = ssid, lastSeen = at, bssidConfirmed = match.bssidConfirmed || confirmed)
             match.bssidConfirmed && !confirmed -> match.copy(lastSeen = at)  // keep the first-hand BSSID
             else -> match.copy(bssid = bssid, lastSeen = at, bssidConfirmed = confirmed)
-        }
+        }.let { if (it.bssidConfirmed && it.rejectedBssid == it.bssid) it.copy(rejectedBssid = null) else it }  // proven after all
         // A BSSID change can collide with another entry's key; that entry is the same scope.
         val rest = devices.filter { it !== match && it.key != updated.key }
         return DeviceBook(rest + updated, updated.key)
     }
+
+    /**
+     * An exact request for [key]'s [bssid] found nothing. An unconfirmed (derived) BSSID is
+     * dropped and remembered as rejected, so the next request names the SSID only. A confirmed
+     * one is kept: the scope is more likely off than moved.
+     */
+    fun exactFailed(key: String, bssid: String): DeviceBook {
+        val d = devices.firstOrNull { it.key == key && it.bssid == bssid && !it.bssidConfirmed } ?: return this
+        val updated = d.copy(bssid = null, rejectedBssid = bssid)
+        val rest = devices.filter { it !== d && it.key != updated.key }
+        return DeviceBook(rest + updated, if (lastKey == key) updated.key else lastKey)
+    }
+
+    /** Make [key] the device Connect goes to. */
+    fun select(key: String): DeviceBook = if (devices.any { it.key == key }) copy(lastKey = key) else this
 
     /** A blank nickname clears it. */
     fun rename(key: String, nickname: String?): DeviceBook =
@@ -79,17 +98,18 @@ data class DeviceBook(val devices: List<KnownDevice> = emptyList(), val lastKey:
     fun encode(): String = buildString {
         append(VERSION).append('\t').append(esc(lastKey.orEmpty())).append('\n')
         for (d in devices) {
-            listOf(d.ssid, d.bssid.orEmpty(), d.nickname.orEmpty(), d.lastSeen.toString(), if (d.bssidConfirmed) "1" else "0")
+            listOf(d.ssid, d.bssid.orEmpty(), d.nickname.orEmpty(), d.lastSeen.toString(), if (d.bssidConfirmed) "1" else "0",
+                d.rejectedBssid.orEmpty())
                 .joinTo(this, "\t") { esc(it) }
             append('\n')
         }
     }
 
     companion object {
-        private const val VERSION = "v2"  // v1 had no confirmed column
+        private const val VERSION = "v3"  // v1 had no confirmed column, v2 no rejected one
 
         /**
-         * The inverse of [encode]. Reads v1 too (its BSSIDs count as unconfirmed). A row with
+         * The inverse of [encode]. Reads v1 and v2 too (v1 BSSIDs count as unconfirmed). A row with
          * any invalid column is skipped; an unknown version or header yields an empty book.
          */
         fun decode(text: String?): DeviceBook {
@@ -97,7 +117,8 @@ data class DeviceBook(val devices: List<KnownDevice> = emptyList(), val lastKey:
             val header = lines.firstOrNull()?.split('\t') ?: return DeviceBook()
             val columns = when (header.firstOrNull()) {
                 "v1" -> 4
-                VERSION -> 5
+                "v2" -> 5
+                VERSION -> 6
                 else -> return DeviceBook()
             }
             val devices = lines.drop(1).mapNotNull { row(it, columns) }.distinctBy { it.key }
@@ -109,15 +130,20 @@ data class DeviceBook(val devices: List<KnownDevice> = emptyList(), val lastKey:
             val f = line.split('\t').map(::unesc)
             if (f.size != columns) return null
             val ssid = WifiIds.ssid(f[0])?.takeIf { it == f[0] } ?: return null
-            val bssid = if (f[1].isEmpty()) null else WifiIds.bssid(f[1])?.takeIf { it == f[1] } ?: return null
+            val bssid = f[1].ifEmpty { null }
+            val rejected = f.getOrNull(5)?.ifEmpty { null }
+            if (!canonicalMac(bssid) || !canonicalMac(rejected)) return null
             val seen = f[3].toLongOrNull()?.takeIf { it >= 0 } ?: return null
             val confirmed = when (f.getOrNull(4)) {
                 null, "0" -> false
                 "1" -> bssid != null
                 else -> return null
             }
-            return KnownDevice(ssid, bssid, f[2].ifEmpty { null }, seen, confirmed)
+            return KnownDevice(ssid, bssid, f[2].ifEmpty { null }, seen, confirmed, rejected)
         }
+
+        /** An optional MAC column is either empty or exactly as [encode] writes it. */
+        private fun canonicalMac(s: String?) = s == null || WifiIds.bssid(s) == s
 
         private fun esc(s: String) = s.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
 
