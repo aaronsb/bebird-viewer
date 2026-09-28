@@ -30,23 +30,44 @@ class PixelFont private constructor(
         return if (i < 0) null else Glyph(cells[i].toInt(), data, offsets[i])
     }
 
+    /** Collects glyphs without boxing: Unifont has ~57 000 of them. */
     private class Builder {
-        val cps = ArrayList<Int>()
-        val widths = ArrayList<Int>()
-        val bytes = java.io.ByteArrayOutputStream()
-        val starts = ArrayList<Int>()
+        private var cps = IntArray(1024)
+        private var widths = ByteArray(1024)
+        private var starts = IntArray(1024)
+        private var bytes = ByteArray(32 * 1024)
+        private var n = 0
+        private var used = 0
 
+        /** Add [cellCount] cells' worth of rows from [rows]. */
         fun add(cp: Int, cellCount: Int, rows: ByteArray) {
-            cps += cp; widths += cellCount; starts += bytes.size(); bytes.write(rows)
+            if (n == cps.size) {
+                cps = cps.copyOf(n * 2); widths = widths.copyOf(n * 2); starts = starts.copyOf(n * 2)
+            }
+            while (used + rows.size > bytes.size) bytes = bytes.copyOf(bytes.size * 2)
+            cps[n] = cp; widths[n] = cellCount.toByte(); starts[n] = used
+            rows.copyInto(bytes, used)
+            used += rows.size
+            n++
         }
 
+        /** Sorted by code point; for a repeated code point the first glyph wins. */
         fun build(): PixelFont {
-            val order = cps.indices.sortedBy { cps[it] }.distinctBy { cps[it] }
+            // Sort (code point, index) pairs packed into longs: no boxing.
+            val keys = LongArray(n) { (cps[it].toLong() shl 32) or it.toLong() }
+            keys.sort()
+            val order = IntArray(n)
+            var m = 0
+            for (k in keys) {
+                val i = (k and 0xFFFFFFFFL).toInt()
+                if (m > 0 && cps[order[m - 1]] == cps[i]) continue
+                order[m++] = i
+            }
             return PixelFont(
-                IntArray(order.size) { cps[order[it]] },
-                ByteArray(order.size) { widths[order[it]].toByte() },
-                IntArray(order.size) { starts[order[it]] },
-                bytes.toByteArray(),
+                IntArray(m) { cps[order[it]] },
+                ByteArray(m) { widths[order[it]] },
+                IntArray(m) { starts[order[it]] },
+                bytes.copyOf(used),
             )
         }
     }
@@ -57,33 +78,52 @@ class PixelFont private constructor(
 
         /**
          * GNU Unifont's .hex format: "XXXX:" then 32 hex digits (8x16) or 64 (16x16) per line.
+         * A malformed line is skipped, as in [parseBdf].
          */
         fun parseHex(reader: BufferedReader): PixelFont {
             val b = Builder()
+            val narrow = ByteArray(HEIGHT)
+            val wide = ByteArray(HEIGHT * 2)
             reader.forEachLine { line ->
                 val colon = line.indexOf(':')
                 if (colon <= 0) return@forEachLine
-                val cp = line.substring(0, colon).toIntOrNull(16) ?: return@forEachLine
-                val hex = line.substring(colon + 1).trim()
-                val cellCount = when (hex.length) {
-                    32 -> 1
-                    64 -> 2
+                val cp = hex(line, 0, colon) ?: return@forEachLine
+                val digits = line.length - colon - 1
+                val rows = when (digits) {
+                    32 -> narrow
+                    64 -> wide
                     else -> return@forEachLine
                 }
-                b.add(cp, cellCount, ByteArray(hex.length / 2) { hex.substring(2 * it, 2 * it + 2).toInt(16).toByte() })
+                for (i in rows.indices) {
+                    rows[i] = (hex(line, colon + 1 + 2 * i, colon + 3 + 2 * i) ?: return@forEachLine).toByte()
+                }
+                b.add(cp, rows.size / HEIGHT, rows)
             }
             return b.build()
+        }
+
+        /** The hex number in [s] from [from] until [to], or null if any character isn't a hex digit. */
+        private fun hex(s: String, from: Int, to: Int): Int? {
+            if (to <= from || to - from > 7) return null
+            var v = 0
+            for (i in from until to) {
+                val d = Character.digit(s[i], 16)
+                if (d < 0) return null
+                v = v * 16 + d
+            }
+            return v
         }
 
         /**
          * A BDF font whose cells are 8 or 16 px wide and 16 px high (Terminus ter-u16n). Each
          * glyph's bitmap is placed in the cell by its BBX offsets relative to the font's box.
+         * A malformed glyph (bad numbers or bitmap rows) is skipped, as in [parseHex].
          */
         fun parseBdf(reader: BufferedReader): PixelFont {
             val b = Builder()
-            var descent = 4  // from FONTBOUNDINGBOX's y offset (negative) or FONT_DESCENT
+            var descent = 4  // from FONTBOUNDINGBOX's y offset (negative)
             var cp = -1
-            var bbx = intArrayOf(CELL, HEIGHT, 0, -descent)
+            var bbx: IntArray? = null
             var dwidth = CELL
             var bitmap: MutableList<String>? = null
             reader.forEachLine { raw ->
@@ -95,34 +135,40 @@ class PixelFont private constructor(
                     word == "FONTBOUNDINGBOX" -> descent = -(args.getOrNull(3)?.toIntOrNull() ?: -4)
                     word == "STARTCHAR" -> { cp = -1; bbx = intArrayOf(CELL, HEIGHT, 0, -descent); dwidth = CELL }
                     word == "ENCODING" -> cp = args.firstOrNull()?.toIntOrNull() ?: -1
-                    word == "DWIDTH" -> dwidth = args.firstOrNull()?.toIntOrNull() ?: CELL
-                    word == "BBX" -> bbx = IntArray(4) { args.getOrNull(it)?.toIntOrNull() ?: 0 }
+                    word == "DWIDTH" -> dwidth = args.firstOrNull()?.toIntOrNull() ?: -1
+                    word == "BBX" -> bbx = args.take(4).map { it.toIntOrNull() }.takeIf { it.size == 4 && null !in it }
+                        ?.map { it!! }?.toIntArray()
                     word == "BITMAP" -> bitmap = mutableListOf()
                     word == "ENDCHAR" -> {
                         val rows = bitmap ?: emptyList()
                         bitmap = null
-                        val cellCount = if (dwidth > CELL) 2 else 1
-                        if (cp >= 0) b.add(cp, cellCount, place(rows, bbx, cellCount, descent))
+                        val box = bbx
+                        if (cp >= 0 && box != null && dwidth > 0) {
+                            val cellCount = if (dwidth > CELL) 2 else 1
+                            place(rows, box, cellCount, descent)?.let { b.add(cp, cellCount, it) }
+                        }
                     }
                 }
             }
             return b.build()
         }
 
-        /** Put a BDF bitmap (rows of hex) into a cellCount-wide, 16-high cell. */
-        private fun place(rows: List<String>, bbx: IntArray, cellCount: Int, descent: Int): ByteArray {
+        /** Put a BDF bitmap (rows of hex) into a cellCount-wide, 16-high cell; null if malformed. */
+        private fun place(rows: List<String>, bbx: IntArray, cellCount: Int, descent: Int): ByteArray? {
             val (w, h, xOff, yOff) = bbx.toList()
+            if (w < 0 || h < 0 || rows.size < h) return null
             val out = ByteArray(HEIGHT * cellCount)
             val top = HEIGHT - descent - (h + yOff)  // rows from the cell's top to the bitmap's
-            for (r in 0 until minOf(h, rows.size)) {
-                val y = top + r
-                if (y !in 0 until HEIGHT) continue
-                val bits = rows[r].toBigInteger(16)
-                val rowBits = rows[r].length * 4
+            for (r in 0 until h) {
+                val row = rows[r]
+                if (row.length * 4 < w) return null  // fewer bits than the box is wide
                 for (x in 0 until w) {
-                    if (!bits.testBit(rowBits - 1 - x)) continue
+                    val digit = Character.digit(row[x / 4], 16)
+                    if (digit < 0) return null
+                    if (digit and (8 ushr (x % 4)) == 0) continue
+                    val y = top + r
                     val px = x + xOff
-                    if (px !in 0 until cellCount * CELL) continue
+                    if (y !in 0 until HEIGHT || px !in 0 until cellCount * CELL) continue
                     val i = y * cellCount + px / 8
                     out[i] = (out[i].toInt() or (0x80 ushr (px % 8))).toByte()
                 }

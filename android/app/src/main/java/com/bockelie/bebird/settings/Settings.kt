@@ -38,9 +38,6 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 /** What the viewer remembers between runs, like ~/.config/bebird/state.json on the desktop. */
 class Settings(private val kv: KeyValue) {
-    companion object {
-        const val MAX_LABEL = 60
-    }
 
     var light: Int
         get() = kv.getInt("light", 100).coerceIn(0, 100)
@@ -64,8 +61,8 @@ class Settings(private val kv: KeyValue) {
         set(v) = kv.putBoolean("circle", v)
     /** Free-text name/label shown in the band and saved in files; empty when cleared. */
     var label: String
-        get() = kv.getString("label", "").take(MAX_LABEL)
-        set(v) = kv.putString("label", v.trim().take(MAX_LABEL))
+        get() = Labels.limit(kv.getString("label", ""))
+        set(v) = kv.putString("label", Labels.limit(v.trim()))
     var theme: ThemeMode
         get() = ThemeMode.entries.firstOrNull { it.name == kv.getString("theme", "") } ?: ThemeMode.SYSTEM
         set(v) = kv.putString("theme", v.name)

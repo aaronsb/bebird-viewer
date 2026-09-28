@@ -64,6 +64,42 @@ class PixelFontTest {
         assertFalse(g.pixel(0, 10) || g.pixel(1, 9) || g.pixel(1, 12))
     }
 
+    @Test fun malformedGlyphsAreSkippedNotFatal() {
+        val hex = listOf(
+            "0041:" + "00".repeat(16),      // good
+            "0042:" + "ZZ".repeat(16),      // not hex, right length
+            "0043:" + "00".repeat(15),      // too short
+            "XYZ:" + "00".repeat(16),       // bad code point
+            ":" + "00".repeat(16),          // no code point
+            "0044:" + "00".repeat(16),      // good
+        ).joinToString("\n")
+        val h = PixelFont.parseHex(BufferedReader(StringReader(hex)))
+        assertEquals(2, h.size)
+        assertNotNull(h.glyph(0x41)); assertNotNull(h.glyph(0x44))
+
+        fun char(enc: String, bbx: String, vararg rows: String) =
+            "STARTCHAR c\nENCODING $enc\nDWIDTH 8 0\nBBX $bbx\nBITMAP\n" + rows.joinToString("\n") + "\nENDCHAR\n"
+        val bdf = "STARTFONT 2.1\nFONTBOUNDINGBOX 8 16 0 -4\n" +
+            char("65", "8 1 0 0", "FF") +              // good
+            char("66", "8 1 0 0", "") +                // empty bitmap row
+            char("67", "8 1 0 0", "GG") +              // not hex
+            char("68", "16 1 0 0", "FF") +             // box wider than the row's bits
+            char("69", "8 2 0 0", "FF") +              // fewer rows than the box
+            char("70", "x 1 0 0", "FF") +              // bad BBX
+            char("nope", "8 1 0 0", "FF") +            // bad encoding
+            char("71", "8 1 0 0", "80") +              // good
+            "ENDFONT\n"
+        val b = PixelFont.parseBdf(BufferedReader(StringReader(bdf)))
+        assertEquals(2, b.size)
+        assertTrue(b.glyph(65)!!.pixel(7, 11))
+        assertTrue(b.glyph(71)!!.pixel(0, 11))
+    }
+
+    @Test fun aRepeatedCodePointKeepsTheFirstGlyph() {
+        val hex = "0041:" + "FF".repeat(16) + "\n0041:" + "00".repeat(16)
+        assertTrue(PixelFont.parseHex(BufferedReader(StringReader(hex))).glyph(0x41)!!.pixel(0, 0))
+    }
+
     @Test fun hexParsesNarrowAndWide() {
         val hex = "0041:" + "00".repeat(15) + "FF\n4E00:" + "8000".repeat(16) + "\nnonsense\n"
         val f = PixelFont.parseHex(BufferedReader(StringReader(hex)))

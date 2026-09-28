@@ -18,7 +18,7 @@ class BandTest {
     )
     private val sparse = BandData(batteryPercent = 7, lightPercent = 0, roll = 3, trim = 0, fps = 9, time = LocalDateTime.of(2026, 1, 2, 3, 4, 5))
 
-    private fun frame(w: Int = 480, h: Int = 480) = PixelImage(w, h, IntArray(w * h) { (0xFF shl 24) or (it * 2654435761L).toInt() and 0xFFFFFF })
+    private fun frame(w: Int = 480, h: Int = 480) = PixelImage(w, h, IntArray(w * h) { (0xFF shl 24) or ((it * 2654435761L).toInt() and 0xFFFFFF) })
 
     // --- layout ---
 
@@ -31,10 +31,37 @@ class BandTest {
     @Test fun rightAlignedValuesEndInTheSameCell() {
         fun lastCol(d: BandData, row: Int, from: Int, to: Int) =
             BandLayout.place(d, font).filter { it.bright && it.row == row && it.col in from until to }.maxOf { it.col + it.cells }
-        for ((from, to) in listOf(0 to 9, 10 to 20, 21 to 30, 31 to 41, 42 to 48, 50 to 58)) {
+        for ((from, to) in listOf(0 to 9, 10 to 18, 19 to 28, 29 to 39, 40 to 49, 50 to 58)) {
             assertEquals("field at $from", lastCol(full, 0, from, to), lastCol(sparse, 0, from, to))
             assertEquals(to, lastCol(full, 0, from, to))
         }
+    }
+
+    @Test fun droppedFramesShowAfterTheFpsInTheSameField() {
+        fun fps(d: BandData) = BandLayout.place(d, font).filter { it.row == 0 && it.col in 40 until 49 && it.bright }
+        val with = fps(full.copy(fps = 11, droppedPerSecond = 3))
+        assertEquals("11 \u22123", String(with.map { it.codepoint }.toIntArray(), 0, with.size))
+        assertEquals(49, with.maxOf { it.col + it.cells })
+        assertEquals(49, fps(full.copy(fps = 11)).maxOf { it.col + it.cells })  // same right edge without
+        // the tag doesn't move
+        assertEquals(
+            BandLayout.place(full, font).filter { !it.bright }.map { it.col },
+            BandLayout.place(full.copy(droppedPerSecond = 12), font).filter { !it.bright }.map { it.col },
+        )
+    }
+
+    @Test fun renderIntoReusesTheBuffer() {
+        val px = IntArray(480 * renderer.height(480))
+        val a = renderer.renderInto(full, 480, px)
+        assertSame(px, a.pixels)
+        assertArrayEquals(renderer.render(full, 480).pixels, px)
+        renderer.renderInto(sparse, 480, px)  // a redraw clears what was there
+        assertArrayEquals(renderer.render(sparse, 480).pixels, px)
+    }
+
+    @Test fun geometryNeedsNoFont() {
+        assertEquals(renderer.height(1344), BandRenderer.height(1344))
+        assertEquals(464, BandRenderer.MIN_WIDTH)
     }
 
     @Test fun everythingFitsTheGrid() {
@@ -80,7 +107,7 @@ class BandTest {
 
     @Test fun writesAPreview() {
         // For eyeballing: build/band-preview.ppm, the band at 1x and 2x under a grey frame.
-        val out = renderer.compose(PixelImage(480, 120, IntArray(480 * 120) { 0xFF404040.toInt() }), full.copy(label = "Жанна 山田 left ear"), band = true, circle = false)
+        val out = renderer.compose(PixelImage(480, 120, IntArray(480 * 120) { 0xFF404040.toInt() }), full.copy(label = "Жанна 山田 left ear", fps = 11, droppedPerSecond = 3), band = true, circle = false)
         val f = java.io.File("build/band-preview.ppm")
         f.outputStream().buffered().use { o ->
             o.write("P6 ${out.width} ${out.height} 255\n".toByteArray())

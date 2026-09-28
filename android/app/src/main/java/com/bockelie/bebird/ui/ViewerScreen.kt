@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -30,20 +29,12 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import com.bockelie.bebird.control.LightControl
 import com.bockelie.bebird.control.RollFilter
-import com.bockelie.bebird.settings.ThemeMode
 import kotlin.math.roundToInt
 import androidx.compose.foundation.border
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.produceState
-import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.unit.Dp
 import com.bockelie.bebird.band.BandData
-import com.bockelie.bebird.band.BandLayout
 import com.bockelie.bebird.band.BandRenderer
-import com.bockelie.bebird.band.toBitmap
-import com.bockelie.bebird.settings.Settings
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import android.os.Build
@@ -88,8 +79,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -176,7 +167,13 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 Button(onClick = { if (idle) withPermission(conn::connect) else conn.disconnect() }) {
                     Text(stringResource(if (idle) R.string.connect else R.string.disconnect))
                 }
-                SettingsMenu(vm, onEditLabel = { editingLabel = true })
+                val theme by vm.theme.collectAsStateWithLifecycle()
+                SettingsMenu(
+                    theme = theme, onTheme = vm::setTheme,
+                    band = bandOn, onBand = vm::setBand,
+                    circle = circleOn, onCircle = vm::setCircle,
+                    label = label, onEditLabel = { editingLabel = true }, onClearLabel = { vm.setLabel("") },
+                )
             }
             Text(
                 statusLine(wifi, stats), style = MaterialTheme.typography.bodySmall,
@@ -188,26 +185,23 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 outline = circleOn,
                 modifier = Modifier.fillMaxWidth().weight(1f),
             )
-            val band = renderer
-            if (bandOn && band != null) {
-                val device = book.last?.takeIf { online }
-                StatusBand(
-                    band,
-                    BandData(
-                        batteryPercent = stats.battery?.percent,
-                        charging = stats.battery?.state == 2,
-                        lightPercent = light.level.takeIf { online },
-                        roll = shownRoll.takeIf { stats.frame != null },
-                        trim = trim,
-                        fps = stats.fps.takeIf { online },
-                        device = device?.let { it.nickname ?: it.ssid.removePrefix("bebird-") },
-                        time = now,
-                        label = label.ifEmpty { null },
-                    ),
-                )
-            } else {
-                Readouts(stats, shownRoll)
-            }
+            val device = book.last?.takeIf { online }
+            StatusBandSlot(
+                renderer = renderer,
+                showBand = bandOn,
+                data = BandData(
+                    batteryPercent = stats.battery?.percent,
+                    charging = stats.battery?.state == 2,
+                    lightPercent = light.level.takeIf { online },
+                    roll = shownRoll.takeIf { stats.frame != null },
+                    trim = trim,
+                    fps = stats.fps.takeIf { online },
+                    droppedPerSecond = if (online) stats.droppedPerSecond else 0,
+                    device = device?.let { it.nickname ?: it.ssid.removePrefix("bebird-") },
+                    time = now,
+                    label = label.ifEmpty { null },
+                ),
+            ) { Readouts(stats, shownRoll) }
             LightRow(light, onToggle = conn::toggleLight, onLevel = conn::setLight)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The switch and its label are one control, so TalkBack names it.
@@ -503,104 +497,3 @@ private fun ZoomableCircle(frame: Bitmap?, rotation: Int, outline: Boolean, modi
     }
 }
 
-/** The status band, drawn pixel for pixel (integer scale, no smoothing) at the screen's width. */
-@Composable
-private fun StatusBand(renderer: BandRenderer, data: BandData) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val width = constraints.maxWidth
-        val bitmap = remember(data, width) { renderer.render(data, width).toBitmap().asImageBitmap() }
-        val description = remember(data) { BandLayout.fields(data).joinToString(", ") { "${it.tag} ${it.value}".trim() } }
-        with(LocalDensity.current) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = description,
-                contentScale = ContentScale.None,
-                filterQuality = FilterQuality.None,
-                modifier = Modifier.size(bitmap.width.toDp(), bitmap.height.toDp()),
-            )
-        }
-    }
-}
-
-@Composable
-private fun SettingsMenu(vm: ViewerViewModel, onEditLabel: () -> Unit) {
-    val mode by vm.theme.collectAsStateWithLifecycle()
-    val band by vm.band.collectAsStateWithLifecycle()
-    val circle by vm.circle.collectAsStateWithLifecycle()
-    val label by vm.label.collectAsStateWithLifecycle()
-    var open by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { open = true }) {
-            Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.status_band)) },
-                leadingIcon = { Checkbox(checked = band, onCheckedChange = null) },
-                onClick = { vm.setBand(!band) },
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.circle_outline)) },
-                leadingIcon = { Checkbox(checked = circle, onCheckedChange = null) },
-                onClick = { vm.setCircle(!circle) },
-            )
-            DropdownMenuItem(
-                text = { Text(if (label.isEmpty()) stringResource(R.string.label_set) else stringResource(R.string.label_edit, label)) },
-                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                onClick = { open = false; onEditLabel() },
-            )
-            if (label.isNotEmpty()) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.label_clear)) },
-                    leadingIcon = { Icon(Icons.Default.Clear, contentDescription = null) },
-                    onClick = { vm.setLabel("") },
-                )
-            }
-            HorizontalDivider()
-            Text(
-                stringResource(R.string.theme), style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            )
-            for ((m, name) in listOf(
-                ThemeMode.SYSTEM to R.string.theme_system,
-                ThemeMode.LIGHT to R.string.theme_light,
-                ThemeMode.DARK to R.string.theme_dark,
-            )) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(name)) },
-                    leadingIcon = { RadioButton(selected = m == mode, onClick = null) },
-                    onClick = { open = false; vm.setTheme(m) },
-                )
-            }
-        }
-    }
-}
-
-/** The free-text name/label: typed once, kept until changed or cleared. */
-@Composable
-private fun LabelDialog(current: String, onDone: (String) -> Unit, onCancel: () -> Unit) {
-    var text by remember { mutableStateOf(current) }
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text(stringResource(R.string.label_title)) },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it.take(Settings.MAX_LABEL) },
-                singleLine = true,
-                label = { Text(stringResource(R.string.label_field)) },
-                // It may be a person's name: say plainly where it goes.
-                supportingText = { Text(stringResource(R.string.label_privacy)) },
-                trailingIcon = {
-                    if (text.isNotEmpty()) {
-                        IconButton(onClick = { text = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.label_clear))
-                        }
-                    }
-                },
-            )
-        },
-        confirmButton = { TextButton(onClick = { onDone(text) }) { Text(stringResource(R.string.save)) } },
-        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
-    )
-}

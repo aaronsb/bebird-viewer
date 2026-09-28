@@ -11,6 +11,8 @@ data class BandData(
     val roll: Int? = null,
     val trim: Int = 0,
     val fps: Int? = null,
+    /** Frames dropped in the last second; shown after the fps when non-zero. */
+    val droppedPerSecond: Int = 0,
     val device: String? = null,
     val time: LocalDateTime? = null,
     val label: String? = null,
@@ -37,12 +39,13 @@ object BandLayout {
     data class Placed(val row: Int, val col: Int, val codepoint: Int, val cells: Int, val bright: Boolean)
 
     fun fields(d: BandData): List<Field> = listOf(
-        // row 0: 0 BAT 100%+ | 10 LIGHT 100% | 21 ROLL 359° | 31 TRIM +180° | 42 FPS 99 | 50 12:34:56
+        // row 0: 0 BAT 100%+ | 10 LED 100% | 19 ROLL 359° | 29 TRIM +180° | 40 FPS 11 −3 | 50 12:34:56
         Field(0, 0, 9, "BAT", d.batteryPercent?.let { "$it%" + if (d.charging) "+" else " " } ?: "-- ", Align.RIGHT),
-        Field(0, 10, 10, "LIGHT", d.lightPercent?.let { if (it == 0) "OFF" else "$it%" } ?: "--", Align.RIGHT),
-        Field(0, 21, 9, "ROLL", d.roll?.let { "$it°" } ?: "--", Align.RIGHT),
-        Field(0, 31, 10, "TRIM", (if (d.trim > 0) "+" else "") + "${d.trim}°", Align.RIGHT),
-        Field(0, 42, 6, "FPS", d.fps?.toString() ?: "--", Align.RIGHT),
+        Field(0, 10, 8, "LED", d.lightPercent?.let { if (it == 0) "OFF" else "$it%" } ?: "--", Align.RIGHT),
+        Field(0, 19, 9, "ROLL", d.roll?.let { "$it°" } ?: "--", Align.RIGHT),
+        Field(0, 29, 10, "TRIM", (if (d.trim > 0) "+" else "") + "${d.trim}°", Align.RIGHT),
+        // fps, then frames dropped in the last second if any: "11 −3"
+        Field(0, 40, 9, "FPS", (d.fps?.toString() ?: "--") + if (d.droppedPerSecond > 0) " \u2212${d.droppedPerSecond}" else "", Align.RIGHT),
         Field(0, 50, 8, "", d.time?.let { "%02d:%02d:%02d".format(it.hour, it.minute, it.second) } ?: "--:--:--", Align.RIGHT),
         // row 1: 0 device (18) | 19 date | 30 label (28)
         Field(1, 0, 18, "", d.device ?: "--", Align.LEFT),
@@ -97,22 +100,24 @@ class PixelImage(val width: Int, val height: Int, val pixels: IntArray) {
 /**
  * Draws the band and composes saved output. Pure: works on ARGB int arrays, so the screen
  * (via a Bitmap of the same pixels) and saved files look identical.
+ *
+ * The layout is designed for 480 px (the scope's frame width); any width of at least
+ * [MIN_WIDTH] fits the whole grid. Narrower bands clip the right-hand fields.
  */
 class BandRenderer(private val font: GlyphSource) {
-    /** The integer scale for a band [width] pixels wide: 1 at 480, 2 at 960 and so on. */
-    fun scale(width: Int) = maxOf(1, width / (BandLayout.WIDTH_CELLS * PixelFont.CELL))
-
-    /** Where the grid starts: centred, so a one-cell margin at 480 px (8 × scale px). */
-    fun left(width: Int) = maxOf(0, (width - BandLayout.COLUMNS * PixelFont.CELL * scale(width)) / 2)
-
-    /** Band height for [width]: two text rows plus padding, times the scale. */
-    fun height(width: Int) = (BandLayout.ROWS * PixelFont.HEIGHT + 2 * PAD) * scale(width)
+    fun scale(width: Int) = Companion.scale(width)
+    fun height(width: Int) = Companion.height(width)
+    fun left(width: Int) = Companion.left(width)
 
     /** The band alone, [width] wide: black, glyphs drawn with integer scaling and no smoothing. */
-    fun render(d: BandData, width: Int): PixelImage {
+    fun render(d: BandData, width: Int): PixelImage = renderInto(d, width, IntArray(width * height(width)))
+
+    /** Like [render], drawing into [px] (width × height ints, reused between redraws). */
+    fun renderInto(d: BandData, width: Int, px: IntArray): PixelImage {
         val s = scale(width)
         val h = height(width)
-        val px = IntArray(width * h) { BACKGROUND }
+        require(px.size == width * h) { "buffer is ${px.size}, not $width x $h" }
+        px.fill(BACKGROUND)
         val left = left(width)
         for (p in BandLayout.place(d, font)) {
             val g = font.glyph(p.codepoint) ?: continue
@@ -163,6 +168,21 @@ class BandRenderer(private val font: GlyphSource) {
 
     companion object {
         const val PAD = 4
+        /** Narrowest band that fits the whole grid at scale 1. */
+        const val MIN_WIDTH = BandLayout.COLUMNS * PixelFont.CELL
+
+        // Geometry depends only on the width, so the screen can reserve the band's space
+        // before the fonts are loaded.
+
+        /** The integer scale for a band [width] pixels wide: 1 at 480, 2 at 960 and so on. */
+        fun scale(width: Int) = maxOf(1, width / (BandLayout.WIDTH_CELLS * PixelFont.CELL))
+
+        /** Band height for [width]: two text rows plus padding, times the scale. */
+        fun height(width: Int) = (BandLayout.ROWS * PixelFont.HEIGHT + 2 * PAD) * scale(width)
+
+        /** Where the grid starts: centred, so a one-cell margin at 480 px (8 × scale px). */
+        fun left(width: Int) = maxOf(0, (width - BandLayout.COLUMNS * PixelFont.CELL * scale(width)) / 2)
+
         const val BACKGROUND = 0xFF000000.toInt()
         const val TAG = 0xFF8C8C8C.toInt()
         const val VALUE = 0xFFE6E6E6.toInt()
