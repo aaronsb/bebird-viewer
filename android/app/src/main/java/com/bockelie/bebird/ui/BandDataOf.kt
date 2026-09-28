@@ -7,8 +7,16 @@ import com.bockelie.bebird.devices.KnownDevice
 import com.bockelie.bebird.scope.ScopeSession
 import java.time.LocalDateTime
 
-/** How the band (and capture metadata) names the device: its nickname, or the SSID without "bebird-". */
-fun deviceName(device: KnownDevice?): String? = device?.let { it.nickname ?: it.ssid.removePrefix("bebird-") }
+/**
+ * How the band and saved files name the scope. By default only its model ("ES"): the SSID's
+ * suffix is a per-unit ID (often part of the MAC), and pictures get shared. With [showScopeId]
+ * (off unless the user turns it on) the SSID without "bebird-", e.g. "ES-123456". Nicknames
+ * stay in the device list and never go into files.
+ */
+fun deviceName(device: KnownDevice?, beaconModel: String?, showScopeId: Boolean): String? {
+    val id = device?.ssid?.removePrefix("bebird-") ?: return beaconModel
+    return if (showScopeId) id else beaconModel ?: id.substringBefore('-').ifEmpty { null }
+}
 
 /** The band's values from the connection's state; shared by the screen and captures so they match. */
 fun bandDataOf(
@@ -20,6 +28,7 @@ fun bandDataOf(
     online: Boolean,
     label: String,
     now: LocalDateTime,
+    showScopeId: Boolean,
 ) = BandData(
     batteryPercent = stats.battery?.percent,
     charging = stats.battery?.state == 2,
@@ -28,7 +37,7 @@ fun bandDataOf(
     trim = trim,
     fps = stats.fps.takeIf { online },
     droppedPerSecond = if (online) stats.droppedPerSecond else 0,
-    device = deviceName(device?.takeIf { online }),
+    device = if (online) deviceName(device, stats.beacon?.model, showScopeId) else null,
     time = now,
     label = label.ifEmpty { null },
 )

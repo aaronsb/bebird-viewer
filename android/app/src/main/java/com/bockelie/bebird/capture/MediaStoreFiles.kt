@@ -2,10 +2,14 @@
 package com.bockelie.bebird.capture
 
 import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.ContentValues
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.util.Log
 
 /**
  * Saving into the shared Pictures/Movies collections through MediaStore: no storage permission
@@ -17,10 +21,11 @@ class MediaStoreFiles(private val resolver: ContentResolver) {
         VIDEO(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "video/mp4", CaptureNames.MOVIES),
     }
 
-    /** A new pending entry named [name]. */
+    /** A new pending entry named [name], taken now (so galleries sort it by capture time). */
     fun create(kind: Kind, name: String): Uri {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.DATE_TAKEN, System.currentTimeMillis())
             put(MediaStore.MediaColumns.MIME_TYPE, kind.mime)
             put(MediaStore.MediaColumns.RELATIVE_PATH, kind.dir)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
@@ -38,6 +43,34 @@ class MediaStoreFiles(private val resolver: ContentResolver) {
 
     fun discard(uri: Uri) {
         runCatching { resolver.delete(uri, null, null) }
+    }
+
+    /**
+     * Remove this app's entries still pending in Pictures/Bebird and Movies/Bebird: left by a
+     * capture interrupted by the process dying (Android 10 never expires them). Other apps'
+     * pending entries aren't visible to us, so only ours can match.
+     */
+    fun sweepPending(): Int = Kind.entries.sumOf { kind ->
+        val where = "${MediaStore.MediaColumns.IS_PENDING} = 1 AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
+        val args = arrayOf("${kind.dir}%")
+        val uris = mutableListOf<Uri>()
+        try {
+            val cursor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                resolver.query(kind.collection, arrayOf(MediaStore.MediaColumns._ID), Bundle().apply {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, where)
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, args)
+                    putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                }, null)
+            } else {
+                @Suppress("DEPRECATION")  // the Android 10 way to see pending entries
+                resolver.query(MediaStore.setIncludePending(kind.collection), arrayOf(MediaStore.MediaColumns._ID), where, args, null)
+            }
+            cursor?.use { while (it.moveToNext()) uris += ContentUris.withAppendedId(kind.collection, it.getLong(0)) }
+        } catch (e: Exception) {
+            Log.w("BebirdSpike", "couldn't look for leftover ${kind.name.lowercase()} entries", e)
+        }
+        uris.forEach(::discard)
+        uris.size
     }
 
     /** Write [bytes] as a new [kind] entry named [name]; returns its uri. */

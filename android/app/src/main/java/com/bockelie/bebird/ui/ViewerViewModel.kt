@@ -50,6 +50,9 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _overlay = MutableStateFlow(settings.overlay)
     val overlay: StateFlow<Boolean> = _overlay.asStateFlow()
+    private val _showScopeId = MutableStateFlow(settings.showScopeId)
+    /** Whether the band and saved files carry the scope's unique ID (off by default). */
+    val showScopeId: StateFlow<Boolean> = _showScopeId.asStateFlow()
     private val _label = MutableStateFlow(settings.label)
     val label: StateFlow<String> = _label.asStateFlow()
 
@@ -65,6 +68,11 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
                 Log.e("BebirdSpike", "band fonts failed to load", e)
             }
         }
+    }
+
+    fun setShowScopeId(on: Boolean) {
+        settings.showScopeId = on
+        _showScopeId.value = on
     }
 
     fun setOverlay(on: Boolean) {
@@ -101,7 +109,6 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     private val _recordingSince = MutableStateFlow<Long?>(null)  // elapsedRealtime at start
     /** When the current recording started (elapsedRealtime ms), or null when not recording. */
     val recordingSince: StateFlow<Long?> = _recordingSince.asStateFlow()
-    private var recordingName = ""
     private var recordingOverlay = false  // fixed for the whole file
     private val _captureResults = MutableSharedFlow<Capture.Result>(extraBufferCapacity = 4)
     /** Each saved (or failed) snapshot or recording, for the snackbar. */
@@ -122,7 +129,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     /** The band as it shows now; the screen uses the same function, so captures match it. */
     fun bandData(now: LocalDateTime): BandData = bandDataOf(
         connection.stats.value, connection.lightState.value, connection.shownRoll.value, _trim.value,
-        connection.book.value.last, online, _label.value, now,
+        connection.book.value.last, online, _label.value, now, _showScopeId.value,
     )
 
     /** The current frame as shown, with its metadata; null when there is no frame. */
@@ -146,7 +153,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
             zoom = zoom.toDouble(),
             zoomed = false,
             label = _label.value.ifEmpty { null },
-            device = deviceName(connection.book.value.last?.takeIf { online }),
+            device = bandData(taken.toLocalDateTime()).device,  // exactly what the band shows
             model = stats.beacon?.model,
         )
         return Capture.Shot(frame, rotation, overlay, _bandRenderer.value, bandData(taken.toLocalDateTime()), meta, zoomRect)
@@ -163,21 +170,32 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     private fun startRecording() {
         recordingOverlay = _overlay.value
         val first = shot(overlay = recordingOverlay) ?: return
-        recordingName = CaptureNames.video(first.meta.taken.toLocalDateTime())
-        capture.startRecording(recordingName, first) { _captureResults.tryEmit(it); _recordingSince.value = null }
+        val name = CaptureNames.video(first.meta.taken.toLocalDateTime())
+        if (recordingOverlay && first.renderer == null) {
+            // the band's size would change once the fonts arrive, mid-file
+            _captureResults.tryEmit(Capture.Result.Failed(name, "the overlay is still loading; try again in a moment"))
+            return
+        }
+        // Recording as far as the UI knows from now on; whatever ends it (stop, a failed start,
+        // an encoder error) resets this and reports through the snackbar.
         _recordingSince.value = SystemClock.elapsedRealtime()
+        capture.startRecording(name, first) { result ->
+            _recordingSince.value = null
+            _captureResults.tryEmit(result)
+        }
     }
 
     /** Finish the recording, if any (also when leaving the app: recording is foreground-only for now). */
     fun stopRecording() {
         if (_recordingSince.value == null) return
-        _recordingSince.value = null
-        capture.stopRecording(recordingName) { _captureResults.tryEmit(it) }
+        _recordingSince.value = null  // the UI stops at once; the file is finished on the worker
+        capture.stopRecording { _captureResults.tryEmit(it) }
     }
 
     override fun onCleared() {
         Log.i("BebirdSpike", "ViewModel cleared")
         stopRecording()
+        capture.close()
         connection.disconnect()
     }
 }

@@ -39,7 +39,8 @@ data class SnapshotMeta(
     /** UserComment: the metadata as JSON, all ASCII (non-ASCII escaped as \uXXXX). */
     fun json(): String {
         val fields = linkedMapOf<String, Any?>(
-            "taken" to taken.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME.withZone(taken.zone)).let { trimNanos(it) },
+            // like Python's isoformat(): seconds, and "+00:00" rather than "Z" for UTC
+            "taken" to taken.withNano(0).format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssxxx")),
             "roll_deg" to roll,
             "rotation_applied_deg" to rotationApplied,
             "auto_rotate" to autoRotate,
@@ -57,8 +58,6 @@ data class SnapshotMeta(
         )
         return Json.write(fields)
     }
-
-    private fun trimNanos(iso: String) = iso.replace(Regex("\\.\\d+"), "")
 }
 
 /** A minimal JSON writer: maps, strings, numbers, booleans, null; output is pure ASCII. */
@@ -69,7 +68,8 @@ object Json {
         when (v) {
             null -> out.append("null")
             is Boolean, is Int, is Long -> out.append(v)
-            is Double -> out.append(if (v == Math.floor(v) && !v.isInfinite()) v.toLong().toString() else v.toString())
+            // JSON has no NaN or infinity
+            is Double -> out.append(if (!v.isFinite()) "null" else if (v == Math.floor(v)) v.toLong().toString() else v.toString())
             is String -> string(v, out)
             is Map<*, *> -> {
                 out.append('{')

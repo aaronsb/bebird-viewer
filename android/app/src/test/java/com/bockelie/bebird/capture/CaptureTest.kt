@@ -212,6 +212,54 @@ class CaptureTest {
         assertEquals(1, ZoomCrop.upscale(480))
     }
 
+    // --- pixel steps ---
+
+    private fun image(w: Int, h: Int) = com.bockelie.bebird.band.PixelImage(w, h, IntArray(w * h) { (0xFF shl 24) or it })
+
+    @Test fun anEnlargedCropRepeatsEachSourcePixel() {
+        val src = image(480, 480)
+        val rect = ZoomCrop.Rect(100, 50, 220, 170)  // 120 px: 4x makes 480
+        val (crop, _) = PixelOps.enlargedCrop(src, rect)
+        assertEquals(480, crop.width); assertEquals(480, crop.height)
+        for (y in 0 until 480 step 7) for (x in 0 until 480 step 5) {
+            assertEquals(src.pixels[(50 + y / 4) * 480 + 100 + x / 4], crop.pixels[y * 480 + x])
+        }
+        // no new pixel values: nearest neighbour only
+        assertTrue(crop.pixels.toSet().all { it in src.pixels.toSet() })
+    }
+
+    @Test fun theCropsCircleIsTheFramesCircleMoved() {
+        val (crop, c) = PixelOps.enlargedCrop(image(480, 480), ZoomCrop.Rect(120, 120, 360, 360))  // 2x
+        assertEquals(480, crop.width)
+        // the frame's centre (239.5) is the crop's centre, and the radius doubles
+        assertEquals(239.5, c.cx, 1e-9); assertEquals(239.5, c.cy, 1e-9)
+        assertEquals(479.5, c.r, 1e-9)
+        // off-centre: a crop from the left edge puts the centre to the right
+        val (_, left) = PixelOps.enlargedCrop(image(480, 480), ZoomCrop.Rect(0, 120, 240, 360))
+        assertEquals(479.5, left.cx, 1e-9)  // (239.5 - 0) * 2 + (2 - 1) / 2
+        assertEquals(239.5, left.cy, 1e-9)  // (239.5 - 120) * 2 + 0.5
+    }
+
+    @Test fun fitPadsOrCutsToTheFileSize() {
+        val small = image(4, 2)
+        val padded = PixelOps.fit(small, 6, 3)
+        assertEquals(small.pixels[5], padded.pixels[1 * 6 + 1])
+        assertEquals(com.bockelie.bebird.band.BandRenderer.BACKGROUND, padded.pixels[2 * 6 + 5])
+        val cut = PixelOps.fit(image(6, 3), 4, 2)
+        assertEquals(image(6, 3).pixels[1 * 6 + 3], cut.pixels[1 * 4 + 3])
+        val same = image(4, 2)
+        assertTrue(PixelOps.fit(same, 4, 2) === same)
+    }
+
+    @Test fun utcIsWrittenAsPlusZero() {
+        val utc = meta.copy(taken = ZonedDateTime.of(2026, 9, 28, 14, 3, 7, 0, ZoneOffset.UTC))
+        assertTrue(utc.json().startsWith("{\"taken\": \"2026-09-28T14:03:07+00:00\""))
+    }
+
+    @Test fun jsonHasNoNaN() {
+        assertEquals("{\"a\": null, \"b\": null, \"c\": 2.5}", Json.write(linkedMapOf("a" to Double.NaN, "b" to Double.POSITIVE_INFINITY, "c" to 2.5)))
+    }
+
     // --- video timing and pixels ---
 
     @Test fun ptsFromTheWallClock() {
@@ -237,5 +285,11 @@ class CaptureTest {
         assertEquals(90, r.u[0].toInt() and 0xFF)
         assertEquals(240, r.v[0].toInt() and 0xFF)
         assertEquals(528, Yuv.padTo16(520)); assertEquals(480, Yuv.padTo16(480))
+        // reusing planes gives the same result
+        val planes = Yuv.planes(2, 2)
+        Yuv.into(IntArray(4) { red }, planes)
+        assertEquals(82, planes.y[3].toInt() and 0xFF)
+        Yuv.into(IntArray(4) { white }, planes)
+        assertEquals(235, planes.y[3].toInt() and 0xFF); assertEquals(128, planes.v[0].toInt() and 0xFF)
     }
 }

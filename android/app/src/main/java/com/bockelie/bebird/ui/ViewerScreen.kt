@@ -3,24 +3,13 @@ package com.bockelie.bebird.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -30,30 +19,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.bockelie.bebird.control.LightControl
 import com.bockelie.bebird.control.RollFilter
 import kotlin.math.roundToInt
-import androidx.compose.foundation.border
 import androidx.compose.runtime.produceState
-import androidx.compose.ui.unit.Dp
-import com.bockelie.bebird.band.BandData
-import com.bockelie.bebird.band.BandRenderer
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
-import android.content.Intent
-import android.os.SystemClock
-import androidx.compose.material3.LocalTextStyle
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.Stable
-import com.bockelie.bebird.capture.Capture
-import com.bockelie.bebird.capture.ZoomCrop
 import android.os.Build
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,7 +38,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -95,11 +68,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -152,6 +120,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
     val autoRotate by vm.autoRotate.collectAsStateWithLifecycle()
     val trim by vm.trim.collectAsStateWithLifecycle()
     val overlayOn by vm.overlay.collectAsStateWithLifecycle()
+    val showScopeId by vm.showScopeId.collectAsStateWithLifecycle()
     val label by vm.label.collectAsStateWithLifecycle()
     val renderer by vm.bandRenderer.collectAsStateWithLifecycle()
     val online = wifi is ScopeWifi.State.Available
@@ -190,6 +159,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 val theme by vm.theme.collectAsStateWithLifecycle()
                 SettingsMenu(
                     theme = theme, onTheme = vm::setTheme, overlay = overlayOn, onOverlay = vm::setOverlay,
+                    showScopeId = showScopeId, onShowScopeId = vm::setShowScopeId,
                     canPowerOff = canPowerOff, onPowerOff = { confirmingPowerOff = true },
                 )
             }
@@ -209,7 +179,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 StatusBandSlot(
                     renderer = renderer,
                     showBand = overlayOn,
-                    data = bandDataOf(stats, light, shownRoll, trim, book.last, online, label, now),
+                    data = bandDataOf(stats, light, shownRoll, trim, book.last, online, label, now, showScopeId),
                 ) { Readouts(stats, shownRoll) }
             }
             LightRow(light, onToggle = conn::toggleLight, onLevel = conn::setLight)
@@ -390,7 +360,7 @@ private fun statusLine(wifi: ScopeWifi.State, s: ScopeSession.Stats): String {
 }
 
 /** Digits all the same width, so changing numbers don't shift the layout. */
-private val tabular = TextStyle(fontFeatureSettings = "tnum")
+internal val tabular = TextStyle(fontFeatureSettings = "tnum")
 
 /** [n] right-aligned in [width] characters, padded with figure spaces (as wide as a digit). */
 private fun fixed(n: Int, width: Int) = n.toString().padStart(width, '\u2007')
@@ -455,67 +425,6 @@ private fun LightRow(light: ScopeConnection.Light, onToggle: () -> Unit, onLevel
     }
 }
 
-/**
- * The image circle inside a rectangular viewport. Pinch zooms (1-6x) and drag pans, clipped
- * to the viewport; double-tap resets. Display only: nothing here changes what is received.
- */
-@Composable
-private fun ZoomableCircle(frame: Bitmap?, rotation: Int, outline: Boolean, view: ZoomView, modifier: Modifier) {
-    // Outside the image circle the viewport is the band's black, not the theme's surface, so
-    // image and band read as one panel (as in saved stills with the overlay).
-    BoxWithConstraints(modifier.clipToBounds().background(Color(BandRenderer.BACKGROUND)), contentAlignment = Alignment.Center) {
-        val w = constraints.maxWidth.toFloat()
-        val h = constraints.maxHeight.toFloat()
-        val side = minOf(w, h)
-        SideEffect { view.viewportW = w; view.viewportH = h }  // for the zoomed snapshot's crop
-        // How far the circle may move: only as far as it overhangs the viewport.
-        fun clamp(o: Offset, z: Float) = Offset(
-            o.x.coerceIn(-maxOf(0f, (side * z - w) / 2), maxOf(0f, (side * z - w) / 2)),
-            o.y.coerceIn(-maxOf(0f, (side * z - h) / 2), maxOf(0f, (side * z - h) / 2)),
-        )
-        // A resize (rotation, multi-window) keeps the view inside the new bounds.
-        LaunchedEffect(w, h) { view.offset = clamp(view.offset, view.zoom) }
-        Box(
-            Modifier.fillMaxSize()
-                .pointerInput(Unit) { detectTapGestures(onDoubleTap = { view.zoom = 1f; view.offset = Offset.Zero }) }
-                .pointerInput(w, h) {
-                    detectTransformGestures { centroid, pan, gestureZoom, _ ->
-                        val newZoom = (view.zoom * gestureZoom).coerceIn(1f, 6f)
-                        // Keep the point under the fingers where it is: relative to the viewport
-                        // centre, o' = (o - p) * z'/z + p, then add the pan.
-                        val p = centroid - Offset(w / 2, h / 2)
-                        view.offset = clamp((view.offset - p) * (newZoom / view.zoom) + p + pan, newZoom)
-                        view.zoom = newZoom
-                    }
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                Modifier.size(with(LocalDensity.current) { side.toDp() })
-                    .graphicsLayer {
-                        scaleX = view.zoom
-                        scaleY = view.zoom
-                        translationX = view.offset.x
-                        translationY = view.offset.y
-                    }
-                    .clip(CircleShape)
-                    .background(Color.Black)
-                    // the same hair-thin ring saved images get (#15)
-                    .then(if (outline) Modifier.border(Dp.Hairline, Color(BandRenderer.CIRCLE), CircleShape) else Modifier),
-            ) {
-                frame?.let {
-                    // Rotated clockwise by the roll angle (and trim) keeps the picture upright.
-                    Image(
-                        bitmap = it.asImageBitmap(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize().rotate(rotation.toFloat()),
-                    )
-                }
-            }
-        }
-    }
-}
 
 /**
  * The label, like Trim a control of its own: the current text (or a prompt) opens the editing
@@ -544,59 +453,5 @@ private fun LabelRow(label: String, onEdit: () -> Unit, onClear: () -> Unit) {
     }
 }
 
-/** The viewport's zoom and pan, kept outside it so a snapshot can crop what is visible. */
-@Stable
-class ZoomView {
-    var zoom by mutableFloatStateOf(1f)
-    var offset by mutableStateOf(Offset.Zero)
-    var viewportW = 0f
-    var viewportH = 0f
 
-    /** The visible part of a [frameSize]-px frame, or null when not zoomed in. */
-    fun crop(frameSize: Int): ZoomCrop.Rect? =
-        ZoomCrop.visible(frameSize, viewportW, viewportH, minOf(viewportW, viewportH), zoom, offset.x, offset.y)
-}
 
-/** Record, or Stop with the elapsed time (fixed-width digits) while recording. */
-@Composable
-private fun RecordButton(since: Long?, enabled: Boolean, onClick: () -> Unit) {
-    val elapsed by produceState(0L, since) {
-        while (since != null) {
-            value = (SystemClock.elapsedRealtime() - since) / 1000
-            delay(250)
-        }
-    }
-    FilledTonalButton(onClick = onClick, enabled = enabled || since != null) {
-        if (since == null) {
-            Text(stringResource(R.string.record))
-        } else {
-            Text(stringResource(R.string.record_stop, "%d:%02d".format(elapsed / 60, elapsed % 60)), style = LocalTextStyle.current.merge(tabular))
-        }
-    }
-}
-
-/** A short M3 snackbar for each saved capture, with Open. */
-@Composable
-private fun CaptureSnackbar(vm: ViewerViewModel, host: SnackbarHostState) {
-    val context = LocalContext.current
-    val saved = stringResource(R.string.capture_saved)
-    val failed = stringResource(R.string.capture_failed)
-    val open = stringResource(R.string.capture_open)
-    LaunchedEffect(Unit) {
-        vm.captureResults.collect { result ->
-            when (result) {
-                is Capture.Result.Saved -> {
-                    val action = host.showSnackbar(saved.format(result.name), actionLabel = open, duration = SnackbarDuration.Short)
-                    if (action == SnackbarResult.ActionPerformed) {
-                        val type = if (result.video) "video/mp4" else "image/jpeg"
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(result.uri, type)
-                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                        }
-                    }
-                }
-                is Capture.Result.Failed -> host.showSnackbar(failed.format(result.what, result.reason))
-            }
-        }
-    }
-}

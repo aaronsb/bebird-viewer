@@ -8,6 +8,9 @@ import android.os.SystemClock
 import android.util.Log
 import com.bockelie.bebird.band.BandData
 import com.bockelie.bebird.band.BandRenderer
+import com.bockelie.bebird.band.PixelImage
+import com.bockelie.bebird.band.toBitmap
+import com.bockelie.bebird.band.toPixelImage
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -36,24 +39,31 @@ class Capture(resolver: ContentResolver) {
     private val files = MediaStoreFiles(resolver)
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "bebird-capture").apply { isDaemon = true } }
     private val busy = AtomicBoolean(false)  // a video frame is being encoded
-    @Volatile private var recorder: VideoRecorder? = null  // touched on the worker only, read anywhere
+    private var recorder: VideoRecorder? = null  // worker only
+    private var recordingName = ""               // worker only
+    private var onRecordingEnd: ((Result) -> Unit)? = null  // worker only
 
-    val recording: Boolean get() = recorder != null
+    init {
+        worker.execute {
+            val n = files.sweepPending()
+            if (n > 0) Log.i(TAG, "removed $n unfinished capture(s) left by an earlier run")
+        }
+    }
 
     /** Save [shot] as a JPEG (and a _zoomed one when zoomed in); [done] gets each result. */
     fun snapshot(shot: Shot, done: (Result) -> Unit) = worker.execute {
         val rotated = Frames.rotated(shot.frame, shot.rotation)
         val time = shot.meta.taken.toLocalDateTime()
-        save(CaptureNames.still(time), Frames.composed(rotated, shot.renderer, shot.band, shot.overlay), shot.meta, done)
+        save(CaptureNames.still(time), Frames.composed(rotated.toPixelImage(), shot.renderer, shot.band, shot.overlay), shot.meta, done)
         shot.zoomRect?.let { rect ->
             val zoomed = Frames.zoomed(rotated, rect, shot.renderer, shot.band, shot.overlay)
             save(CaptureNames.still(time, zoomed = true), zoomed, shot.meta.copy(zoomed = true), done)
         }
     }
 
-    private fun save(name: String, image: Bitmap, meta: SnapshotMeta, done: (Result) -> Unit) {
+    private fun save(name: String, image: PixelImage, meta: SnapshotMeta, done: (Result) -> Unit) {
         try {
-            val jpeg = ByteArrayOutputStream().also { image.compress(Bitmap.CompressFormat.JPEG, 95, it) }.toByteArray()
+            val jpeg = ByteArrayOutputStream().also { image.toBitmap().compress(Bitmap.CompressFormat.JPEG, 95, it) }.toByteArray()
             val uri = files.write(MediaStoreFiles.Kind.STILL, name, ExifWriter.insert(jpeg, meta))
             Log.i(TAG, "saved $name (${image.width}x${image.height})")
             done(Result.Saved(uri, name, video = false))
@@ -64,46 +74,75 @@ class Capture(resolver: ContentResolver) {
     }
 
     /**
-     * Start recording; frames come from [addVideoFrame]. The first frame fixes the size (and
-     * whether the overlay is burned in) for the whole file.
+     * Start recording [name]; frames come from [addVideoFrame]. The first frame fixes the size
+     * (and whether the overlay is burned in) for the whole file. [ended] is called once, on the
+     * worker, when the recording ends for any reason: stopped, failed to start, or an encoder
+     * error (which stops it at once).
      */
-    fun startRecording(name: String, first: Shot, done: (Result) -> Unit) = worker.execute {
-        if (recorder != null) return@execute
-        try {
-            val image = videoImage(first)
-            recorder = VideoRecorder(files, name, image.width, image.height).also {
-                it.add(image, SystemClock.elapsedRealtimeNanos())
-            }
+    fun startRecording(name: String, first: Shot, ended: (Result) -> Unit) = worker.execute {
+        if (recorder != null) return@execute ended(Result.Failed(name, "already recording"))
+        val image = try {
+            videoImage(first).also { recorder = VideoRecorder.create(files, name, it.width, it.height) }
         } catch (e: Exception) {
             Log.e(TAG, "recording failed to start", e)
-            done(Result.Failed(name, e.message ?: e.javaClass.simpleName))
+            return@execute ended(Result.Failed(name, e.message ?: e.javaClass.simpleName))
+        }
+        recordingName = name
+        onRecordingEnd = ended
+        try {
+            recorder!!.add(image, SystemClock.elapsedRealtimeNanos())
+        } catch (e: Exception) {
+            Log.e(TAG, "encoder error on the first frame", e)
+            end(e.message ?: e.javaClass.simpleName)
         }
     }
 
     /** Offer a frame to the recording; dropped if the previous one is still being encoded. */
     fun addVideoFrame(shot: Shot, nanos: Long) {
-        if (recorder == null || !busy.compareAndSet(false, true)) return
+        if (!busy.compareAndSet(false, true)) return
         worker.execute {
             try {
                 val r = recorder ?: return@execute
-                val image = videoImage(shot)
-                if (image.width == r.width && image.height == r.height) r.add(image, nanos)
+                // The size is fixed for the file; a frame that differs is fitted, not dropped.
+                r.add(PixelOps.fit(videoImage(shot), r.width, r.height), nanos)
             } catch (e: Exception) {
-                Log.w(TAG, "video frame dropped", e)
+                Log.e(TAG, "encoder error: stopping the recording", e)
+                end(e.message ?: e.javaClass.simpleName)
             } finally {
                 busy.set(false)
             }
         }
     }
 
-    fun stopRecording(name: String, done: (Result) -> Unit) = worker.execute {
-        val r = recorder ?: return@execute
-        recorder = null
-        val uri = r.finish(SystemClock.elapsedRealtimeNanos())
-        done(if (uri != null) Result.Saved(uri, name, video = true) else Result.Failed(name, "no frames recorded"))
+    /** Stop recording; the start's `ended` callback gets the result ("no recording" if none). */
+    fun stopRecording(ifNone: (Result) -> Unit) = worker.execute {
+        if (recorder == null) return@execute ifNone(Result.Failed("recording", "no recording"))
+        end(null)
     }
 
-    private fun videoImage(shot: Shot) = Frames.composed(Frames.rotated(shot.frame, shot.rotation), shot.renderer, shot.band, shot.overlay)
+    /** Finish the recording (after an [error], if any) and report how it ended. Worker only. */
+    private fun end(error: String?) {
+        val r = recorder ?: return
+        recorder = null
+        val uri = r.finish(SystemClock.elapsedRealtimeNanos())
+        val ended = onRecordingEnd ?: return
+        onRecordingEnd = null
+        ended(when {
+            error == null && uri != null -> Result.Saved(uri, recordingName, video = true)
+            error == null -> Result.Failed(recordingName, "the video couldn't be finished")
+            uri != null -> Result.Failed(recordingName, "stopped by an encoder error ($error); what was recorded is saved")
+            else -> Result.Failed(recordingName, error)
+        })
+    }
+
+    /** Finish any recording, then stop the worker. */
+    fun close() {
+        worker.execute { end(null) }
+        worker.shutdown()
+    }
+
+    private fun videoImage(shot: Shot) =
+        Frames.composed(Frames.rotated(shot.frame, shot.rotation).toPixelImage(), shot.renderer, shot.band, shot.overlay)
 
     private companion object {
         const val TAG = "BebirdSpike"

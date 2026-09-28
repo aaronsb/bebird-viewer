@@ -8,12 +8,24 @@ package com.bockelie.bebird.capture
 object Yuv {
     class Planes(val width: Int, val height: Int, val y: ByteArray, val u: ByteArray, val v: ByteArray)
 
-    fun from(argb: IntArray, width: Int, height: Int): Planes {
+    fun from(argb: IntArray, width: Int, height: Int): Planes = into(argb, planes(width, height))
+
+    /** Empty planes for a [width] × [height] picture, to reuse with [into]. */
+    fun planes(width: Int, height: Int): Planes {
         require(width % 2 == 0 && height % 2 == 0) { "$width x $height: must be even" }
-        val y = ByteArray(width * height)
+        val c = (width / 2) * (height / 2)
+        return Planes(width, height, ByteArray(width * height), ByteArray(c), ByteArray(c))
+    }
+
+    /** Convert [argb] (planes.width × planes.height) into [planes], reusing its arrays. */
+    fun into(argb: IntArray, planes: Planes): Planes {
+        val width = planes.width
+        val height = planes.height
+        require(argb.size == width * height) { "${argb.size} pixels for $width x $height" }
+        val y = planes.y
         val cw = width / 2
-        val u = ByteArray(cw * (height / 2))
-        val v = ByteArray(cw * (height / 2))
+        val u = planes.u
+        val v = planes.v
         for (row in 0 until height) for (col in 0 until width) {
             val p = argb[row * width + col]
             y[row * width + col] = luma(p shr 16 and 0xFF, p shr 8 and 0xFF, p and 0xFF).toByte()
@@ -28,7 +40,7 @@ object Yuv {
             u[cy * cw + cx] = clamp(((-38 * r - 74 * g + 112 * b + 128) shr 8) + 128).toByte()
             v[cy * cw + cx] = clamp(((112 * r - 94 * g - 18 * b + 128) shr 8) + 128).toByte()
         }
-        return Planes(width, height, y, u, v)
+        return planes
     }
 
     fun luma(r: Int, g: Int, b: Int) = clamp(((66 * r + 129 * g + 25 * b + 128) shr 8) + 16)

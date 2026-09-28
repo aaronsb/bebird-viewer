@@ -8,7 +8,6 @@ import android.graphics.Paint
 import com.bockelie.bebird.band.BandData
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.band.PixelImage
-import com.bockelie.bebird.band.toBitmap
 import com.bockelie.bebird.band.toPixelImage
 
 /** Bitmap steps shared by stills and video: rotate as shown, crop a zoomed view, add the overlay. */
@@ -26,24 +25,13 @@ object Frames {
     }
 
     /** [image] with the overlay (band, ring, background) when [overlay] and the fonts are loaded. */
-    fun composed(image: Bitmap, renderer: BandRenderer?, data: BandData, overlay: Boolean,
-                 circle: BandRenderer.Circle = BandRenderer.Circle.inscribed(image.width, image.height)): Bitmap =
-        if (overlay && renderer != null) renderer.compose(image.toPixelImage(), data, true, circle).toBitmap() else image
+    fun composed(image: PixelImage, renderer: BandRenderer?, data: BandData, overlay: Boolean,
+                 circle: BandRenderer.Circle = BandRenderer.Circle.inscribed(image.width, image.height)): PixelImage =
+        if (overlay && renderer != null) renderer.compose(image, data, true, circle) else image
 
-    /**
-     * The zoomed view: [rect] of the (rotated) frame, enlarged by a whole factor (nearest
-     * neighbour, so no new pixel values) to at least 480 px wide, with the overlay drawn around
-     * where the scope's image circle falls in it.
-     */
-    fun zoomed(rotated: Bitmap, rect: ZoomCrop.Rect, renderer: BandRenderer?, data: BandData, overlay: Boolean): Bitmap {
-        val k = ZoomCrop.upscale(rect.width)
-        val src = rotated.toPixelImage()
-        val w = rect.width * k
-        val h = rect.height * k
-        val px = IntArray(w * h) { i -> src.pixels[(rect.top + (i / w) / k) * src.width + rect.left + (i % w) / k] }
-        // the frame's inscribed circle, in the enlarged crop's pixel coordinates
-        val c = BandRenderer.Circle.inscribed(src.width, src.height)
-        val circle = BandRenderer.Circle((c.cx - rect.left) * k + (k - 1) / 2.0, (c.cy - rect.top) * k + (k - 1) / 2.0, (c.r + 0.5) * k - 0.5)
-        return composed(PixelImage(w, h, px).toBitmap(), renderer, data, overlay, circle)
+    /** The zoomed view: [rect] of the rotated frame, enlarged, with the overlay around the scope's circle in it. */
+    fun zoomed(rotated: Bitmap, rect: ZoomCrop.Rect, renderer: BandRenderer?, data: BandData, overlay: Boolean): PixelImage {
+        val (crop, circle) = PixelOps.enlargedCrop(rotated.toPixelImage(), rect)
+        return composed(crop, renderer, data, overlay, circle)
     }
 }
