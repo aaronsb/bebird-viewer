@@ -32,6 +32,20 @@ import com.bockelie.bebird.control.LightControl
 import com.bockelie.bebird.control.RollFilter
 import com.bockelie.bebird.settings.ThemeMode
 import kotlin.math.roundToInt
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.Checkbox
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.unit.Dp
+import com.bockelie.bebird.band.BandData
+import com.bockelie.bebird.band.BandLayout
+import com.bockelie.bebird.band.BandRenderer
+import com.bockelie.bebird.band.toBitmap
+import com.bockelie.bebird.settings.Settings
+import kotlinx.coroutines.delay
+import java.time.LocalDateTime
 import android.os.Build
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -134,8 +148,19 @@ fun ViewerScreen(vm: ViewerViewModel) {
     val shownRoll by conn.shownRoll.collectAsStateWithLifecycle()
     val autoRotate by vm.autoRotate.collectAsStateWithLifecycle()
     val trim by vm.trim.collectAsStateWithLifecycle()
-    val theme by vm.theme.collectAsStateWithLifecycle()
+    val bandOn by vm.band.collectAsStateWithLifecycle()
+    val circleOn by vm.circle.collectAsStateWithLifecycle()
+    val label by vm.label.collectAsStateWithLifecycle()
+    val renderer by vm.bandRenderer.collectAsStateWithLifecycle()
     val online = wifi is ScopeWifi.State.Available
+    var editingLabel by remember { mutableStateOf(false) }
+    // The band's clock, on the second.
+    val now by produceState(LocalDateTime.now()) {
+        while (true) {
+            delay(1000 - System.currentTimeMillis() % 1000)
+            value = LocalDateTime.now()
+        }
+    }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
         Column(
@@ -151,7 +176,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 Button(onClick = { if (idle) withPermission(conn::connect) else conn.disconnect() }) {
                     Text(stringResource(if (idle) R.string.connect else R.string.disconnect))
                 }
-                ThemeMenu(theme, vm::setTheme)
+                SettingsMenu(vm, onEditLabel = { editingLabel = true })
             }
             Text(
                 statusLine(wifi, stats), style = MaterialTheme.typography.bodySmall,
@@ -160,9 +185,29 @@ fun ViewerScreen(vm: ViewerViewModel) {
             ZoomableCircle(
                 frame = stats.frame,
                 rotation = RollFilter.rotation(shownRoll, autoRotate, trim),
+                outline = circleOn,
                 modifier = Modifier.fillMaxWidth().weight(1f),
             )
-            Readouts(stats, shownRoll)
+            val band = renderer
+            if (bandOn && band != null) {
+                val device = book.last?.takeIf { online }
+                StatusBand(
+                    band,
+                    BandData(
+                        batteryPercent = stats.battery?.percent,
+                        charging = stats.battery?.state == 2,
+                        lightPercent = light.level.takeIf { online },
+                        roll = shownRoll.takeIf { stats.frame != null },
+                        trim = trim,
+                        fps = stats.fps.takeIf { online },
+                        device = device?.let { it.nickname ?: it.ssid.removePrefix("bebird-") },
+                        time = now,
+                        label = label.ifEmpty { null },
+                    ),
+                )
+            } else {
+                Readouts(stats, shownRoll)
+            }
             LightRow(light, onToggle = conn::toggleLight, onLevel = conn::setLight)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The switch and its label are one control, so TalkBack names it.
@@ -210,6 +255,9 @@ fun ViewerScreen(vm: ViewerViewModel) {
             onRename = { renaming = it },
             onForget = conn::forget,
         )
+    }
+    if (editingLabel) {
+        LabelDialog(label, onDone = { vm.setLabel(it); editingLabel = false }, onCancel = { editingLabel = false })
     }
     renaming?.let { device ->
         RenameDialog(device, onDone = { name -> conn.rename(device, name); renaming = null }, onCancel = { renaming = null })
@@ -399,7 +447,7 @@ private fun LightRow(light: ScopeConnection.Light, onToggle: () -> Unit, onLevel
  * to the viewport; double-tap resets. Display only: nothing here changes what is received.
  */
 @Composable
-private fun ZoomableCircle(frame: Bitmap?, rotation: Int, modifier: Modifier) {
+private fun ZoomableCircle(frame: Bitmap?, rotation: Int, outline: Boolean, modifier: Modifier) {
     var zoom by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     BoxWithConstraints(modifier.clipToBounds(), contentAlignment = Alignment.Center) {
@@ -437,7 +485,9 @@ private fun ZoomableCircle(frame: Bitmap?, rotation: Int, modifier: Modifier) {
                         translationY = offset.y
                     }
                     .clip(CircleShape)
-                    .background(Color.Black),
+                    .background(Color.Black)
+                    // the same hair-thin ring saved images get (#15)
+                    .then(if (outline) Modifier.border(Dp.Hairline, Color(BandRenderer.CIRCLE), CircleShape) else Modifier),
             ) {
                 frame?.let {
                     // Rotated clockwise by the roll angle (and trim) keeps the picture upright.
@@ -453,29 +503,104 @@ private fun ZoomableCircle(frame: Bitmap?, rotation: Int, modifier: Modifier) {
     }
 }
 
+/** The status band, drawn pixel for pixel (integer scale, no smoothing) at the screen's width. */
 @Composable
-private fun ThemeMenu(mode: ThemeMode, onMode: (ThemeMode) -> Unit) {
+private fun StatusBand(renderer: BandRenderer, data: BandData) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val width = constraints.maxWidth
+        val bitmap = remember(data, width) { renderer.render(data, width).toBitmap().asImageBitmap() }
+        val description = remember(data) { BandLayout.fields(data).joinToString(", ") { "${it.tag} ${it.value}".trim() } }
+        with(LocalDensity.current) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = description,
+                contentScale = ContentScale.None,
+                filterQuality = FilterQuality.None,
+                modifier = Modifier.size(bitmap.width.toDp(), bitmap.height.toDp()),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsMenu(vm: ViewerViewModel, onEditLabel: () -> Unit) {
+    val mode by vm.theme.collectAsStateWithLifecycle()
+    val band by vm.band.collectAsStateWithLifecycle()
+    val circle by vm.circle.collectAsStateWithLifecycle()
+    val label by vm.label.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }) {
-            Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.theme))
+            Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.status_band)) },
+                leadingIcon = { Checkbox(checked = band, onCheckedChange = null) },
+                onClick = { vm.setBand(!band) },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.circle_outline)) },
+                leadingIcon = { Checkbox(checked = circle, onCheckedChange = null) },
+                onClick = { vm.setCircle(!circle) },
+            )
+            DropdownMenuItem(
+                text = { Text(if (label.isEmpty()) stringResource(R.string.label_set) else stringResource(R.string.label_edit, label)) },
+                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                onClick = { open = false; onEditLabel() },
+            )
+            if (label.isNotEmpty()) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.label_clear)) },
+                    leadingIcon = { Icon(Icons.Default.Clear, contentDescription = null) },
+                    onClick = { vm.setLabel("") },
+                )
+            }
+            HorizontalDivider()
             Text(
                 stringResource(R.string.theme), style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
             )
-            for ((m, label) in listOf(
+            for ((m, name) in listOf(
                 ThemeMode.SYSTEM to R.string.theme_system,
                 ThemeMode.LIGHT to R.string.theme_light,
                 ThemeMode.DARK to R.string.theme_dark,
             )) {
                 DropdownMenuItem(
-                    text = { Text(stringResource(label)) },
+                    text = { Text(stringResource(name)) },
                     leadingIcon = { RadioButton(selected = m == mode, onClick = null) },
-                    onClick = { open = false; onMode(m) },
+                    onClick = { open = false; vm.setTheme(m) },
                 )
             }
         }
     }
+}
+
+/** The free-text name/label: typed once, kept until changed or cleared. */
+@Composable
+private fun LabelDialog(current: String, onDone: (String) -> Unit, onCancel: () -> Unit) {
+    var text by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(R.string.label_title)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it.take(Settings.MAX_LABEL) },
+                singleLine = true,
+                label = { Text(stringResource(R.string.label_field)) },
+                // It may be a person's name: say plainly where it goes.
+                supportingText = { Text(stringResource(R.string.label_privacy)) },
+                trailingIcon = {
+                    if (text.isNotEmpty()) {
+                        IconButton(onClick = { text = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.label_clear))
+                        }
+                    }
+                },
+            )
+        },
+        confirmButton = { TextButton(onClick = { onDone(text) }) { Text(stringResource(R.string.save)) } },
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
+    )
 }

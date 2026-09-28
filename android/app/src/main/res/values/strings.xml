@@ -43,4 +43,13 @@
     <string name="theme_system">Follow system</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
+    <string name="settings">Settings</string>
+    <string name="status_band">Status band</string>
+    <string name="circle_outline">Circle outline</string>
+    <string name="label_set">Name or label…</string>
+    <string name="label_edit">Name: %1$s</string>
+    <string name="label_clear">Clear name</string>
+    <string name="label_title">Name or label</string>
+    <string name="label_field">For example a name, or "left ear"</string>
+    <string name="label_privacy">Shown in the status band and saved into the photos and videos you take. It stays on this phone and is never sent anywhere.</string>
 </resources>

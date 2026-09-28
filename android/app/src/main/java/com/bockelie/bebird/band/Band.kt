@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package com.bockelie.bebird.band
+
+import java.time.LocalDateTime
+
+/** What the status band shows. Null values show as "--". */
+data class BandData(
+    val batteryPercent: Int? = null,
+    val charging: Boolean = false,
+    val lightPercent: Int? = null,
+    val roll: Int? = null,
+    val trim: Int = 0,
+    val fps: Int? = null,
+    val device: String? = null,
+    val time: LocalDateTime? = null,
+    val label: String? = null,
+)
+
+/**
+ * The band's fixed grid: [COLUMNS] cells by [ROWS] rows (58 of the 60 cells across 480 px, a
+ * one-cell margin each side), each field at a fixed column with a
+ * fixed width, values right-aligned in it, so nothing moves when values change. Like an
+ * ultrasound readout: dim tags, bright values.
+ */
+object BandLayout {
+    const val COLUMNS = 58
+    /** Cells across the 480-px width the band is designed for, margins included. */
+    const val WIDTH_CELLS = 60
+    const val ROWS = 2
+
+    /** One field: [tag] (dim) then [value] (bright), in [width] cells from ([row], [col]). */
+    data class Field(val row: Int, val col: Int, val width: Int, val tag: String, val value: String, val align: Align)
+
+    enum class Align { RIGHT, LEFT }
+
+    /** A code point placed at a cell; [cells] is 2 for a wide glyph. */
+    data class Placed(val row: Int, val col: Int, val codepoint: Int, val cells: Int, val bright: Boolean)
+
+    fun fields(d: BandData): List<Field> = listOf(
+        // row 0: 0 BAT 100%+ | 10 LIGHT 100% | 21 ROLL 359° | 31 TRIM +180° | 42 FPS 99 | 50 12:34:56
+        Field(0, 0, 9, "BAT", d.batteryPercent?.let { "$it%" + if (d.charging) "+" else " " } ?: "-- ", Align.RIGHT),
+        Field(0, 10, 10, "LIGHT", d.lightPercent?.let { if (it == 0) "OFF" else "$it%" } ?: "--", Align.RIGHT),
+        Field(0, 21, 9, "ROLL", d.roll?.let { "$it°" } ?: "--", Align.RIGHT),
+        Field(0, 31, 10, "TRIM", (if (d.trim > 0) "+" else "") + "${d.trim}°", Align.RIGHT),
+        Field(0, 42, 6, "FPS", d.fps?.toString() ?: "--", Align.RIGHT),
+        Field(0, 50, 8, "", d.time?.let { "%02d:%02d:%02d".format(it.hour, it.minute, it.second) } ?: "--:--:--", Align.RIGHT),
+        // row 1: 0 device (18) | 19 date | 30 label (28)
+        Field(1, 0, 18, "", d.device ?: "--", Align.LEFT),
+        Field(1, 19, 10, "", d.time?.let { "%04d-%02d-%02d".format(it.year, it.monthValue, it.dayOfMonth) } ?: "----------", Align.LEFT),
+        Field(1, 30, 28, "", d.label.orEmpty(), Align.LEFT),
+    )
+
+    /**
+     * Every glyph of [d] at its cell. A value longer than its field is cut to fit, ending in
+     * "…"; wide glyphs count two cells and are never split.
+     */
+    fun place(d: BandData, font: GlyphSource): List<Placed> = fields(d).flatMap { f ->
+        val tagCells = if (f.tag.isEmpty()) 0 else f.tag.length + 1
+        val room = f.width - tagCells
+        val value = fit(f.value, room, font)
+        val used = value.sumOf { font.cells(it) }
+        val start = f.col + tagCells + if (f.align == Align.RIGHT) room - used else 0
+        val out = ArrayList<Placed>()
+        f.tag.forEachIndexed { i, c -> out += Placed(f.row, f.col + i, c.code, 1, bright = false) }
+        var col = start
+        for (cp in value) {
+            val w = font.cells(cp)
+            out += Placed(f.row, col, cp, w, bright = true)
+            col += w
+        }
+        out
+    }
+
+    /** [text]'s code points, cut to [cells] cells with a trailing "…" if it doesn't fit. */
+    fun fit(text: String, cells: Int, font: GlyphSource): List<Int> {
+        val cps = text.codePoints().toArray().toList()
+        if (cps.sumOf { font.cells(it) } <= cells) return cps
+        val out = ArrayList<Int>()
+        var used = 0
+        for (cp in cps) {
+            val w = font.cells(cp)
+            if (used + w > cells - 1) break  // keep one cell for the ellipsis
+            out += cp
+            used += w
+        }
+        return out + ELLIPSIS
+    }
+
+    private const val ELLIPSIS = 0x2026
+}
+
+/** A plain ARGB image: [pixels] row by row, [width] × [height]. */
+class PixelImage(val width: Int, val height: Int, val pixels: IntArray) {
+    init { require(pixels.size == width * height) }
+}
+
+/**
+ * Draws the band and composes saved output. Pure: works on ARGB int arrays, so the screen
+ * (via a Bitmap of the same pixels) and saved files look identical.
+ */
+class BandRenderer(private val font: GlyphSource) {
+    /** The integer scale for a band [width] pixels wide: 1 at 480, 2 at 960 and so on. */
+    fun scale(width: Int) = maxOf(1, width / (BandLayout.WIDTH_CELLS * PixelFont.CELL))
+
+    /** Where the grid starts: centred, so a one-cell margin at 480 px (8 × scale px). */
+    fun left(width: Int) = maxOf(0, (width - BandLayout.COLUMNS * PixelFont.CELL * scale(width)) / 2)
+
+    /** Band height for [width]: two text rows plus padding, times the scale. */
+    fun height(width: Int) = (BandLayout.ROWS * PixelFont.HEIGHT + 2 * PAD) * scale(width)
+
+    /** The band alone, [width] wide: black, glyphs drawn with integer scaling and no smoothing. */
+    fun render(d: BandData, width: Int): PixelImage {
+        val s = scale(width)
+        val h = height(width)
+        val px = IntArray(width * h) { BACKGROUND }
+        val left = left(width)
+        for (p in BandLayout.place(d, font)) {
+            val g = font.glyph(p.codepoint) ?: continue
+            val color = if (p.bright) VALUE else TAG
+            val x0 = left + p.col * PixelFont.CELL * s
+            val y0 = (PAD + p.row * PixelFont.HEIGHT) * s
+            for (gy in 0 until PixelFont.HEIGHT) for (gx in 0 until g.cells * PixelFont.CELL) {
+                if (!g.pixel(gx, gy)) continue
+                for (dy in 0 until s) for (dx in 0 until s) {
+                    val x = x0 + gx * s + dx
+                    val y = y0 + gy * s + dy
+                    if (x in 0 until width && y in 0 until h) px[y * width + x] = color
+                }
+            }
+        }
+        return PixelImage(width, h, px)
+    }
+
+    /**
+     * Saved output: the (already rotated) [frame], optionally with a hair-thin [circle] at the
+     * image circle's edge, and with the [band] below it, so the result is frame.width wide and
+     * frame.height + band height tall. With both off, the frame itself is returned. The
+     * frame's pixels are copied as they are; only the circle, if on, changes any of them.
+     */
+    fun compose(frame: PixelImage, d: BandData, band: Boolean, circle: Boolean): PixelImage {
+        if (!band && !circle) return frame
+        val w = frame.width
+        val bandImage = if (band) render(d, w) else null
+        val h = frame.height + (bandImage?.height ?: 0)
+        val out = IntArray(w * h)
+        frame.pixels.copyInto(out)
+        if (circle) drawCircle(out, w, frame.height)
+        bandImage?.pixels?.copyInto(out, frame.width * frame.height)
+        return PixelImage(w, h, out)
+    }
+
+    /** A 1-pixel circle inscribed in the w × h frame area of [px]. */
+    private fun drawCircle(px: IntArray, w: Int, h: Int) {
+        val cx = (w - 1) / 2.0
+        val cy = (h - 1) / 2.0
+        val r = minOf(w, h) / 2.0 - 0.5
+        // Pixels whose centres lie within half a pixel of the radius: a ring about one pixel thin.
+        for (y in 0 until h) for (x in 0 until w) {
+            val d = Math.hypot(x - cx, y - cy)
+            if (kotlin.math.abs(d - r) < 0.5) px[y * w + x] = CIRCLE
+        }
+    }
+
+    companion object {
+        const val PAD = 4
+        const val BACKGROUND = 0xFF000000.toInt()
+        const val TAG = 0xFF8C8C8C.toInt()
+        const val VALUE = 0xFFE6E6E6.toInt()
+        const val CIRCLE = 0xFFB4B4B4.toInt()
+    }
+}
