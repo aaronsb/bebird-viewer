@@ -21,6 +21,10 @@
     <string name="auto_rotate">Auto-rotate</string>
     <string name="trim_minus">−15°</string>
     <string name="trim_plus">+15°</string>
+    <string name="trim_minus_description">Trim −15°</string>
+    <string name="trim_plus_description">Trim +15°</string>
+    <string name="light_level">Light level</string>
+    <string name="light_level_state">%1$d percent</string>
     <string name="trim_value">Trim %1$s°</string>
     <string name="snapshot">Snapshot</string>
     <string name="record">Record</string>

@@ -12,14 +12,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import com.bockelie.bebird.settings.ThemeMode
 
-/** Material 3, light or dark per [mode] (System follows the phone), with dynamic color on 12+. */
+/** Whether [mode] means dark right now (System follows the phone). */
+@Composable
+fun isDark(mode: ThemeMode): Boolean = when (mode) {
+    ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    ThemeMode.LIGHT -> false
+    ThemeMode.DARK -> true
+}
+
+/** Material 3, light or dark per [mode], with dynamic color on 12+. */
 @Composable
 fun BebirdTheme(mode: ThemeMode, content: @Composable () -> Unit) {
-    val dark = when (mode) {
-        ThemeMode.SYSTEM -> isSystemInDarkTheme()
-        ThemeMode.LIGHT -> false
-        ThemeMode.DARK -> true
-    }
+    val dark = isDark(mode)
     val context = LocalContext.current
     val colors = when {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)

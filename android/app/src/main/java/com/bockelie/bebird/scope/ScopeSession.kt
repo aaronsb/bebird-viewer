@@ -31,6 +31,7 @@ import java.io.IOException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -162,7 +163,9 @@ class ScopeSession(
 
         var stalled = false
         while (isActive) {
-            send(c, Protocol.BATTERY)  // the keepalive: without it video stops within ~1 s
+            // The keepalive: without it video stops within ~1 s. Queued like every command, so a
+            // poll can't reach the scope after STOP.
+            command(null, listOf(Protocol.BATTERY))
             delay(timing.tickMs)
             val now = clock()
             val fps = frameCount.getAndSet(0)
@@ -193,13 +196,18 @@ class ScopeSession(
     /** Ask for the light level (`66 3C FE`); the reply arrives on [lightReports]. */
     fun queryLight() = command("light query", listOf(Protocol.LIGHT_QUERY))
 
-    private fun command(what: String, data: List<ByteArray>) {
+    /** Send [data] on the command link from videoOps, unless stopped by then. [what] null: don't log. */
+    private fun command(what: String?, data: List<ByteArray>) {
         if (stopped.get()) return
-        videoOps.execute {
-            val c = ctrl ?: return@execute
-            if (stopped.get()) return@execute
-            val sent = data.all { send(c, it) }
-            Log.i(TAG, if (sent) "$what sent" else "$what could not be sent")
+        try {
+            videoOps.execute {
+                val c = ctrl ?: return@execute
+                if (stopped.get()) return@execute
+                val sent = data.all { send(c, it) }
+                if (what != null) Log.i(TAG, if (sent) "$what sent" else "$what could not be sent")
+            }
+        } catch (_: RejectedExecutionException) {
+            // the executor is shut down (tests only; the shared one never is)
         }
     }
 

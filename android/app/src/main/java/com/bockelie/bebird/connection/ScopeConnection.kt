@@ -30,7 +30,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.Future
 
@@ -48,6 +47,7 @@ class ScopeConnection(
     private val scope: CoroutineScope,
     private val settings: Settings = Settings(MemoryKeyValue()),
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    lightTiming: LightControl.Timing = LightControl.Timing(),
     private val newSession: (ScopeWifi.State.Available) -> ScopeSession = { ScopeSession(NetworkLinks(it.network), scope) },
 ) {
     constructor(context: Context, scope: CoroutineScope, settings: Settings) :
@@ -77,7 +77,8 @@ class ScopeConnection(
     // so a late Unavailable can't file a request after Disconnect or leaving the app.
     private var wanted: Target? = null
 
-    private val light = LightControl(settings.light, settings.lightBeforeOff)
+    private val light = LightControl(settings.light, settings.lightBeforeOff, lightTiming)
+    private var lightJob: Job? = null  // wakes pumpLight() when the light control is next due
     private val _light = MutableStateFlow(Light(light.level, light.status))
     val lightState: StateFlow<Light> = _light.asStateFlow()
 
@@ -87,12 +88,6 @@ class ScopeConnection(
     val shownRoll: StateFlow<Int> = _shownRoll.asStateFlow()
 
     init {
-        scope.launch {
-            while (isActive) {
-                delay(LIGHT_TICK_MS)
-                pumpLight()
-            }
-        }
         scope.launch {
             wifi.state.collect { state ->
                 when (state) {
@@ -224,6 +219,7 @@ class ScopeConnection(
                     if (!streaming && it.frames > 0) {
                         streaming = true
                         light.onStreaming(clock())  // re-apply the level once video is up
+                        pumpLight()
                     }
                 }
             }
@@ -238,11 +234,15 @@ class ScopeConnection(
         streaming = false
         sessionJobs?.cancel()
         sessionJobs = null
+        pumpLight()  // offline now: drop any check in progress
         _stats.value = s.stats.value.copy(frame = null, fps = 0, status = "stopped", beacon = null)
         return s.stop()
     }
 
-    /** Send what the light control asks for, publish its state and remember the level. */
+    /**
+     * Send what the light control asks for, publish its state, remember a level once it is
+     * sent (or dropped, while offline), and wake up again when the control is next due.
+     */
     private fun pumpLight() {
         val s = session
         for (cmd in light.poll(clock(), online = s != null && streaming)) {
@@ -251,19 +251,22 @@ class ScopeConnection(
                 LightControl.Command.Query -> s?.queryLight()
             }
         }
-        val now = Light(light.level, light.status)
-        if (now != _light.value) {
-            if (now.level != _light.value.level) {
-                settings.light = light.level
-                settings.lightBeforeOff = light.beforeOff
+        if (light.status != LightControl.Status.Pending && light.level != settings.light) {
+            settings.light = light.level
+            settings.lightBeforeOff = light.beforeOff
+        }
+        _light.value = Light(light.level, light.status)
+        lightJob?.cancel()
+        lightJob = light.nextDue()?.let { due ->
+            scope.launch {
+                delay(maxOf(0, due - clock()))
+                pumpLight()
             }
-            _light.value = now
         }
     }
 
     companion object {
         private const val TAG = "BebirdSpike"
-        private const val LIGHT_TICK_MS = 50L
         // A dead link can't hold up the release for longer than this.
         private const val STOP_TIMEOUT_MS = 1000L
     }

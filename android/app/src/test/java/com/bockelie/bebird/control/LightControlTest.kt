@@ -87,6 +87,47 @@ class LightControlTest {
         assertEquals(listOf(3500L to Command.Set(Protocol.lightPercentToRaw(70))), run(2000, 3500))
     }
 
+    @Test fun goingOfflineAbandonsTheCheck() {
+        // sent and queried, then the connection drops before the check: no "!" for that
+        light.set(50, 0)
+        run(0, 900)
+        assertEquals(emptyList<Any>(), run(910, 2000, online = false))
+        assertEquals(Status.Idle, light.status)
+        assertEquals(null, light.nextDue())
+    }
+
+    @Test fun noConfirmedMarkOutlivesTheConnection() {
+        light.set(50, 0)
+        run(0, 1500)
+        light.onReported(Protocol.lightPercentToRaw(50))
+        run(1510, 2000)
+        assertEquals(Status.Confirmed(Protocol.lightPercentToRaw(50)), light.status)
+        run(2010, 2010, online = false)
+        assertEquals(Status.Idle, light.status)
+    }
+
+    @Test fun toggleDropsTheOldMark() {
+        light.set(50, 0)
+        run(0, 2000)
+        light.onReported(7)
+        light.toggle(2500)
+        assertEquals(Status.Pending, light.status)  // not the previous level's mark
+        run(2500, 2500, online = false)             // offline: dropped, and nothing to show
+        assertEquals(Status.Idle, light.status)
+    }
+
+    @Test fun nextDueFollowsTheSchedule() {
+        assertEquals(null, light.nextDue())
+        light.set(50, 1000)
+        assertEquals(1300L, light.nextDue())
+        light.poll(1300, online = true)
+        assertEquals(1800L, light.nextDue())  // the query
+        light.poll(1800, online = true)
+        assertEquals(2800L, light.nextDue())  // the check
+        light.poll(2800, online = true)
+        assertEquals(null, light.nextDue())
+    }
+
     @Test fun levelsAreClamped() {
         light.set(250, 0)
         assertEquals(100, light.level)

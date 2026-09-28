@@ -24,6 +24,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import com.bockelie.bebird.control.LightControl
@@ -163,14 +165,26 @@ fun ViewerScreen(vm: ViewerViewModel) {
             Readouts(stats, shownRoll)
             LightRow(light, onToggle = conn::toggleLight, onLevel = conn::setLight)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(checked = autoRotate, onCheckedChange = vm::setAutoRotate)
-                Text(stringResource(R.string.auto_rotate), Modifier.padding(start = 8.dp).weight(1f))
-                TextButton(onClick = { vm.stepTrim(-1) }) { Text(stringResource(R.string.trim_minus)) }
+                // The switch and its label are one control, so TalkBack names it.
+                Row(
+                    Modifier.weight(1f).toggleable(value = autoRotate, role = Role.Switch, onValueChange = vm::setAutoRotate),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Switch(checked = autoRotate, onCheckedChange = null)
+                    Text(stringResource(R.string.auto_rotate), Modifier.padding(start = 8.dp))
+                }
+                val minus = stringResource(R.string.trim_minus_description)
+                val plus = stringResource(R.string.trim_plus_description)
+                TextButton(onClick = { vm.stepTrim(-1) }, modifier = Modifier.semantics { contentDescription = minus }) {
+                    Text(stringResource(R.string.trim_minus))
+                }
                 Text(
                     stringResource(R.string.trim_value, signed(trim, 4)),
                     style = MaterialTheme.typography.bodyMedium.merge(tabular),
                 )
-                TextButton(onClick = { vm.stepTrim(1) }) { Text(stringResource(R.string.trim_plus)) }
+                TextButton(onClick = { vm.stepTrim(1) }, modifier = Modifier.semantics { contentDescription = plus }) {
+                    Text(stringResource(R.string.trim_plus))
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Capture comes with #15.
@@ -341,13 +355,23 @@ private fun Readouts(s: ScopeSession.Stats, roll: Int) {
 @Composable
 private fun LightRow(light: ScopeConnection.Light, onToggle: () -> Unit, onLevel: (Int) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Switch(checked = light.level > 0, onCheckedChange = { onToggle() })
-        Text(stringResource(R.string.light), Modifier.padding(horizontal = 8.dp))
+        Row(
+            Modifier.toggleable(value = light.level > 0, role = Role.Switch, onValueChange = { onToggle() }),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Switch(checked = light.level > 0, onCheckedChange = null)
+            Text(stringResource(R.string.light), Modifier.padding(horizontal = 8.dp))
+        }
+        val levelName = stringResource(R.string.light_level)
+        val levelState = stringResource(R.string.light_level_state, light.level)
         Slider(
             value = light.level.toFloat(),
             onValueChange = { onLevel(it.roundToInt()) },
             valueRange = 0f..100f,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).semantics {
+                contentDescription = levelName
+                stateDescription = levelState
+            },
         )
         Text(
             fixed(light.level, 3) + "%",
@@ -387,13 +411,19 @@ private fun ZoomableCircle(frame: Bitmap?, rotation: Int, modifier: Modifier) {
             o.x.coerceIn(-maxOf(0f, (side * z - w) / 2), maxOf(0f, (side * z - w) / 2)),
             o.y.coerceIn(-maxOf(0f, (side * z - h) / 2), maxOf(0f, (side * z - h) / 2)),
         )
+        // A resize (rotation, multi-window) keeps the view inside the new bounds.
+        LaunchedEffect(w, h) { offset = clamp(offset, zoom) }
         Box(
             Modifier.fillMaxSize()
                 .pointerInput(Unit) { detectTapGestures(onDoubleTap = { zoom = 1f; offset = Offset.Zero }) }
-                .pointerInput(side) {
-                    detectTransformGestures { _, pan, gestureZoom, _ ->
-                        zoom = (zoom * gestureZoom).coerceIn(1f, 6f)
-                        offset = clamp(offset + pan, zoom)
+                .pointerInput(w, h) {
+                    detectTransformGestures { centroid, pan, gestureZoom, _ ->
+                        val newZoom = (zoom * gestureZoom).coerceIn(1f, 6f)
+                        // Keep the point under the fingers where it is: relative to the viewport
+                        // centre, o' = (o - p) * z'/z + p, then add the pan.
+                        val p = centroid - Offset(w / 2, h / 2)
+                        offset = clamp((offset - p) * (newZoom / zoom) + p + pan, newZoom)
+                        zoom = newZoom
                     }
                 },
             contentAlignment = Alignment.Center,
