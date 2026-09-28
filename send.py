@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Send raw bytes to the scope and print any reply.
 
 Usage: send.py <hex bytes...> [--port N]      (default port 58090, the command port)

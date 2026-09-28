@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Headless capture from a Bebird ES otoscope: save JPEG frames, or write MJPEG to stdout.
 
 Usage:

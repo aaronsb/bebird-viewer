@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # bebird-viewer: run from source, or build and install a standalone binary.
 PYTHON  ?= python3
 PREFIX  ?= $(HOME)/.local
