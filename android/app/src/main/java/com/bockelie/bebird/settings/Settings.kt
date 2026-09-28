@@ -38,6 +38,7 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 /** What the viewer remembers between runs, like ~/.config/bebird/state.json on the desktop. */
 class Settings(private val kv: KeyValue) {
+
     var light: Int
         get() = kv.getInt("light", 100).coerceIn(0, 100)
         set(v) = kv.putInt("light", v)
@@ -50,6 +51,18 @@ class Settings(private val kv: KeyValue) {
     var trim: Int
         get() = kv.getInt("trim", 0).coerceIn(-180, 180)
         set(v) = kv.putInt("trim", v)
+    /**
+     * The overlay: the status band under the image and a hair-thin circle at the image circle's
+     * edge, on screen and (with #15) in saved stills. Stored under its first key, "band"; an
+     * older separate "circle" setting is ignored.
+     */
+    var overlay: Boolean
+        get() = kv.getBoolean("band", true)
+        set(v) = kv.putBoolean("band", v)
+    /** The free-text label shown in the band and saved in files; empty when cleared. */
+    var label: String
+        get() = Labels.limit(kv.getString("label", ""))
+        set(v) = kv.putString("label", Labels.limit(v.trim()))
     var theme: ThemeMode
         get() = ThemeMode.entries.firstOrNull { it.name == kv.getString("theme", "") } ?: ThemeMode.SYSTEM
         set(v) = kv.putString("theme", v.name)

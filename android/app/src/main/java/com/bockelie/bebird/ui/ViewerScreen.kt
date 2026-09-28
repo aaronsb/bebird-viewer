@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -30,8 +29,14 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import com.bockelie.bebird.control.LightControl
 import com.bockelie.bebird.control.RollFilter
-import com.bockelie.bebird.settings.ThemeMode
 import kotlin.math.roundToInt
+import androidx.compose.foundation.border
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.unit.Dp
+import com.bockelie.bebird.band.BandData
+import com.bockelie.bebird.band.BandRenderer
+import kotlinx.coroutines.delay
+import java.time.LocalDateTime
 import android.os.Build
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -52,6 +57,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -74,8 +80,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -134,8 +140,18 @@ fun ViewerScreen(vm: ViewerViewModel) {
     val shownRoll by conn.shownRoll.collectAsStateWithLifecycle()
     val autoRotate by vm.autoRotate.collectAsStateWithLifecycle()
     val trim by vm.trim.collectAsStateWithLifecycle()
-    val theme by vm.theme.collectAsStateWithLifecycle()
+    val overlayOn by vm.overlay.collectAsStateWithLifecycle()
+    val label by vm.label.collectAsStateWithLifecycle()
+    val renderer by vm.bandRenderer.collectAsStateWithLifecycle()
     val online = wifi is ScopeWifi.State.Available
+    var editingLabel by remember { mutableStateOf(false) }
+    // The band's clock, on the second.
+    val now by produceState(LocalDateTime.now()) {
+        while (true) {
+            delay(1000 - System.currentTimeMillis() % 1000)
+            value = LocalDateTime.now()
+        }
+    }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
         Column(
@@ -151,7 +167,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 Button(onClick = { if (idle) withPermission(conn::connect) else conn.disconnect() }) {
                     Text(stringResource(if (idle) R.string.connect else R.string.disconnect))
                 }
-                ThemeMenu(theme, vm::setTheme)
+                val theme by vm.theme.collectAsStateWithLifecycle()
+                SettingsMenu(theme = theme, onTheme = vm::setTheme, overlay = overlayOn, onOverlay = vm::setOverlay)
             }
             Text(
                 statusLine(wifi, stats), style = MaterialTheme.typography.bodySmall,
@@ -160,9 +177,26 @@ fun ViewerScreen(vm: ViewerViewModel) {
             ZoomableCircle(
                 frame = stats.frame,
                 rotation = RollFilter.rotation(shownRoll, autoRotate, trim),
+                outline = overlayOn,
                 modifier = Modifier.fillMaxWidth().weight(1f),
             )
-            Readouts(stats, shownRoll)
+            val device = book.last?.takeIf { online }
+            StatusBandSlot(
+                renderer = renderer,
+                showBand = overlayOn,
+                data = BandData(
+                    batteryPercent = stats.battery?.percent,
+                    charging = stats.battery?.state == 2,
+                    lightPercent = light.level.takeIf { online },
+                    roll = shownRoll.takeIf { stats.frame != null },
+                    trim = trim,
+                    fps = stats.fps.takeIf { online },
+                    droppedPerSecond = if (online) stats.droppedPerSecond else 0,
+                    device = device?.let { it.nickname ?: it.ssid.removePrefix("bebird-") },
+                    time = now,
+                    label = label.ifEmpty { null },
+                ),
+            ) { Readouts(stats, shownRoll) }
             LightRow(light, onToggle = conn::toggleLight, onLevel = conn::setLight)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The switch and its label are one control, so TalkBack names it.
@@ -186,6 +220,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     Text(stringResource(R.string.trim_plus))
                 }
             }
+            LabelRow(label, onEdit = { editingLabel = true }, onClear = { vm.setLabel("") })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Capture comes with #15.
                 FilledTonalButton(onClick = {}, enabled = false) { Text(stringResource(R.string.snapshot)) }
@@ -210,6 +245,9 @@ fun ViewerScreen(vm: ViewerViewModel) {
             onRename = { renaming = it },
             onForget = conn::forget,
         )
+    }
+    if (editingLabel) {
+        LabelDialog(label, onDone = { vm.setLabel(it); editingLabel = false }, onCancel = { editingLabel = false })
     }
     renaming?.let { device ->
         RenameDialog(device, onDone = { name -> conn.rename(device, name); renaming = null }, onCancel = { renaming = null })
@@ -399,10 +437,12 @@ private fun LightRow(light: ScopeConnection.Light, onToggle: () -> Unit, onLevel
  * to the viewport; double-tap resets. Display only: nothing here changes what is received.
  */
 @Composable
-private fun ZoomableCircle(frame: Bitmap?, rotation: Int, modifier: Modifier) {
+private fun ZoomableCircle(frame: Bitmap?, rotation: Int, outline: Boolean, modifier: Modifier) {
     var zoom by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
-    BoxWithConstraints(modifier.clipToBounds(), contentAlignment = Alignment.Center) {
+    // Outside the image circle the viewport is the band's black, not the theme's surface, so
+    // image and band read as one panel (as in saved stills with the overlay).
+    BoxWithConstraints(modifier.clipToBounds().background(Color(BandRenderer.BACKGROUND)), contentAlignment = Alignment.Center) {
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
         val side = minOf(w, h)
@@ -437,7 +477,9 @@ private fun ZoomableCircle(frame: Bitmap?, rotation: Int, modifier: Modifier) {
                         translationY = offset.y
                     }
                     .clip(CircleShape)
-                    .background(Color.Black),
+                    .background(Color.Black)
+                    // the same hair-thin ring saved images get (#15)
+                    .then(if (outline) Modifier.border(Dp.Hairline, Color(BandRenderer.CIRCLE), CircleShape) else Modifier),
             ) {
                 frame?.let {
                     // Rotated clockwise by the roll angle (and trim) keeps the picture upright.
@@ -453,29 +495,29 @@ private fun ZoomableCircle(frame: Bitmap?, rotation: Int, modifier: Modifier) {
     }
 }
 
+/**
+ * The label, like Trim a control of its own: the current text (or a prompt) opens the editing
+ * dialog, and a clear button next to it. Its height doesn't depend on the text.
+ */
 @Composable
-private fun ThemeMenu(mode: ThemeMode, onMode: (ThemeMode) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { open = true }) {
-            Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.theme))
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+private fun LabelRow(label: String, onEdit: () -> Unit, onClear: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.label), Modifier.padding(end = 8.dp))
+        val description = if (label.isEmpty()) stringResource(R.string.label_add) else stringResource(R.string.label_edit_description, label)
+        OutlinedButton(
+            onClick = onEdit,
+            modifier = Modifier.weight(1f).semantics { contentDescription = description },
+        ) {
             Text(
-                stringResource(R.string.theme), style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                label.ifEmpty { stringResource(R.string.label_add) },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
             )
-            for ((m, label) in listOf(
-                ThemeMode.SYSTEM to R.string.theme_system,
-                ThemeMode.LIGHT to R.string.theme_light,
-                ThemeMode.DARK to R.string.theme_dark,
-            )) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(label)) },
-                    leadingIcon = { RadioButton(selected = m == mode, onClick = null) },
-                    onClick = { open = false; onMode(m) },
-                )
-            }
+        }
+        // Disabled rather than hidden when there's nothing to clear, so the row never changes shape.
+        IconButton(onClick = onClear, enabled = label.isNotEmpty()) {
+            Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.label_clear))
         }
     }
 }

@@ -66,6 +66,7 @@ class ScopeSession(
         val battery: Protocol.Battery? = null,
         val frames: Int = 0,
         val dropped: Int = 0,     // FrameAssembler dropped + superseded
+        val droppedPerSecond: Int = 0,  // of those, in the last second
         val undecodable: Int = 0, // reassembled but the decoder refused it
         val status: String = "starting",
         val beacon: Beacon? = null,  // the first beacon heard: which scope this is
@@ -162,6 +163,7 @@ class ScopeSession(
         _stats.update { it.copy(status = "waiting for video") }
 
         var stalled = false
+        var droppedBefore = 0
         while (isActive) {
             // The keepalive: without it video stops within ~1 s. Queued like every command, so a
             // poll can't reach the scope after STOP.
@@ -171,7 +173,9 @@ class ScopeSession(
             val fps = frameCount.getAndSet(0)
             val (retry, isStalled) = synchronized(watchdog) { watchdog.shouldRetryStart(now) to watchdog.stalled(now) }
             Log.i(TAG, "fps $fps, frames ${assembler.done}, dropped ${assembler.dropped}, superseded ${assembler.superseded}, packets ${assembler.packets}")
-            _stats.update { it.copy(fps = fps) }
+            val droppedNow = assembler.dropped + assembler.superseded
+            _stats.update { it.copy(fps = fps, droppedPerSecond = droppedNow - droppedBefore) }
+            droppedBefore = droppedNow
             if (retry) {
                 // Only before any video has arrived, as viewer.py and the official app do.
                 Log.w(TAG, "no video yet: STOP, then START again (retry ${watchdog.retries})")

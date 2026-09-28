@@ -1,0 +1,19 @@
+Bebird Viewer for Android
+Copyright (C) 2026 Aaron Bockelie
+Licensed under the GNU General Public License v3.0 or later (see ../LICENSE).
+
+This app bundles the following third-party works, unmodified, in app/src/main/assets/fonts/.
+
+Terminus Font 4.49.1 (ter-u16n.bdf)
+  Copyright (C) 2020 Dimitar Toshkov Zhekov, with Reserved Font Name "Terminus Font".
+  Licensed under the SIL Open Font License, Version 1.1: fonts/Terminus-OFL.txt
+  Source: https://terminus-font.sourceforge.net/
+  Used for the status band readout.
+
+GNU Unifont 16.0.02 (unifont-16.0.02.hex.gz, stored unmodified as unifont-16.0.02.hex.gzip
+  because the Android build would otherwise unpack it)
+  Copyright (C) Roman Czyborra, Paul Hardy, and contributors.
+  Dual-licensed: SIL Open Font License, Version 1.1, and GNU GPL version 2 or later with the
+  GNU font embedding exception: fonts/Unifont-LICENSE.txt
+  Source: https://unifoundry.com/unifont/
+  Used as the fallback for characters Terminus lacks (for example non-Latin names).
