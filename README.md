@@ -11,6 +11,13 @@ A small Linux viewer for **Bebird "ES" Wi-Fi otoscope / ear cameras** that doesn
 
 > Not affiliated with or endorsed by Bebird. The protocol below was worked out for interoperability by observing the device on the network and by studying how the official Android app talks to it. No vendor code or firmware is included in this repository.
 
+## Screenshots
+
+| | |
+|---|---|
+| ![The viewer showing a toy Unimog truck from a few centimetres away](docs/media/qt-app.png) | ![A close-up of the same truck's wheel, filling the view](docs/media/focused.png) |
+| The viewer, pointed at a Hot Wheels Unimog for scale. | One wheel of the same truck at the lens's focus distance, which shows the field of view and sharpness you get in use. |
+
 ## Status
 
 Tested with one device: model `ES`, firmware `4.0.24.997`, SoC Beken BK7231U. Other Bebird Wi-Fi models from the same family probably speak the same protocol, but the light ranges and some commands may differ. Reports welcome.
