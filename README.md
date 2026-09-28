@@ -79,6 +79,17 @@ make run                                         # or just run from source in th
 
 The single-file binary unpacks itself to a temporary directory on each launch, so it takes a few seconds to start.
 
+## Android app
+
+A native Android port (Kotlin, Jetpack Compose, Android 10+) lives in [`android/`](android/), app ID `com.bockelie.bebird`. **Work in progress:** so far it has the protocol core and frame reassembly with unit tests, and a placeholder screen; joining the scope's Wi-Fi and live video come next. Progress is tracked in [#8](https://github.com/aaronsb/bebird-viewer/issues/8).
+
+```sh
+cd android && ./gradlew assembleDebug   # needs JDK 17 and the Android SDK (platform 35)
+cd android && ./gradlew test            # JVM unit tests, no device needed
+```
+
+The debug APK lands in `android/app/build/outputs/apk/debug/`; CI builds one for every change under `android/`.
+
 ## Usage
 
 ```sh
