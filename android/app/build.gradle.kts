@@ -35,6 +35,10 @@ android {
     buildFeatures {
         compose = true
     }
+    // JVM tests run ScopeSession, which logs through android.util.Log: let the stubs no-op.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {

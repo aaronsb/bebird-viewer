@@ -22,6 +22,14 @@ class VideoWatchdogTest {
         assertEquals(0, w.retries)
     }
 
+    @Test fun neverRetriesOnceAPacketArrived() {
+        // datagrams but no complete, decodable frame: the scope is streaming, so no second START
+        val w = VideoWatchdog(startedAt = 0)
+        w.onPacket(100)
+        assertFalse(w.shouldRetryStart(60_000))
+        assertEquals(0, w.retries)
+    }
+
     @Test fun retriesAreCapped() {
         val w = VideoWatchdog(startedAt = 0)
         var now = 0L

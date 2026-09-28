@@ -3,14 +3,16 @@ package com.bockelie.bebird.scope
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.net.Network
 import android.os.SystemClock
 import android.util.Log
 import com.bockelie.bebird.proto.FrameAssembler
 import com.bockelie.bebird.proto.Protocol
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,21 +21,38 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.SocketTimeoutException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.concurrent.thread
 
 /**
- * One video session with the scope over [network], mirroring viewer.py's Scope: STOP then a
- * single START from local port 58081, the battery poll once a second as the keepalive, and
- * STOP from the same port when done. One-shot: after [stop], make a new session.
+ * One video session with the scope, mirroring viewer.py's Scope: STOP then a single START
+ * from local port 58081, the battery poll once a second as the keepalive, and STOP from the
+ * same port when done. One-shot: after [stop], make a new session.
+ *
+ * Everything that opens, sends on or closes the :58081 link runs on [videoOps], one thread
+ * shared by all sessions. Its FIFO order is what guarantees a STOP is never overtaken by a
+ * START, within a session or from the next one.
  */
-class ScopeSession(private val network: Network, private val scope: CoroutineScope) {
+class ScopeSession(
+    private val links: LinkFactory,
+    private val scope: CoroutineScope,
+    private val videoOps: ExecutorService = sharedVideoOps,
+    private val timing: Timing = Timing(),
+    private val clock: () -> Long = SystemClock::elapsedRealtime,
+    private val decode: (ByteArray) -> Bitmap? = { BitmapFactory.decodeByteArray(it, 0, it.size) },
+) {
+    data class Timing(
+        val preStartMs: Long = 500,   // viewer.py spends ~0.6 s here collecting board info
+        val tickMs: Long = 1000,      // battery poll (the keepalive), fps, watchdog
+        val retryGapMs: Long = 100,   // between STOP and START on a retry
+        val retryMs: Long = VideoWatchdog.RETRY_MS,
+    )
+
     data class Stats(
         val frame: Bitmap? = null,
         val angle: Int = 0,
@@ -41,22 +60,22 @@ class ScopeSession(private val network: Network, private val scope: CoroutineSco
         val battery: Protocol.Battery? = null,
         val frames: Int = 0,
         val dropped: Int = 0,     // FrameAssembler dropped + superseded
-        val undecodable: Int = 0, // reassembled but BitmapFactory refused it
+        val undecodable: Int = 0, // reassembled but the decoder refused it
         val status: String = "starting",
     )
 
     private val _stats = MutableStateFlow(Stats())
     val stats: StateFlow<Stats> = _stats.asStateFlow()
 
-    // Guards stopped and the sockets, so a START can never go out after our STOP.
-    private val lock = Any()
-    private var stopped = false
-    private var video: DatagramSocket? = null
-    private var ctrl: DatagramSocket? = null
-    private var job: Job? = null
+    private val stopped = AtomicBoolean(false)
+    private val onVideoOps = videoOps.asCoroutineDispatcher()
+    // Written on videoOps; read by the receive loops after the write (happens-before via withContext).
+    @Volatile private var video: ScopeLink? = null
+    @Volatile private var ctrl: ScopeLink? = null
+    @Volatile private var job: Job? = null
+    private var stopDone: Future<*>? = null
 
-    private val camera = InetAddress.getByName(Protocol.CAMERA_HOST)  // a literal: no DNS lookup
-    // Fed by the receive loop only; the 1 s tick reads its counters for the log, unsynchronised.
+    // Fed by the receive loop only; the tick reads its counters for the log, unsynchronised.
     private val assembler = FrameAssembler()
     private val frameCount = AtomicInteger()  // frames since the last fps tick
 
@@ -64,70 +83,44 @@ class ScopeSession(private val network: Network, private val scope: CoroutineSco
         job = scope.launch(Dispatchers.IO) {
             try {
                 if (open()) stream()
-            } catch (e: IOException) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // stop() is still the caller's job, and still sends STOP if the link opened.
                 Log.e(TAG, "session failed", e)
-                _stats.update { it.copy(status = "error: ${e.message}") }
+                _stats.update { it.copy(status = "error: ${e.message ?: e.javaClass.simpleName}") }
             }
         }
     }
 
-    /** Send STOP from 58081 and close the sockets. Safe from any thread, including main. */
-    fun stop() {
-        val v: DatagramSocket?
-        val c: DatagramSocket?
-        synchronized(lock) {
-            if (stopped) return
-            stopped = true
-            v = video
-            c = ctrl
-        }
+    /**
+     * Send STOP from 58081 and close the links. Never blocks; the returned future completes
+     * once STOP has gone out (or failed) and the links are closed. Release the network only
+     * after that. Safe from any thread, and idempotent.
+     */
+    @Synchronized
+    fun stop(): Future<*> {
+        stopDone?.let { return it }
+        stopped.set(true)
         job?.cancel()
-        // Sockets can't be used on the main thread (NetworkOnMainThreadException).
-        thread(name = "bebird-stop") {
-            v?.let {
+        _stats.update { it.copy(status = "stopped", fps = 0) }
+        return videoOps.submit {
+            video?.let {
                 val sent = send(it, Protocol.STOP)
                 Log.i(TAG, if (sent) "STOP sent" else "STOP could not be sent (network gone?)")
                 it.close()
             }
-            c?.close()
-        }
-        _stats.update { it.copy(status = "stopped", fps = 0) }
+            ctrl?.close()
+        }.also { stopDone = it }
     }
 
-    private fun open(): Boolean = synchronized(lock) {
-        if (stopped) return false
-        val v = udp(Protocol.CLIENT_VIDEO_PORT, Protocol.DATA_PORT).apply {
-            receiveBufferSize = 5 shl 20
-            soTimeout = 100
-        }
-        val c = try {
-            udp(0, Protocol.COMMAND_PORT).apply { soTimeout = 200 }
-        } catch (e: IOException) {
-            v.close()
-            throw e
-        }
+    private suspend fun open(): Boolean = withContext(onVideoOps) {
+        if (stopped.get()) return@withContext false
+        val v = links.open(Protocol.CLIENT_VIDEO_PORT, Protocol.DATA_PORT, 100)
         video = v
-        ctrl = c
-        Log.i(TAG, "sockets bound to $network: video :${v.localPort}, command :${c.localPort}")
+        ctrl = links.open(0, Protocol.COMMAND_PORT, 200)  // if this throws, stop() still closes v
+        Log.i(TAG, "links open: video :${v.localPort}, command :${ctrl?.localPort}")
         true
-    }
-
-    /**
-     * A UDP socket on [localPort] (0: any), pinned to the scope's network and connected to the
-     * camera's [remotePort]. Reuse lets 58081 be bound while the last session's socket closes.
-     */
-    private fun udp(localPort: Int, remotePort: Int): DatagramSocket {
-        val s = DatagramSocket(null)
-        try {
-            s.reuseAddress = true
-            s.bind(InetSocketAddress(localPort))
-            network.bindSocket(s)  // must come before connect
-            s.connect(camera, remotePort)
-        } catch (e: IOException) {
-            s.close()
-            throw e
-        }
-        return s
     }
 
     private suspend fun stream() = coroutineScope {
@@ -135,12 +128,14 @@ class ScopeSession(private val network: Network, private val scope: CoroutineSco
         val c = ctrl!!
         launch { receiveCommands(c) }
 
-        send(v, Protocol.STOP)  // clear any session left on our port
-        delay(500)              // viewer.py spends ~0.6 s here collecting board info
-        val watchdog = VideoWatchdog(SystemClock.elapsedRealtime())  // guarded by itself
+        onVideo(v, Protocol.STOP, "STOP (clear our port)")
+        delay(timing.preStartMs)
+        val watchdog = VideoWatchdog(clock(), retryMs = timing.retryMs)  // guarded by itself
         launch { receiveVideo(v, watchdog) }
-        if (!sendStart(v)) {
+        if (!onVideo(v, Protocol.START, "START")) {
+            // Nothing more to do; the links stay open until stop(), which still sends STOP.
             _stats.update { it.copy(status = "START could not be sent") }
+            cancel()
             return@coroutineScope
         }
         _stats.update { it.copy(status = "waiting for video") }
@@ -148,18 +143,18 @@ class ScopeSession(private val network: Network, private val scope: CoroutineSco
         var stalled = false
         while (isActive) {
             send(c, Protocol.BATTERY)  // the keepalive: without it video stops within ~1 s
-            delay(1000)
-            val now = SystemClock.elapsedRealtime()
+            delay(timing.tickMs)
+            val now = clock()
             val fps = frameCount.getAndSet(0)
             val (retry, isStalled) = synchronized(watchdog) { watchdog.shouldRetryStart(now) to watchdog.stalled(now) }
             Log.i(TAG, "fps $fps, frames ${assembler.done}, dropped ${assembler.dropped}, superseded ${assembler.superseded}, packets ${assembler.packets}")
             _stats.update { it.copy(fps = fps) }
             if (retry) {
-                // Only before the first frame, as viewer.py and the official app do.
+                // Only before any video has arrived, as viewer.py and the official app do.
                 Log.w(TAG, "no video yet: STOP, then START again (retry ${watchdog.retries})")
-                send(v, Protocol.STOP)
-                delay(100)
-                sendStart(v)
+                onVideo(v, Protocol.STOP, "STOP (retry)")
+                delay(timing.retryGapMs)
+                onVideo(v, Protocol.START, "START (retry)")
             }
             if (isStalled != stalled) {
                 stalled = isStalled
@@ -169,30 +164,22 @@ class ScopeSession(private val network: Network, private val scope: CoroutineSco
         }
     }
 
-    private fun sendStart(v: DatagramSocket): Boolean = synchronized(lock) {
-        if (stopped) return false
-        val sent = send(v, Protocol.START)
-        Log.i(TAG, if (sent) "START sent" else "START could not be sent")
-        sent
+    /** Send on the video link from videoOps, unless stopped by the time it runs. */
+    private suspend fun onVideo(v: ScopeLink, data: ByteArray, what: String): Boolean = withContext(onVideoOps) {
+        if (stopped.get()) return@withContext false
+        send(v, data).also { Log.i(TAG, if (it) "$what sent" else "$what could not be sent") }
     }
 
-    private fun CoroutineScope.receiveVideo(v: DatagramSocket, watchdog: VideoWatchdog) {
+    private fun CoroutineScope.receiveVideo(v: ScopeLink, watchdog: VideoWatchdog) {
         val buf = ByteArray(65536)
-        val packet = DatagramPacket(buf, buf.size)
         var first = true
-        while (isActive && !v.isClosed) {
-            packet.setData(buf)  // resets the length to the whole buffer
-            try {
-                v.receive(packet)
-            } catch (_: SocketTimeoutException) {
-                continue
-            } catch (_: IOException) {
-                break  // closed by stop(), or the network went away
-            }
-            val now = SystemClock.elapsedRealtime()
+        while (isActive) {
+            val n = receive(v, buf) ?: break
+            if (n < 0) continue
+            val now = clock()
             synchronized(watchdog) { watchdog.onPacket(now) }
-            val frame = assembler.accept(buf, packet.length) ?: continue
-            val bitmap = BitmapFactory.decodeByteArray(frame.jpeg, 0, frame.jpeg.size)
+            val frame = assembler.accept(buf, n) ?: continue
+            val bitmap = decode(frame.jpeg)
             if (bitmap == null) {
                 _stats.update { it.copy(undecodable = it.undecodable + 1) }
                 continue
@@ -211,28 +198,33 @@ class ScopeSession(private val network: Network, private val scope: CoroutineSco
         }
     }
 
-    private fun CoroutineScope.receiveCommands(c: DatagramSocket) {
+    private fun CoroutineScope.receiveCommands(c: ScopeLink) {
         val buf = ByteArray(4096)
-        val packet = DatagramPacket(buf, buf.size)
-        while (isActive && !c.isClosed) {
-            packet.setData(buf)
-            try {
-                c.receive(packet)
-            } catch (_: SocketTimeoutException) {
-                continue
-            } catch (_: IOException) {
-                break
-            }
-            Protocol.decodeBattery(buf.copyOf(packet.length))?.let { b ->
+        while (isActive) {
+            val n = receive(c, buf) ?: break
+            if (n < 0) continue
+            Protocol.decodeBattery(buf.copyOf(n))?.let { b ->
                 if (_stats.value.battery != b) Log.i(TAG, "battery ${b.percent}% (${b.stateName})")
                 _stats.update { it.copy(battery = b) }
             }
         }
     }
 
-    private fun send(s: DatagramSocket, data: ByteArray): Boolean =
+    /**
+     * One receive: the length, -1 for nothing yet, or null once the link is closed. Other
+     * errors (an ICMP port unreachable while the scope's port isn't listening, a network
+     * hiccup) are transient, as in viewer.py: pause briefly and carry on.
+     */
+    private fun receive(link: ScopeLink, buf: ByteArray): Int? =
         try {
-            s.send(DatagramPacket(data, data.size))
+            link.receive(buf)
+        } catch (e: IOException) {
+            if (link.isClosed) null else { Thread.sleep(20); -1 }
+        }
+
+    private fun send(link: ScopeLink, data: ByteArray): Boolean =
+        try {
+            link.send(data)
             true
         } catch (_: IOException) {
             false
@@ -240,5 +232,10 @@ class ScopeSession(private val network: Network, private val scope: CoroutineSco
 
     companion object {
         private const val TAG = "BebirdSpike"
+
+        /** The one thread that touches the :58081 link, for all sessions. */
+        val sharedVideoOps: ExecutorService = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "bebird-58081").apply { isDaemon = true }
+        }
     }
 }

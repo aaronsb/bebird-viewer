@@ -51,7 +51,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) vm.connect()
     }
-    val idle = wifi == ScopeWifi.State.Idle || wifi == ScopeWifi.State.Unavailable
+    val idle = wifi == ScopeWifi.State.Idle || wifi == ScopeWifi.State.Unavailable || wifi is ScopeWifi.State.Failed
 
     Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
         Column(
@@ -94,6 +94,7 @@ private fun statusLine(wifi: ScopeWifi.State, s: ScopeSession.Stats): String {
         is ScopeWifi.State.Available -> "on scope Wi-Fi"
         ScopeWifi.State.Lost -> "scope Wi-Fi lost"
         ScopeWifi.State.Unavailable -> "no scope network (cancelled or not found)"
+        is ScopeWifi.State.Failed -> "could not request the network: ${wifi.reason}"
     }
     val battery = s.battery?.let { "${it.percent}% (${it.stateName})" } ?: "–"
     return "$net · ${s.status}\n${s.fps} fps · battery $battery · " +
