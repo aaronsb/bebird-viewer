@@ -59,6 +59,16 @@ object ScaleOverlay {
     /** Rings (and bowtie ticks) at k mm radius for k in 1..RINGS, labelled by diameter 2k. */
     const val RINGS = 5
 
+    /**
+     * The overlay for one frame's [result], in the user's [style] and with CLOSE if [showClose]
+     * (both from [ProximitySettings], read once, not per frame). With estimation off there
+     * is no result and nothing is drawn: the scale is only meaningful when the estimator can say
+     * whether it holds, so it is not shown permanently "unverified" either.
+     */
+    fun forFrame(result: FocusResult?, style: ScaleStyle, showClose: Boolean): List<OverlayShape> =
+        if (result == null) emptyList()
+        else shapes(style, result.locked, showClose && result.close)
+
     fun shapes(
         style: ScaleStyle,
         locked: Boolean,

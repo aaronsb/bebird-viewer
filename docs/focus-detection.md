@@ -13,9 +13,24 @@ The algorithm was developed and tuned with a desktop prototype, first on recorde
 - `FocusEstimator` takes frames and returns a `FocusResult`.
 - `FocusTracker` is the time-series and state-machine stage, which can be driven directly with features.
 - `ScaleOverlay` produces the overlay geometry as drawing primitives.
+- `ProximityGate` and `ProximitySettings` are the master switch and the persisted settings (below).
 - `FocusConfig` holds every constant.
 
 The core uses no Android types. `BitmapLuma.kt` is the thin adapter from a decoded `Bitmap`.
+
+## Master switch and settings
+
+Proximity estimation has a master setting, **Proximity estimation**, which is on by default because it has been validated in use.
+
+When it is off, the estimator doesn't run at all. `ProximityGate` holds the estimator; its `onFrame(t, roll) { buf -> … }` is the per-frame hook:
+
+- **Disabled:** there is no estimator and no luma buffer. `onFrame` returns null without calling its luma callback. So there is no luma extraction, no mask learning, no metrics and no allocation (it is inline, and a test checks this).
+- **Enabling** (`setEnabled(true)`) creates a fresh estimator. Enabling mid-stream starts over with the warm-up, an empty tip mask and no sharpness peak.
+- **Disabling** drops the estimator with everything it learned.
+
+With estimation off there is **no overlay**: no rings and no CLOSE (`ScaleOverlay.forFrame(null, …)` is empty). The scale is only drawn when the estimator can say whether it holds; it is never shown permanently "unverified".
+
+The sub-settings are the **scale style** (ring, the default; bowtie; bar; or none) and the **CLOSE indicator** (on by default). They only have an effect while estimation is on. `ProximitySettings` persists them, and the master switch, in the app's settings store (SharedPreferences, like the remembered device), each under its own key. Turning estimation off and on again keeps the previous style and CLOSE choice; only the estimator's learned state resets.
 
 Everything below runs **per frame, on the raw sensor frame, before any rotation**. The probe tip is fixed to the camera, so on the raw frame its pixels stay put while the scene moves, and the tip mask depends on this. Only the displayed image (and the overlay, if it should follow the screen) is rotated, after the estimator has run.
 

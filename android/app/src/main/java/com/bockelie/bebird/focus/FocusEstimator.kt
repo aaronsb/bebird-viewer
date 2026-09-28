@@ -12,7 +12,7 @@ import kotlin.math.abs
  *
  * The result is best effort. The absence of CLOSE or IN-ZONE never means clearance.
  */
-class FocusEstimator(private val cfg: FocusConfig = FocusConfig()) {
+class FocusEstimator(private val cfg: FocusConfig = FocusConfig()) : FrameEstimator {
     private val prim = FramePrimitives()
     private val tip = TipMask(cfg)
     private val tracker = FocusTracker(cfg)
@@ -29,7 +29,7 @@ class FocusEstimator(private val cfg: FocusConfig = FocusConfig()) {
      * One frame: [luma] is SIZE×SIZE, row-major, unsigned bytes (ITU-R 601 luma), [t] the
      * arrival time in seconds, [roll] the packet's roll angle in degrees (0-359).
      */
-    fun update(luma: ByteArray, t: Double, roll: Int): FocusResult {
+    override fun update(luma: ByteArray, t: Double, roll: Int): FocusResult {
         prim.compute(luma)
         val small = prim.small
         var motion = 0.0
