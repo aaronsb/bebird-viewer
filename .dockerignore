@@ -1,0 +1,20 @@
+# Only docker/*.Dockerfile and requirements.txt are needed in the build context.
+.git
+.github
+.venv
+__pycache__
+*.pyc
+build
+dist
+*.spec
+docs
+android
+frames
+re
+fw
+*.apk
+*.xapk
+*.pcap
+*.pcapng
+*.rbl
+*.bin
