@@ -9,7 +9,10 @@ Same protocol handling as viewer.py: one START, battery poll as keepalive, STOP 
 """
 import argparse, os, signal, socket, sys, time
 
-IFACE = os.environ.get("BEBIRD_IFACE", "wlan0")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wifi import default_iface  # noqa: E402
+
+IFACE = default_iface()  # BEBIRD_IFACE, else the first Wi-Fi device
 CAM = "192.168.5.1"
 VIDEO_CLIENT_PORT = 58081  # fixed, so a restart reuses the scope's client slot
 START, STOP, BATTERY = b"\x20\x36", b"\x20\x37", b"\x66\x3a"
@@ -24,6 +27,17 @@ def iface_ip(name):
         return None
     finally:
         s.close()
+
+
+def close_jpeg(jpg):
+    """Trim a reassembled frame at its end-of-image marker, or repair a missing one. When the
+    last packet is exactly full the scope can drop the marker's second byte, leaving a trailing
+    FF; adding a whole FF D9 then gives the decoder a stray byte ("extraneous bytes before
+    marker 0xd9"), so only D9 is added in that case, as the official app does."""
+    end = jpg.rfind(b"\xff\xd9")
+    if end > 0:
+        return jpg[:end + 2]
+    return jpg + (b"\xd9" if jpg.endswith(b"\xff") else b"\xff\xd9")
 
 
 def sock(ip, port, local_port=0):
@@ -84,8 +98,7 @@ def main():
             n = max(parts)
             if all(i in parts for i in range(1, n + 1)):
                 jpg = b"".join(parts[i] for i in range(1, n + 1))
-                end = jpg.rfind(b"\xff\xd9")
-                jpg = jpg[:end + 2] if end > 0 else jpg + b"\xff\xd9"
+                jpg = close_jpeg(jpg)
                 if jpg[:2] == b"\xff\xd8":
                     if a.live:
                         sys.stdout.buffer.write(jpg); sys.stdout.buffer.flush()

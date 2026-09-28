@@ -1,0 +1,152 @@
+"""Join a Bebird scope's Wi-Fi through NetworkManager (nmcli), without disturbing other networking.
+
+Connections created here never become the default route and have IPv6 off, so a wired or
+second Wi-Fi link keeps carrying normal traffic. Every function blocks (connect can take
+~20 s), so call them off the GUI thread.
+"""
+import json, os, re, subprocess, time
+
+# Scopes are recognised by SSID ("bebird-<model>-<number>"). The BSSID prefix isn't a registered
+# vendor OUI, so it can't identify a Bebird reliably.
+SSID_PREFIX = "bebird"
+LAST_DEVICE = os.path.expanduser("~/.config/bebird/last-device.json")
+SCOPE_NET = "192.168.5."
+
+
+def _nmcli(*args, timeout=30):
+    """Run nmcli; returns (ok, stdout, stderr). Never raises for nmcli failures."""
+    try:
+        p = subprocess.run(["nmcli", *args], capture_output=True, text=True, timeout=timeout)
+        return p.returncode == 0, p.stdout, p.stderr.strip()
+    except FileNotFoundError:
+        return False, "", "nmcli not found (NetworkManager is required for Wi-Fi controls)"
+    except subprocess.TimeoutExpired:
+        return False, "", "nmcli timed out"
+
+
+def _fields(line):
+    """Split one line of `nmcli -t` output: fields are ':'-separated, with '\\:' and '\\\\' escaped."""
+    return [re.sub(r"\\(.)", r"\1", f) for f in re.split(r"(?<!\\):", line)]
+
+
+def wifi_devices():
+    ok, out, _ = _nmcli("-t", "-f", "DEVICE,TYPE", "device")
+    return [f[0] for f in map(_fields, out.splitlines()) if len(f) >= 2 and f[1] == "wifi"] if ok else []
+
+
+def default_iface():
+    """BEBIRD_IFACE if set, else the first Wi-Fi device NetworkManager knows, else wlan0."""
+    return os.environ.get("BEBIRD_IFACE") or next(iter(wifi_devices()), "wlan0")
+
+
+def scan(iface, rescan="auto"):
+    """Visible scope networks as [{'ssid', 'signal', 'bssid'}], strongest first.
+    rescan: 'yes', 'no' or 'auto'."""
+    args = ("-t", "-f", "SSID,SIGNAL,BSSID", "device", "wifi", "list", "ifname", iface, "--rescan")
+    ok, out, _ = _nmcli(*args, rescan)
+    if not ok and rescan == "yes":  # NM refuses back-to-back scans; fall back to its cached list
+        ok, out, _ = _nmcli(*args, "no")
+    best = {}
+    for f in map(_fields, out.splitlines()):
+        if len(f) >= 3 and f[0].lower().startswith(SSID_PREFIX):
+            net = {"ssid": f[0], "signal": int(f[1]) if f[1].isdigit() else 0, "bssid": f[2].upper()}
+            if f[0] not in best or net["signal"] > best[f[0]]["signal"]:
+                best[f[0]] = net
+    return sorted(best.values(), key=lambda n: -n["signal"])
+
+
+def load_last_device():
+    """The scope network joined most recently, {'ssid', 'bssid', 'joined'}, or None."""
+    try:
+        with open(LAST_DEVICE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def save_last_device(ssid, bssid=""):
+    os.makedirs(os.path.dirname(LAST_DEVICE), exist_ok=True)
+    with open(LAST_DEVICE, "w") as f:
+        json.dump({"ssid": ssid, "bssid": bssid, "joined": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, f)
+
+
+def forget_last_device():
+    try:
+        os.remove(LAST_DEVICE)
+    except FileNotFoundError:
+        pass
+
+
+def choose(nets, wanted=None):
+    """Pick the network to join from scan() results.
+    wanted: a specific SSID, or None for any scope: the last-used device if it's in range
+    (matched by BSSID, else SSID), otherwise the strongest."""
+    if wanted:
+        return next((n for n in nets if n["ssid"] == wanted), None)
+    last = load_last_device()
+    if last:
+        for n in nets:
+            if (last.get("bssid") and n["bssid"] == last["bssid"]) or n["ssid"] == last.get("ssid"):
+                return n
+    return nets[0] if nets else None
+
+
+def status(iface):
+    """{'connected': bool, 'connection': name, 'ssid': str, 'ip': str, 'on_scope': bool}."""
+    ok, out, _ = _nmcli("-t", "-f", "GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS", "device", "show", iface)
+    info = {"connected": False, "connection": "", "ssid": "", "ip": "", "on_scope": False}
+    if not ok:
+        return info
+    for line in out.splitlines():
+        key, _, val = line.partition(":")
+        if key == "GENERAL.STATE":
+            info["connected"] = val.startswith("100")
+        elif key == "GENERAL.CONNECTION":
+            info["connection"] = val if val != "--" else ""
+        elif key.startswith("IP4.ADDRESS") and not info["ip"]:
+            info["ip"] = val.split("/")[0]
+    if info["connection"]:
+        ok, out, _ = _nmcli("-g", "802-11-wireless.ssid", "connection", "show", info["connection"])
+        info["ssid"] = out.strip() if ok else ""
+    # a 192.168.5.x address alone isn't enough: other networks use that subnet too
+    info["on_scope"] = (info["connected"] and info["ip"].startswith(SCOPE_NET)
+                        and info["ssid"].lower().startswith(SSID_PREFIX))
+    return info
+
+
+def _profile_for(ssid):
+    ok, out, _ = _nmcli("-t", "-f", "NAME,TYPE", "connection", "show")
+    for f in map(_fields, out.splitlines()) if ok else []:
+        if len(f) >= 2 and f[1] == "802-11-wireless":
+            ok2, s, _ = _nmcli("-g", "802-11-wireless.ssid", "connection", "show", f[0])
+            if ok2 and s.strip() == ssid:
+                return f[0]
+    return None
+
+
+def connect(iface, ssid):
+    """Join a scope network on iface, creating a NetworkManager profile the first time.
+    Returns (ok, message)."""
+    safe = ("ipv4.never-default", "yes", "ipv6.method", "disabled", "connection.interface-name", iface)
+    name = _profile_for(ssid)
+    if name:
+        # keep an existing profile, but make sure it can't take over the default route
+        ok, _, err = _nmcli("connection", "modify", name, *safe)
+    else:
+        name = ssid
+        ok, _, err = _nmcli("connection", "add", "type", "wifi", "ifname", iface, "con-name", name,
+                            "ssid", ssid, "connection.autoconnect", "no", *safe)
+    if not ok:
+        return False, f"couldn't prepare connection: {err}"
+    ok, _, err = _nmcli("--wait", "25", "connection", "up", name, "ifname", iface, timeout=40)
+    return (True, f"joined {ssid}") if ok else (False, f"couldn't join {ssid}: {err}")
+
+
+def disconnect(iface):
+    """Leave the scope network. Uses 'connection down' so NetworkManager may autoconnect the
+    interface's usual network again."""
+    st = status(iface)
+    if not st["connection"]:
+        return True, "not connected"
+    ok, _, err = _nmcli("connection", "down", st["connection"])
+    return (True, f"left {st['ssid'] or st['connection']}") if ok else (False, err)
