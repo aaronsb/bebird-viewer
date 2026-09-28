@@ -15,12 +15,13 @@ import java.net.PortUnreachableException
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /** The session's hard rules, against fake links and real threads with shortened timings. */
 class ScopeSessionTest {
-    private data class Sent(val localPort: Int, val remotePort: Int, val bytes: List<Byte>)
+    private data class Sent(val link: Int, val localPort: Int, val remotePort: Int, val bytes: List<Byte>)
 
-    private class FakeLink(override val localPort: Int, val remotePort: Int, private val log: MutableList<Sent>) : ScopeLink {
+    private class FakeLink(val id: Int, override val localPort: Int, val remotePort: Int, private val log: MutableList<Sent>) : ScopeLink {
         val incoming = LinkedBlockingQueue<Any>()  // ByteArray, or an IOException to throw
         @Volatile var sendDelayMs = 0L
         @Volatile override var isClosed = false
@@ -28,7 +29,7 @@ class ScopeSessionTest {
         override fun send(data: ByteArray) {
             if (isClosed) throw IOException("closed")
             if (sendDelayMs > 0) Thread.sleep(sendDelayMs)
-            synchronized(log) { log += Sent(localPort, remotePort, data.toList()) }
+            synchronized(log) { log += Sent(id, localPort, remotePort, data.toList()) }
         }
 
         override fun receive(buf: ByteArray): Int {
@@ -44,24 +45,37 @@ class ScopeSessionTest {
     }
 
     private val log = mutableListOf<Sent>()
-    private val opened = mutableMapOf<Int, FakeLink>()  // by remote port
+    private val opened = mutableListOf<FakeLink>()
     private val links = LinkFactory { local, remote, _ ->
-        FakeLink(if (local == 0) 40000 else local, remote, log).also { synchronized(opened) { opened[remote] = it } }
+        synchronized(opened) {
+            FakeLink(opened.size, if (local == 0) 40000 else local, remote, log).also { opened += it }
+        }
     }
     private val videoOps = Executors.newSingleThreadExecutor()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val realClock = { System.nanoTime() / 1_000_000 }
 
     @After fun tearDown() {
         scope.cancel()
         videoOps.shutdownNow()
+        // Whatever a test did, the session only ever said START, STOP or battery; never 66 3F / 66 3E.
+        val allowed = listOf(Protocol.START, Protocol.STOP, Protocol.BATTERY).map { it.toList() }
+        synchronized(log) { log.forEach { assertTrue("sent ${it.bytes}", it.bytes in allowed) } }
     }
 
-    private fun session(timing: ScopeSession.Timing = ScopeSession.Timing(preStartMs = 20, tickMs = 20, retryMs = 60_000)) =
-        ScopeSession(links, scope, videoOps, timing, clock = { System.nanoTime() / 1_000_000 }, decode = { null })
+    private fun session(
+        timing: ScopeSession.Timing = ScopeSession.Timing(preStartMs = 20, tickMs = 20, retryMs = 60_000),
+        clock: () -> Long = realClock,
+    ) = ScopeSession(links, scope, videoOps, timing, clock, decode = { null })
 
     private fun videoSends() = synchronized(log) { log.filter { it.remotePort == Protocol.DATA_PORT } }
     private fun starts() = videoSends().count { it.bytes == Protocol.START.toList() }
-    private fun video() = synchronized(opened) { opened.getValue(Protocol.DATA_PORT) }
+    /** The most recently opened video link. */
+    private fun video() = synchronized(opened) { opened.last { it.remotePort == Protocol.DATA_PORT } }
+
+    /** A one-packet frame; the stubbed decoder refuses it, so it shows up as undecodable. */
+    private fun frame(): ByteArray =
+        byteArrayOf(7, 1, 1, 0, 0xFF.toByte(), 0xD8.toByte(), 1, 2, 0xFF.toByte(), 0xD9.toByte())
 
     private fun await(what: String, timeoutMs: Long = 2000, cond: () -> Boolean) {
         val until = System.nanoTime() + timeoutMs * 1_000_000
@@ -104,13 +118,64 @@ class ScopeSessionTest {
     }
 
     @Test fun noRetryOncePacketsArrive() {
-        val s = session(ScopeSession.Timing(preStartMs = 10, tickMs = 10, retryMs = 150))
+        // A hand-driven clock: the retry deadline passes only when the test says so.
+        val now = AtomicLong(0)
+        val s = session(ScopeSession.Timing(preStartMs = 10, tickMs = 10, retryMs = 1000), clock = now::get)
         s.start()
         await("START") { starts() == 1 }
-        video().incoming.put(byteArrayOf(1, 0, 1, 0, 0x55))  // a fragment: streaming, but no frame yet
-        Thread.sleep(600)
+        video().incoming.put(frame())
+        await("the packet") { s.stats.value.undecodable == 1 }
+        now.set(60_000)  // far past the retry deadline
+        Thread.sleep(100)  // many ticks
         assertEquals(1, starts())
         s.stop().get(1, TimeUnit.SECONDS)
+    }
+
+    @Test fun retriesWithoutPackets_onTheSameClock() {
+        // the positive control for noRetryOncePacketsArrive: same setup, no packet
+        val now = AtomicLong(0)
+        val s = session(ScopeSession.Timing(preStartMs = 10, tickMs = 10, retryMs = 1000), clock = now::get)
+        s.start()
+        await("START") { starts() == 1 }
+        Thread.sleep(50)
+        assertEquals(1, starts())  // clock hasn't moved: no retry yet
+        now.set(60_000)
+        await("a retry") { starts() == 2 }
+        s.stop().get(1, TimeUnit.SECONDS)
+    }
+
+    @Test fun oldStopGoesOutBeforeTheNextSessionsStart() {
+        val a = session()
+        a.start()
+        await("A's START") { starts() == 1 }
+        val linkA = video()
+        linkA.sendDelayMs = 100  // a slow STOP, so B's work would overtake it if it could
+        a.stop()
+        val b = session()
+        b.start()
+        await("B's START") { starts() == 2 }
+        b.stop().get(1, TimeUnit.SECONDS)
+
+        val sends = videoSends()
+        val aStop = sends.indexOfLast { it.link == linkA.id && it.bytes == Protocol.STOP.toList() }
+        val firstB = sends.indexOfFirst { it.link != linkA.id }
+        assertTrue("A's STOP at $aStop, B's first send at $firstB", aStop in 0 until firstB)
+        assertEquals(listOf(Protocol.STOP, Protocol.START, Protocol.STOP).map { it.toList() },
+            sends.filter { it.link != linkA.id }.map { it.bytes })
+    }
+
+    @Test fun onlyStartStopAndBatteryAreSent() {
+        // a busy session: retries, then video, then stop (tearDown checks every test the same way)
+        val s = session(ScopeSession.Timing(preStartMs = 10, tickMs = 10, retryGapMs = 5, retryMs = 30))
+        s.start()
+        await("a retry") { starts() == 2 }
+        video().incoming.put(frame())
+        await("the frame") { s.stats.value.undecodable == 1 }
+        s.stop().get(1, TimeUnit.SECONDS)
+        val allowed = listOf(Protocol.START, Protocol.STOP, Protocol.BATTERY).map { it.toList() }
+        val sent = synchronized(log) { log.map { it.bytes } }
+        assertTrue(sent.isNotEmpty())
+        assertEquals(emptyList<List<Byte>>(), sent.filter { it !in allowed })
     }
 
     @Test fun retriesStopThenStartWhileNoVideo_capped() {
@@ -130,9 +195,8 @@ class ScopeSessionTest {
         val s = session()
         s.start()
         await("START") { starts() == 1 }
-        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 1, 2, 0xFF.toByte(), 0xD9.toByte())
         video().incoming.put(PortUnreachableException("ICMP port unreachable"))
-        video().incoming.put(byteArrayOf(7, 1, 1, 0) + jpeg)  // one-packet frame
+        video().incoming.put(frame())
         // decode is stubbed to refuse, so a received frame shows up as undecodable
         await("frame after the error") { s.stats.value.undecodable == 1 }
         s.stop().get(1, TimeUnit.SECONDS)

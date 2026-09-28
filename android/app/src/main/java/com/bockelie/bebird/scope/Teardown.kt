@@ -2,6 +2,12 @@
 package com.bockelie.bebird.scope
 
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -23,3 +29,40 @@ fun afterStop(stopped: Future<*>?, timeoutMs: Long, release: () -> Unit): Thread
         }
         release()
     }
+
+/**
+ * Orders the network request against session teardown, for the ViewModel:
+ * - every release waits for the latest STOP, however many times [disconnect] is called
+ *   (STOPs run in FIFO order, so the latest one completing means all earlier ones have);
+ * - a [connect] waits for any pending release, and a [disconnect] cancels a connect that is
+ *   still waiting, so no request is filed after the app has gone to the background.
+ */
+class NetworkGate(
+    private val scope: CoroutineScope,
+    private val request: () -> Unit,
+    private val release: () -> Unit,
+    private val stopTimeoutMs: Long,
+) {
+    private val lock = Any()
+    private var lastStop: Future<*>? = null  // guarded by lock
+    private var releasing: Thread? = null     // guarded by lock
+    private var connecting: Job? = null       // guarded by lock
+
+    fun connect() = synchronized(lock) {
+        connecting?.cancel()
+        val pending = releasing
+        connecting = scope.launch(Dispatchers.IO) {
+            runInterruptible { pending?.join() }
+            // Under the lock, so a disconnect() either cancels us first or releases after us.
+            synchronized(lock) { if (isActive) request() }
+        }
+    }
+
+    /** [stopped] is the session's STOP, or null if there was no session to stop. */
+    fun disconnect(stopped: Future<*>?) = synchronized(lock) {
+        connecting?.cancel()
+        connecting = null
+        if (stopped != null) lastStop = stopped
+        releasing = afterStop(lastStop, stopTimeoutMs, release)
+    }
+}

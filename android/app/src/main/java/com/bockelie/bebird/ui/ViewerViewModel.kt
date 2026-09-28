@@ -7,9 +7,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bockelie.bebird.scope.NetworkLinks
 import com.bockelie.bebird.scope.ScopeSession
-import com.bockelie.bebird.scope.afterStop
+import com.bockelie.bebird.scope.NetworkGate
 import com.bockelie.bebird.wifi.ScopeWifi
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,7 +30,9 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
 
     private var session: ScopeSession? = null
     private var statsJob: Job? = null
-    @Volatile private var release: Thread? = null  // a pending release, see disconnect()
+    // Requests and releases run off the main thread; on viewModelScope, so onCleared also
+    // cancels a connect that is still waiting.
+    private val gate = NetworkGate(viewModelScope, wifi::start, wifi::stop, STOP_TIMEOUT_MS)
 
     init {
         viewModelScope.launch {
@@ -44,20 +45,11 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun connect() {
-        // A Connect right after Disconnect waits for that release, or start() would see the
-        // old request still filed and do nothing.
-        viewModelScope.launch(Dispatchers.IO) {
-            release?.join()
-            wifi.start()
-        }
-    }
+    /** Waits for any pending release, or start() would see the old request and do nothing. */
+    fun connect() = gate.connect()
 
-    fun disconnect() {
-        val stopped = stopSession()
-        // Off the main thread (and not on viewModelScope, which is already cancelled in onCleared).
-        release = afterStop(stopped, STOP_TIMEOUT_MS) { wifi.stop() }
-    }
+    /** Stop the session, then release the network once its STOP has gone out. */
+    fun disconnect() = gate.disconnect(stopSession())
 
     private fun startSession(state: ScopeWifi.State.Available) {
         stopSession()  // its STOP is queued ahead of the new session's STOP and START (see ScopeSession)
