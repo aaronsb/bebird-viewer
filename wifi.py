@@ -4,7 +4,7 @@ Connections created here never become the default route and have IPv6 off, so a 
 second Wi-Fi link keeps carrying normal traffic. Every function blocks (connect can take
 ~20 s), so call them off the GUI thread.
 """
-import json, os, re, subprocess, time
+import json, os, re, subprocess, sys, time
 
 # Scopes are recognised by SSID ("bebird-<model>-<number>"). The BSSID prefix isn't a registered
 # vendor OUI, so it can't identify a Bebird reliably.
@@ -13,10 +13,24 @@ LAST_DEVICE = os.path.expanduser("~/.config/bebird/last-device.json")
 SCOPE_NET = "192.168.5."
 
 
+def host_env():
+    """Environment for external programs. The PyInstaller one-file build points LD_LIBRARY_PATH at
+    its unpacked libraries; children must get the host's value back or they load the bundled copies."""
+    if not getattr(sys, "frozen", False):
+        return None
+    env = dict(os.environ)
+    if "LD_LIBRARY_PATH_ORIG" in env:
+        env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
+    else:
+        env.pop("LD_LIBRARY_PATH", None)
+    return env
+
+
 def _nmcli(*args, timeout=30):
     """Run nmcli; returns (ok, stdout, stderr). Never raises for nmcli failures."""
     try:
-        p = subprocess.run(["nmcli", *args], capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(["nmcli", *args], capture_output=True, text=True, timeout=timeout,
+                           env=host_env())
         return p.returncode == 0, p.stdout, p.stderr.strip()
     except FileNotFoundError:
         return False, "", "nmcli not found (NetworkManager is required for Wi-Fi controls)"

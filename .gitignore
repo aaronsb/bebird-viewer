@@ -10,3 +10,8 @@ fw/
 *.xapk
 *.rbl
 *.bin
+# build output
+.venv/
+build/
+dist/
+*.spec
