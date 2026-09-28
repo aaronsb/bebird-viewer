@@ -28,25 +28,36 @@ interface ScopeLink {
     fun close()
 }
 
-/** Opens a link from [localPort] (0: any) to the camera's [remotePort], with a receive timeout. */
-fun interface LinkFactory {
+interface LinkFactory {
+    /** A link from [localPort] (0: any) to the camera's [remotePort], with a receive timeout. */
     fun open(localPort: Int, remotePort: Int, timeoutMs: Int): ScopeLink
+
+    /** Receive-only: datagrams from anyone to [localPort], broadcasts included (the beacon). */
+    fun listen(localPort: Int, timeoutMs: Int): ScopeLink
 }
 
 /** Real links: sockets pinned to the scope's [network] with [Network.bindSocket]. */
 class NetworkLinks(private val network: Network) : LinkFactory {
     private val camera = InetAddress.getByName(Protocol.CAMERA_HOST)  // a literal: no DNS lookup
 
-    override fun open(localPort: Int, remotePort: Int, timeoutMs: Int): ScopeLink {
+    override fun open(localPort: Int, remotePort: Int, timeoutMs: Int): ScopeLink = socket(localPort, timeoutMs) {
+        it.connect(camera, remotePort)  // after bindSocket, which refuses a connected socket
+        if (localPort == Protocol.CLIENT_VIDEO_PORT) it.receiveBufferSize = 5 shl 20
+    }
+
+    override fun listen(localPort: Int, timeoutMs: Int): ScopeLink = socket(localPort, timeoutMs) {
+        it.broadcast = true
+    }
+
+    private fun socket(localPort: Int, timeoutMs: Int, setup: (DatagramSocket) -> Unit): ScopeLink {
         val s = DatagramSocket(null)
         try {
             // Reuse lets 58081 be bound while the last session's socket is still closing.
             s.reuseAddress = true
             s.bind(InetSocketAddress(localPort))
-            network.bindSocket(s)  // must come before connect
-            s.connect(camera, remotePort)
+            network.bindSocket(s)
+            setup(s)
             s.soTimeout = timeoutMs
-            if (localPort == Protocol.CLIENT_VIDEO_PORT) s.receiveBufferSize = 5 shl 20
         } catch (e: Exception) {
             s.close()
             throw e

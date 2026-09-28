@@ -39,7 +39,6 @@ fun afterStop(stopped: Future<*>?, timeoutMs: Long, release: () -> Unit): Thread
  */
 class NetworkGate(
     private val scope: CoroutineScope,
-    private val request: () -> Unit,
     private val release: () -> Unit,
     private val stopTimeoutMs: Long,
 ) {
@@ -48,7 +47,8 @@ class NetworkGate(
     private var releasing: Thread? = null     // guarded by lock
     private var connecting: Job? = null       // guarded by lock
 
-    fun connect() = synchronized(lock) {
+    /** Run [request] (file the network request) once any pending release is done. */
+    fun connect(request: () -> Unit) = synchronized(lock) {
         connecting?.cancel()
         val pending = releasing
         connecting = scope.launch(Dispatchers.IO) {

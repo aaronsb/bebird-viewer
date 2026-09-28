@@ -46,10 +46,12 @@ class ScopeSessionTest {
 
     private val log = mutableListOf<Sent>()
     private val opened = mutableListOf<FakeLink>()
-    private val links = LinkFactory { local, remote, _ ->
-        synchronized(opened) {
-            FakeLink(opened.size, if (local == 0) 40000 else local, remote, log).also { opened += it }
+    private val links = object : LinkFactory {
+        override fun open(localPort: Int, remotePort: Int, timeoutMs: Int) = synchronized(opened) {
+            FakeLink(opened.size, if (localPort == 0) 40000 else localPort, remotePort, log).also { opened += it }
         }
+
+        override fun listen(localPort: Int, timeoutMs: Int) = open(localPort, -1, timeoutMs)
     }
     private val videoOps = Executors.newSingleThreadExecutor()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -199,6 +201,19 @@ class ScopeSessionTest {
         video().incoming.put(frame())
         // decode is stubbed to refuse, so a received frame shows up as undecodable
         await("frame after the error") { s.stats.value.undecodable == 1 }
+        s.stop().get(1, TimeUnit.SECONDS)
+    }
+
+    @Test fun theFirstBeaconNamesTheScope() {
+        val s = session()
+        s.start()
+        await("START") { starts() == 1 }
+        val beacon = synchronized(opened) { opened.single { it.localPort == Protocol.BEACON_PORT } }
+        beacon.incoming.put("""{"brand":"bebird","model":"ES","mac":"aa:bb:cc:00:11:22","ssid":"bebird-ES-123456"}""".toByteArray())
+        await("beacon") { s.stats.value.beacon != null }
+        assertEquals("bebird-ES-123456", s.stats.value.beacon?.ssid)
+        assertEquals("aa:bb:cc:00:11:22", s.stats.value.beacon?.mac)
+        await("beacon link closed after the first one") { beacon.isClosed }
         s.stop().get(1, TimeUnit.SECONDS)
     }
 

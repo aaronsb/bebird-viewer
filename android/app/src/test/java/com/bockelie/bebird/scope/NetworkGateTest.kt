@@ -16,10 +16,11 @@ class NetworkGateTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val gate = NetworkGate(
         scope,
-        request = { synchronized(events) { events += "request" } },
         release = { synchronized(events) { events += "release" } },
         stopTimeoutMs = 5000,
     )
+
+    private val request = { synchronized(events) { events += "request" } }
 
     @After fun tearDown() = scope.cancel()
 
@@ -62,7 +63,7 @@ class NetworkGateTest {
     @Test fun connectWaitsForThePendingRelease() {
         val stop = CompletableFuture<Unit>()
         gate.disconnect(stop)
-        gate.connect()
+        gate.connect(request)
         Thread.sleep(100)
         assertEquals(emptyList<String>(), events())
         stopDone(stop)
@@ -74,7 +75,7 @@ class NetworkGateTest {
         // Connect during a pending release, then the app goes to the background
         val stop = CompletableFuture<Unit>()
         gate.disconnect(stop)
-        gate.connect()
+        gate.connect(request)
         gate.disconnect(null)
         stopDone(stop)
         await("both releases") { events().count { it == "release" } == 2 }
@@ -86,7 +87,7 @@ class NetworkGateTest {
         // onCleared: viewModelScope is cancelled while the connect waits
         val stop = CompletableFuture<Unit>()
         gate.disconnect(stop)
-        gate.connect()
+        gate.connect(request)
         scope.cancel()
         stopDone(stop)
         await("release") { "release" in events() }
@@ -95,7 +96,7 @@ class NetworkGateTest {
     }
 
     @Test fun connectWithNothingPendingRequestsAtOnce() {
-        gate.connect()
+        gate.connect(request)
         await("request") { events() == listOf("request") }
     }
 }

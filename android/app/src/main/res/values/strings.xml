@@ -3,5 +3,17 @@
 <resources>
     <string name="app_name">Bebird Viewer</string>
     <string name="connect">Connect</string>
+    <string name="connect_to">Connect to %1$s</string>
     <string name="disconnect">Disconnect</string>
+    <string name="pick_different">Pick a different device</string>
+    <string name="known_devices">Known devices</string>
+    <string name="no_known_devices">None yet. Connect to a scope and it will be remembered here.</string>
+    <string name="bssid_unknown">BSSID unknown</string>
+    <string name="in_range">in range</string>
+    <string name="in_range_new">in range, not used yet</string>
+    <string name="rename">Rename</string>
+    <string name="rename_title">Name for %1$s</string>
+    <string name="forget">Forget</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
 </resources>
