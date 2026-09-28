@@ -3,6 +3,8 @@ package com.bockelie.bebird
 
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.SystemBarStyle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -44,12 +46,21 @@ class MainActivity : ComponentActivity() {
         val DARK_SCRIM = Color.argb(0x80, 0x1B, 0x1B, 0x1B)
     }
 
+    private val handler = Handler(Looper.getMainLooper())
+    private val coverExpired = Runnable { vm.coverExpired() }
+
+    override fun onResume() {
+        super.onResume()
+        handler.removeCallbacks(coverExpired)
+        vm.appResumed()
+    }
+
     override fun onStop() {
         super.onStop()
-        // Leaving the app sends STOP and drops the scope's network; a rotation keeps both.
+        // Leaving the app sends STOP and drops the scope's network; a rotation keeps both, and
+        // so does our own Files/Open launch, for a while (see ExternalLaunch).
         if (!isChangingConfigurations) {
-            vm.stopRecording()  // recording is foreground-only until #18's service
-            vm.connection.disconnect()
+            vm.appStopped()?.let { handler.postDelayed(coverExpired, it) }
         }
     }
 }

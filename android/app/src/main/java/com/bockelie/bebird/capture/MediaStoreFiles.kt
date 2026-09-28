@@ -17,8 +17,9 @@ import android.util.Log
  */
 class MediaStoreFiles(private val resolver: ContentResolver) {
     enum class Kind(val collection: Uri, val mime: String, val dir: String) {
-        STILL(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "image/jpeg", CaptureNames.PICTURES),
-        VIDEO(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "video/mp4", CaptureNames.MOVIES),
+        // Video in Pictures/ too (allowed for the video collection on Android 10+): one folder.
+        STILL(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "image/jpeg", CaptureNames.FOLDER),
+        VIDEO(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "video/mp4", CaptureNames.FOLDER),
     }
 
     /** A new pending entry named [name], taken now (so galleries sort it by capture time). */
@@ -46,7 +47,7 @@ class MediaStoreFiles(private val resolver: ContentResolver) {
     }
 
     /**
-     * Remove this app's entries still pending in Pictures/Bebird and Movies/Bebird: left by a
+     * Remove this app's entries still pending in Pictures/Bebird: left by a
      * capture interrupted by the process dying (Android 10 never expires them). Other apps'
      * pending entries aren't visible to us, so only ours can match.
      */
@@ -71,6 +72,16 @@ class MediaStoreFiles(private val resolver: ContentResolver) {
         }
         uris.forEach(::discard)
         uris.size
+    }
+
+    /** Whether the captures folder holds any of this app's finished captures (so it exists). */
+    fun hasCaptures(): Boolean = Kind.entries.any { kind ->
+        runCatching {
+            resolver.query(
+                kind.collection, arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", arrayOf("${kind.dir}%"), null,
+            )?.use { it.count > 0 } ?: false
+        }.getOrDefault(false)
     }
 
     /** Write [bytes] as a new [kind] entry named [name]; returns its uri. */

@@ -215,6 +215,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     enabled = streaming,
                 ) { Text(stringResource(R.string.snapshot)) }
                 RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording)
+                FilesButton(vm, snackbar)
                 Spacer(Modifier.weight(1f))
                 OutlinedButton(onClick = conn::reconnect, enabled = online) {
                     Icon(Icons.Default.Refresh, contentDescription = null)

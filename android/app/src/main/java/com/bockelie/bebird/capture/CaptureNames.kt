@@ -12,6 +12,6 @@ object CaptureNames {
     private fun base(t: LocalDateTime) =
         "bebird-%04d%02d%02d-%02d%02d%02d".format(t.year, t.monthValue, t.dayOfMonth, t.hour, t.minute, t.second)
 
-    const val PICTURES = "Pictures/Bebird"
-    const val MOVIES = "Movies/Bebird"
+    /** Stills and videos both go here, so one folder holds every capture. */
+    const val FOLDER = "Pictures/Bebird"
 }

@@ -92,6 +92,12 @@ class ScopeSession(
     private val assembler = FrameAssembler()
     private val frameCount = AtomicInteger()  // frames since the last fps tick
 
+    /**
+     * False while nothing can show the frames (the app is covered by another activity): complete
+     * frames still count as video arriving, but aren't decoded. Receiving and the keepalive go on.
+     */
+    @Volatile var decoding = true
+
     fun start() {
         job = scope.launch(Dispatchers.IO) {
             try {
@@ -245,6 +251,10 @@ class ScopeSession(
             val now = clock()
             synchronized(watchdog) { watchdog.onPacket(now) }
             val frame = assembler.accept(buf, n) ?: continue
+            if (!decoding) {
+                synchronized(watchdog) { watchdog.onFrame(now) }  // video is still arriving
+                continue
+            }
             val bitmap = decode(frame.jpeg)
             if (bitmap == null) {
                 _stats.update { it.copy(undecodable = it.undecodable + 1) }

@@ -3,6 +3,9 @@ package com.bockelie.bebird.ui
 
 import android.app.Application
 import android.util.Log
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
 import android.os.SystemClock
 import com.bockelie.bebird.band.BandData
 import com.bockelie.bebird.capture.Capture
@@ -32,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Holds the [ScopeConnection] and the view settings for the screen. Clearing the ViewModel
@@ -164,6 +168,61 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         val shot = shot(zoom = zoom, zoomRect = zoomRect) ?: return
         capture.snapshot(shot) { _captureResults.tryEmit(it) }
     }
+
+    // --- another app over ours (Files, Open) ---
+
+    private val external = ExternalLaunch()
+
+    /**
+     * Start [intent] over this app, in its task (Back returns to the viewer). Leaving for it
+     * doesn't disconnect; see [ExternalLaunch]. Returns false if nothing could handle it.
+     */
+    fun launchOver(context: Context, intent: Intent): Boolean {
+        external.begin(SystemClock.elapsedRealtime())
+        return try {
+            context.startActivity(intent)
+            true
+        } catch (_: ActivityNotFoundException) {
+            external.returned(); false
+        } catch (_: SecurityException) {
+            external.returned(); false
+        }
+    }
+
+    /**
+     * The activity stopped. Recording always stops (nothing renders the frames). The
+     * connection stays up, not decoding, if our own launch covers the app; then the returned
+     * delay (ms) says when to call [coverExpired]. Otherwise it disconnects and returns null.
+     */
+    fun appStopped(): Long? {
+        stopRecording()
+        val now = SystemClock.elapsedRealtime()
+        if (!external.coversStop(now)) {
+            external.returned()
+            connection.disconnect()
+            return null
+        }
+        connection.decoding = false
+        return external.deadline()!! - now
+    }
+
+    /** Called when the cover's time is up: let the scope go, as on leaving the app. */
+    fun coverExpired() {
+        if (!external.expired(SystemClock.elapsedRealtime())) return
+        Log.i("BebirdSpike", "away for too long: disconnecting")
+        external.returned()
+        connection.decoding = true
+        connection.disconnect()
+    }
+
+    /** Back in front: decode again. A stall while covered shows as usual; Reconnect recovers it. */
+    fun appResumed() {
+        external.returned()
+        connection.decoding = true
+    }
+
+    /** Whether the captures folder exists yet (it appears with the first capture). */
+    suspend fun capturesExist(): Boolean = withContext(Dispatchers.IO) { capture.hasCaptures() }
 
     fun toggleRecording() = if (_recordingSince.value == null) startRecording() else stopRecording()
 

@@ -72,5 +72,8 @@
     <string name="capture_saved">Saved %1$s</string>
     <string name="capture_failed">Couldn\'t save %1$s: %2$s</string>
     <string name="capture_open">Open</string>
+    <string name="files">Files</string>
+    <string name="files_empty">No captures yet. They will be saved to %1$s.</string>
+    <string name="files_where">Saved to %1$s</string>
     <string name="capture_no_viewer">No app on this phone can open that file</string>
 </resources>

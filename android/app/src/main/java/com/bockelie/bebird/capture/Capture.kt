@@ -50,6 +50,9 @@ class Capture(resolver: ContentResolver) {
         }
     }
 
+    /** Whether any capture has been saved (the folder exists). Queries MediaStore: not on the main thread. */
+    fun hasCaptures(): Boolean = files.hasCaptures()
+
     /** Save [shot] as a JPEG (and a _zoomed one when zoomed in); [done] gets each result. */
     fun snapshot(shot: Shot, done: (Result) -> Unit) = worker.execute {
         val rotated = Frames.rotated(shot.frame, shot.rotation)
