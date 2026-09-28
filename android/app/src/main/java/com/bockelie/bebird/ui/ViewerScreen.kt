@@ -144,6 +144,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
     val label by vm.label.collectAsStateWithLifecycle()
     val renderer by vm.bandRenderer.collectAsStateWithLifecycle()
     val online = wifi is ScopeWifi.State.Available
+    val canPowerOff by conn.isStreaming.collectAsStateWithLifecycle()
+    var confirmingPowerOff by remember { mutableStateOf(false) }
     var editingLabel by remember { mutableStateOf(false) }
     // The band's clock, on the second.
     val now by produceState(LocalDateTime.now()) {
@@ -152,6 +154,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
             value = LocalDateTime.now()
         }
     }
+    // Video gone while the confirmation is open: Power off would do nothing, so close it.
+    LaunchedEffect(canPowerOff) { if (!canPowerOff) confirmingPowerOff = false }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
         Column(
@@ -168,7 +172,10 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     Text(stringResource(if (idle) R.string.connect else R.string.disconnect))
                 }
                 val theme by vm.theme.collectAsStateWithLifecycle()
-                SettingsMenu(theme = theme, onTheme = vm::setTheme, overlay = overlayOn, onOverlay = vm::setOverlay)
+                SettingsMenu(
+                    theme = theme, onTheme = vm::setTheme, overlay = overlayOn, onOverlay = vm::setOverlay,
+                    canPowerOff = canPowerOff, onPowerOff = { confirmingPowerOff = true },
+                )
             }
             Text(
                 statusLine(wifi, stats), style = MaterialTheme.typography.bodySmall,
@@ -251,6 +258,9 @@ fun ViewerScreen(vm: ViewerViewModel) {
     }
     renaming?.let { device ->
         RenameDialog(device, onDone = { name -> conn.rename(device, name); renaming = null }, onCancel = { renaming = null })
+    }
+    if (confirmingPowerOff) {
+        PowerOffDialog(onConfirm = { confirmingPowerOff = false; conn.powerOff() }, onCancel = { confirmingPowerOff = false })
     }
 }
 

@@ -85,7 +85,10 @@ class ScopeConnectionLightTest {
 
     /** Join, wait for START, and show a frame, so the session is streaming. */
     private fun joinAndStream(): Int {
-        onMain { wifi.state.value = ScopeWifi.State.Available(blank<Network>(), Target.AnyScope) }
+        onMain {
+            conn.connect()  // a session starts only for a network the user asked for
+            wifi.state.value = ScopeWifi.State.Available(blank<Network>(), Target.AnyScope)
+        }
         await("START") { links.starts() >= 1 }
         return stream()
     }
@@ -100,7 +103,10 @@ class ScopeConnectionLightTest {
 
     @Test fun noLightBeforeTheFirstFrameThenReappliedOnce() {
         settings.light = 40
-        onMain { wifi.state.value = ScopeWifi.State.Available(blank<Network>(), Target.AnyScope) }
+        onMain {
+            conn.connect()  // a session starts only for a network the user asked for
+            wifi.state.value = ScopeWifi.State.Available(blank<Network>(), Target.AnyScope)
+        }
         await("START") { links.starts() == 1 }
         onMain { conn.setLight(40) }
         Thread.sleep(200)  // long past the quiet time: still no video, so nothing is sent

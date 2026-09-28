@@ -5,8 +5,9 @@ package com.bockelie.bebird.proto
  * The Bebird "ES" scope's UDP protocol: ports, command bytes and reply decoders.
  * README.md's protocol section is the spec; this mirrors viewer.py. Pure Kotlin, no Android.
  *
- * Deliberately absent: `66 3F 01 00` (switches the ES camera off until a power cycle) and
- * `66 3E` ("reboot" in the vendor app, in practice powers the scope off). Never send either.
+ * Deliberately absent: `66 3F 01 00` (switches the ES camera off until a power cycle). Never send it.
+ * `66 3E` ("reboot" in the vendor app, in practice powers the scope off) is fenced: only
+ * [powerOff] builds it, and only [com.bockelie.bebird.scope.ScopeSession.powerOff] sends it.
  */
 object Protocol {
     const val CAMERA_HOST = "192.168.5.1"
@@ -31,6 +32,13 @@ object Protocol {
     val LIGHT_QUERY: ByteArray get() = bytes(0x66, 0x3C, 0xFE)
     /** Board info (model, firmware, ...): JSON reply that may span several datagrams. */
     val BOARD_INFO: ByteArray get() = bytes(0x66, 0x39, 0x01, 0x01)
+
+    /**
+     * `66 3E`: switches the scope off until its power button is pressed. Not one of the commands
+     * above: [com.bockelie.bebird.scope.ScopeSession.powerOff] is its only caller, which sends it
+     * after STOP and nothing after it (ProtocolTest checks both).
+     */
+    internal fun powerOff(): ByteArray = bytes(0x66, 0x3E)
 
     /** `66 3C nn`: set the raw light level (0-100). Follow it with [LIGHT_COMMIT]. */
     fun lightSet(raw: Int): ByteArray {

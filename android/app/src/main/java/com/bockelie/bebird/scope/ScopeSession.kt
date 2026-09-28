@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * One video session with the scope, mirroring viewer.py's Scope: STOP then a single START
  * from local port 58081, the battery poll once a second as the keepalive, and STOP from the
- * same port when done. One-shot: after [stop], make a new session.
+ * same port when done. One-shot: after [stop] or [powerOff], make a new session.
  *
  * Everything that opens, sends on or closes the :58081 link runs on [videoOps], one thread
  * shared by all sessions. Its FIFO order is what guarantees a STOP is never overtaken by a
@@ -111,16 +111,31 @@ class ScopeSession(
      * once STOP has gone out (or failed) and the links are closed. Release the network only
      * after that. Safe from any thread, and idempotent.
      */
+    fun stop(): Future<*> = end("stopped", powerOff = false)
+
+    /**
+     * Switch the scope off, instead of [stop]: STOP from 58081, then `66 3E` on the command
+     * link, then close the links. The only sender of `66 3E`. Never blocks; the returned future
+     * completes once both have gone out (or failed) and the links are closed, so release the
+     * network only after that, as for [stop]. Nothing follows `66 3E`: every other send checks
+     * that the session is stopped when it runs on videoOps, after this. If the session has
+     * already stopped, or its links never opened, nothing is sent.
+     */
+    fun powerOff(): Future<*> = end("powered off", powerOff = true)
+
     @Synchronized
-    fun stop(): Future<*> {
+    private fun end(status: String, powerOff: Boolean): Future<*> {
         stopDone?.let { return it }
         stopped.set(true)
         job?.cancel()
-        _stats.update { it.copy(status = "stopped", fps = 0) }
+        _stats.update { it.copy(status = status, fps = 0) }
         return videoOps.submit {
             video?.let {
                 val sent = send(it, Protocol.STOP)
                 Log.i(TAG, if (sent) "STOP sent" else "STOP could not be sent (network gone?)")
+                ctrl?.takeIf { powerOff }?.let { c ->
+                    Log.i(TAG, if (send(c, Protocol.powerOff())) "power off (66 3E) sent" else "power off could not be sent")
+                }
                 it.close()
             }
             ctrl?.close()

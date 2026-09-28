@@ -69,6 +69,14 @@ for (variant in listOf("debug", "release")) {
     tasks.matching { it.name == "assemble$cap" }.configureEach { finalizedBy(check) }
 }
 
+// ProtocolTest scans the main sources for the 66 3E fence: rerun it when they change at all,
+// even in a way that leaves the bytecode alone.
+tasks.withType<Test>().configureEach {
+    inputs.files(fileTree("src/main/java"), fileTree("src/main/kotlin"))
+        .withPropertyName("fencedSources")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

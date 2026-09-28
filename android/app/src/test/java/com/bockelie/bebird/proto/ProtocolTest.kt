@@ -7,6 +7,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import kotlin.math.roundToInt
 
 class ProtocolTest {
@@ -29,20 +30,58 @@ class ProtocolTest {
         assertArrayEquals(hex("66 3C 1E"), Protocol.lightSet(30))
     }
 
-    @Test fun noPublicCommandIsForbidden() {
+    private fun isPowerOff(u: List<Int>) = u.size >= 2 && u[0] == 0x66 && u[1] == 0x3E
+    private fun isCameraOff(u: List<Int>) = u.size >= 3 && u[0] == 0x66 && u[1] == 0x3F && u[2] == 0x01
+
+    @Test fun powerOffIsTheOnlyProducerOf663E_and663F01IsNeverBuilt() {
         // 66 3E powers the scope off; 66 3F 01 .. switches the ES camera off until a power cycle.
-        // Enumerate every public no-argument ByteArray accessor, plus the parameterised builders.
-        val accessors = Protocol::class.java.methods.filter {
+        // Enumerate every no-argument ByteArray accessor the JVM sees (internal ones included,
+        // under a mangled name), plus the parameterised builders.
+        val accessors = Protocol::class.java.declaredMethods.filter {
             it.parameterCount == 0 && it.returnType == ByteArray::class.java
-        }
-        assertTrue("found ${accessors.map { it.name }}", accessors.size >= 6)
-        val commands = accessors.map { it.invoke(Protocol) as ByteArray } +
-            (0..100).flatMap { Protocol.lightCommands(it) }
-        for (c in commands) {
+        }.onEach { it.isAccessible = true }  // private ones too
+        assertTrue("found ${accessors.map { it.name }}", accessors.size >= 7)
+        val producers = mutableListOf<String>()
+        for (m in accessors) {
+            val c = m.invoke(Protocol) as ByteArray
             val u = c.map { it.toInt() and 0xFF }
-            assertFalse("forbidden ${hexOf(c)}", u.size >= 2 && u[0] == 0x66 && u[1] == 0x3E)
-            assertFalse("forbidden ${hexOf(c)}", u.size >= 3 && u[0] == 0x66 && u[1] == 0x3F && u[2] == 0x01)
+            assertFalse("forbidden ${hexOf(c)} from ${m.name}", isCameraOff(u))
+            if (isPowerOff(u)) producers += m.name
         }
+        assertEquals(1, producers.size)
+        assertTrue(producers.single(), producers.single().startsWith("powerOff"))
+        for (c in (0..100).flatMap { Protocol.lightCommands(it) }) {
+            val u = c.map { it.toInt() and 0xFF }
+            assertFalse("forbidden ${hexOf(c)}", isPowerOff(u) || isCameraOff(u))
+        }
+        assertArrayEquals(hex("66 3E"), Protocol.powerOff())
+    }
+
+    @Test fun powerOffIsCalledOnlyByScopeSessionPowerOff() {
+        // The fence in the sources (declared as inputs of the test task, so a comment-only change
+        // still reruns this): one call site, in ScopeSession, and no other 66 3E byte anywhere.
+        val roots = listOf("src/main/java", "src/main/kotlin").map(::File).filter { it.isDirectory }
+        assertTrue("run from the module directory: ${File("src/main").absolutePath}", roots.isNotEmpty())
+        val sources = roots.flatMap { r -> r.walk().filter { it.isFile && it.extension in setOf("kt", "java") }.toList() }
+        assertTrue(sources.size > 10)
+        fun files(what: Regex) = sources.filter { what.containsMatchIn(it.readText()) }.map { it.name }.sorted()
+        fun count(name: String, what: Regex) = what.findAll(sources.single { it.name == name }.readText()).count()
+
+        // Protocol.powerOff(), Protocol::powerOff, or an import of it: only ScopeSession, once.
+        val ref = Regex("""Protocol\s*(\.|::)\s*powerOff\b""")
+        assertEquals(listOf("ScopeSession.kt"), files(ref))
+        assertEquals(1, count("ScopeSession.kt", ref))
+        // Any other mention of powerOff (with(Protocol) { powerOff() }, an alias) shows up here. The
+        // UI and ScopeConnection call ScopeConnection/ScopeSession.powerOff, the fenced path.
+        assertEquals(listOf("Protocol.kt", "ScopeConnection.kt", "ScopeSession.kt", "ViewerScreen.kt"), files(Regex("""\bpowerOff\b""")))
+
+        // 0x3E in any case, anywhere: only Protocol's one. If a new one isn't 66 3E (a glyph, a
+        // colour), allow-list its file here.
+        val hex = Regex("""\b0[xX]3[eE]\b""")
+        assertEquals(listOf("Protocol.kt"), files(hex))
+        assertEquals(1, count("Protocol.kt", hex))
+        // and no 66 3E spelled in decimal in Protocol
+        assertEquals(0, count("Protocol.kt", Regex("""(?<![\d.])62(?![\d.])""")))
     }
 
     private fun hexOf(c: ByteArray) = c.joinToString(" ") { "%02X".format(it) }
