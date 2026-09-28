@@ -20,7 +20,7 @@ from PIL import Image
 
 import wifi
 
-from PyQt6.QtCore import QObject, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QRectF, Qt, QTimer, pyqtSignal, qInstallMessageHandler
 from PyQt6.QtGui import QImage, QKeySequence, QPainter, QPainterPath, QPixmap, QShortcut, QTransform
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
                              QSlider, QSpinBox, QVBoxLayout, QWidget)
@@ -50,6 +50,17 @@ def iface_ip(name):
         return None
     finally:
         s.close()
+
+
+def close_jpeg(jpg):
+    """Trim a reassembled frame at its end-of-image marker, or repair a missing one. When the
+    last packet is exactly full the scope can drop the marker's second byte, leaving a trailing
+    FF; adding a whole FF D9 then gives the decoder a stray byte ("extraneous bytes before
+    marker 0xd9"), so only D9 is added in that case, as the official app does."""
+    end = jpg.rfind(b"\xff\xd9")
+    if end > 0:
+        return jpg[:end + 2]
+    return jpg + (b"\xd9" if jpg.endswith(b"\xff") else b"\xff\xd9")
 
 
 class Scope(QObject):
@@ -174,8 +185,7 @@ class Scope(QObject):
                 self.stats["dropped"] += 1
             else:
                 jpg = b"".join(parts[i] for i in range(1, n + 1))
-                end = jpg.rfind(b"\xff\xd9")
-                jpg = jpg[:end + 2] if end > 0 else jpg + b"\xff\xd9"
+                jpg = close_jpeg(jpg)
                 if jpg[:2] == b"\xff\xd8":
                     frames += 1; self.stats["done"] += 1
                     self.frame.emit(jpg, d[3] + (256 if d[1] == 2 else 0))
@@ -253,9 +263,15 @@ class Viewer(QWidget):
         self.iface_box.setCurrentText(self.iface)
         self.iface_box.currentTextChanged.connect(self.on_iface_changed)
         self.net_box = QComboBox(); self.net_box.setMinimumWidth(170)
-        self.net_box.setToolTip("scope networks in range (bebird-…)")
-        if self.saved.get("ssid"):
-            self.net_box.addItem(self.saved["ssid"])
+        self.net_box.setToolTip("which scope to join: any Bebird network (preferring the last one used), "
+                                "or a specific one")
+        self.net_box.addItem("Any Bebird scope", None)
+        if self.saved.get("network"):
+            self.net_box.addItem(self.saved["network"], self.saved["network"])
+            self.net_box.setCurrentIndex(1)
+        self.forget_btn = QPushButton("Forget"); self.forget_btn.clicked.connect(self.forget_device)
+        self.seen = {}             # ssid -> bssid from the latest scan
+        self.update_forget_tip()
         self.scan_btn = QPushButton("Scan"); self.scan_btn.clicked.connect(lambda: self.scan_wifi("yes"))
         self.wifi_btn = QPushButton("Connect"); self.wifi_btn.clicked.connect(self.toggle_wifi)
         self.autojoin = QCheckBox("Auto-join")
@@ -273,7 +289,7 @@ class Viewer(QWidget):
         controls.addStretch()
         wifi_row = QHBoxLayout()
         for w in (QLabel("Wi-Fi"), self.iface_box, self.net_box, self.scan_btn, self.wifi_btn,
-                  self.autojoin, self.wifi_label):
+                  self.autojoin, self.forget_btn, self.wifi_label):
             wifi_row.addWidget(w)
         wifi_row.addStretch()
         bottom = QHBoxLayout()
@@ -499,8 +515,9 @@ class Viewer(QWidget):
             self.video.setText("Not connected to the scope's Wi-Fi.\nTurn the scope on and Connect.")
 
     # --- Wi-Fi ----------------------------------------------------------------
-    def target_ssid(self):
-        return self.net_box.currentText().strip()
+    def wanted(self):
+        """The specific SSID picked in the dropdown, or None for "any Bebird scope"."""
+        return self.net_box.currentData()
 
     def wifi_op(self, fn, cb):
         if self.wifi_busy:
@@ -519,10 +536,7 @@ class Viewer(QWidget):
         if st["on_scope"]:
             self.wifi_label.setText(f"on {st['ssid'] or st['connection']} ({st['ip']})")
             self.wifi_btn.setText("Disconnect")
-            if st["ssid"] and self.net_box.findText(st["ssid"]) < 0:
-                self.net_box.addItem(st["ssid"])
-            if st["ssid"]:
-                self.net_box.setCurrentText(st["ssid"])
+            self.remember(st["ssid"])
             if not was:
                 self.reconnect()  # Wi-Fi just came up (or viewer just started): start video
             return
@@ -531,15 +545,25 @@ class Viewer(QWidget):
         self.wifi_label.setText("not on the scope's Wi-Fi" + other)
         if was:
             self.status.setText("scope Wi-Fi lost — scope off or out of range")
-        # auto-join: look for the scope's network every few seconds and join when it appears
-        if self.autojoin.isChecked() and self.target_ssid() and time.time() - self.last_join_try > 6:
+        # auto-join: look for a scope network every few seconds and join when one appears
+        if self.autojoin.isChecked() and time.time() - self.last_join_try > 6:
             self.last_join_try = time.time()
-            ssid, iface = self.target_ssid(), self.iface
-            self.wifi_op(lambda: ssid in dict(wifi.scan(iface, "auto")), self.on_autojoin_scan)
+            self.find_and_join("auto", quiet=True)
 
-    def on_autojoin_scan(self, visible):
-        if visible:
-            self.join(self.target_ssid())
+    def find_and_join(self, rescan, quiet=False):
+        iface, wanted = self.iface, self.wanted()
+        def pick():
+            nets = wifi.scan(iface, rescan)
+            return nets, wifi.choose(nets, wanted)
+        def done(result):
+            nets, net = result
+            self.note_seen(nets)
+            if net:
+                self.join(net["ssid"])
+            elif not quiet:
+                self.status.setText(f"{wanted} isn't in range" if wanted else
+                                    "no Bebird networks in range — is the scope on?")
+        self.wifi_op(pick, done)
 
     def join(self, ssid):
         self.wifi_label.setText(f"joining {ssid}…")
@@ -549,7 +573,7 @@ class Viewer(QWidget):
     def on_join_result(self, result):
         ok, msg = result
         self.status.setText(msg)
-        self.poll_wifi()  # picks up the new state and starts the video
+        self.poll_wifi()  # picks up the new state, records the device and starts the video
 
     def toggle_wifi(self):
         if self.on_scope_wifi:
@@ -557,10 +581,35 @@ class Viewer(QWidget):
             self.scope.stop()
             iface = self.iface
             self.wifi_op(lambda: wifi.disconnect(iface), lambda r: (self.status.setText(r[1]), self.poll_wifi()))
-        elif self.target_ssid():
-            self.join(self.target_ssid())
         else:
-            self.status.setText("no scope network selected — press Scan with the scope switched on")
+            self.find_and_join("yes")
+
+    # the last-used scope, kept in ~/.config/bebird/last-device.json
+    def remember(self, ssid):
+        if not ssid:
+            return
+        last = wifi.load_last_device() or {}
+        bssid = self.seen.get(ssid, "")
+        if last.get("ssid") != ssid or (bssid and last.get("bssid") != bssid):
+            wifi.save_last_device(ssid, bssid or last.get("bssid", ""))
+            self.update_forget_tip()
+
+    def forget_device(self):
+        wifi.forget_last_device()
+        self.update_forget_tip()
+        self.status.setText("forgot the last-used scope; auto-join will take the strongest Bebird in range")
+
+    def update_forget_tip(self):
+        last = wifi.load_last_device()
+        self.forget_btn.setEnabled(bool(last))
+        self.forget_btn.setToolTip(f"forget the last-used scope ({last['ssid']})" if last
+                                   else "no remembered scope")
+
+    def note_seen(self, nets):
+        for n in nets:
+            self.seen[n["ssid"]] = n["bssid"]
+            if self.net_box.findData(n["ssid"]) < 0:
+                self.net_box.addItem(n["ssid"], n["ssid"])
 
     def scan_wifi(self, rescan):
         self.scan_btn.setEnabled(False)
@@ -569,17 +618,11 @@ class Viewer(QWidget):
 
     def on_scan(self, nets):
         self.scan_btn.setEnabled(True)
-        current = self.target_ssid()
-        names = [n for n, _ in nets]
-        for n in names:
-            if self.net_box.findText(n) < 0:
-                self.net_box.addItem(n)
-        if not current and names:
-            self.net_box.setCurrentText(names[0])
+        self.note_seen(nets)
         if nets:
-            self.status.setText("in range: " + ", ".join(f"{n} ({sig}%)" for n, sig in nets))
+            self.status.setText("in range: " + ", ".join(f"{n['ssid']} ({n['signal']}%)" for n in nets))
         else:
-            self.status.setText("no scope networks in range — is the scope on?")
+            self.status.setText("no Bebird networks in range — is the scope on?")
 
     def on_iface_changed(self, iface):
         if iface and iface != self.iface:
@@ -613,7 +656,7 @@ class Viewer(QWidget):
         with open(STATE_FILE, "w") as f:
             json.dump({"light": self.light_level, "light_before_off": self.light_before_off,
                        "offset": self.offset.value(), "autorotate": self.autorot.isChecked(),
-                       "scope": self.board, "iface": self.iface, "ssid": self.target_ssid(),
+                       "scope": self.board, "iface": self.iface, "network": self.wanted(),
                        "autojoin": self.autojoin.isChecked()}, f)
 
     def closeEvent(self, e):
@@ -623,8 +666,19 @@ class Viewer(QWidget):
         super().closeEvent(e)
 
 
+def qt_messages(mode, context, message):
+    """Keep Qt's JPEG decoder complaints (an occasional damaged frame over Wi-Fi) out of normal
+    output; show them with BEBIRD_DEBUG=1. Everything else passes through."""
+    if (context.category or "").startswith("qt.gui.imageio"):
+        if os.environ.get("BEBIRD_DEBUG"):
+            print(f"[debug] {context.category}: {message}", file=sys.stderr, flush=True)
+        return
+    print(message, file=sys.stderr, flush=True)
+
+
 if __name__ == "__main__":
     import signal
+    qInstallMessageHandler(qt_messages)
     app = QApplication(sys.argv)
     w = Viewer(); w.show()
     # Ctrl-C / kill: close the window properly so STOP is sent (otherwise the scope keeps streaming)

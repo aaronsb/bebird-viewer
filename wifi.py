@@ -4,9 +4,12 @@ Connections created here never become the default route and have IPv6 off, so a 
 second Wi-Fi link keeps carrying normal traffic. Every function blocks (connect can take
 ~20 s), so call them off the GUI thread.
 """
-import os, re, subprocess
+import json, os, re, subprocess, time
 
-SSID_PREFIX = "bebird-"
+# Scopes are recognised by SSID ("bebird-<model>-<number>"). The BSSID prefix isn't a registered
+# vendor OUI, so it can't identify a Bebird reliably.
+SSID_PREFIX = "bebird"
+LAST_DEVICE = os.path.expanduser("~/.config/bebird/last-device.json")
 SCOPE_NET = "192.168.5."
 
 
@@ -37,15 +40,55 @@ def default_iface():
 
 
 def scan(iface, rescan="auto"):
-    """Visible scope networks as [(ssid, signal)], strongest first. rescan: 'yes', 'no' or 'auto'."""
-    ok, out, _ = _nmcli("-t", "-f", "SSID,SIGNAL", "device", "wifi", "list", "ifname", iface, "--rescan", rescan)
+    """Visible scope networks as [{'ssid', 'signal', 'bssid'}], strongest first.
+    rescan: 'yes', 'no' or 'auto'."""
+    args = ("-t", "-f", "SSID,SIGNAL,BSSID", "device", "wifi", "list", "ifname", iface, "--rescan")
+    ok, out, _ = _nmcli(*args, rescan)
     if not ok and rescan == "yes":  # NM refuses back-to-back scans; fall back to its cached list
-        ok, out, _ = _nmcli("-t", "-f", "SSID,SIGNAL", "device", "wifi", "list", "ifname", iface, "--rescan", "no")
+        ok, out, _ = _nmcli(*args, "no")
     best = {}
     for f in map(_fields, out.splitlines()):
-        if len(f) >= 2 and f[0].startswith(SSID_PREFIX):
-            best[f[0]] = max(best.get(f[0], 0), int(f[1] or 0))
-    return sorted(best.items(), key=lambda kv: -kv[1])
+        if len(f) >= 3 and f[0].lower().startswith(SSID_PREFIX):
+            net = {"ssid": f[0], "signal": int(f[1] or 0), "bssid": f[2].upper()}
+            if f[0] not in best or net["signal"] > best[f[0]]["signal"]:
+                best[f[0]] = net
+    return sorted(best.values(), key=lambda n: -n["signal"])
+
+
+def load_last_device():
+    """The scope network joined most recently, {'ssid', 'bssid', 'joined'}, or None."""
+    try:
+        with open(LAST_DEVICE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def save_last_device(ssid, bssid=""):
+    os.makedirs(os.path.dirname(LAST_DEVICE), exist_ok=True)
+    with open(LAST_DEVICE, "w") as f:
+        json.dump({"ssid": ssid, "bssid": bssid, "joined": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, f)
+
+
+def forget_last_device():
+    try:
+        os.remove(LAST_DEVICE)
+    except FileNotFoundError:
+        pass
+
+
+def choose(nets, wanted=None):
+    """Pick the network to join from scan() results.
+    wanted: a specific SSID, or None for any scope: the last-used device if it's in range
+    (matched by BSSID, else SSID), otherwise the strongest."""
+    if wanted:
+        return next((n for n in nets if n["ssid"] == wanted), None)
+    last = load_last_device()
+    if last:
+        for n in nets:
+            if (last.get("bssid") and n["bssid"] == last["bssid"]) or n["ssid"] == last.get("ssid"):
+                return n
+    return nets[0] if nets else None
 
 
 def status(iface):

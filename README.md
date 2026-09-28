@@ -27,7 +27,7 @@ Tested with one device: model `ES`, firmware `4.0.24.997`, SoC Beken BK7231U. Ot
 
 The scope is an **open access point** named `bebird-ES-XXXXXX` that gives out addresses in `192.168.5.0/24`; the camera is `192.168.5.1`.
 
-The viewer handles joining it. Pick the network in the **Wi-Fi** row and press **Connect**. The first time, it creates a NetworkManager connection for that network that
+The viewer handles joining it. Any network whose name starts with `bebird` counts as a scope. The Wi-Fi row defaults to **Any Bebird scope**, which prefers the scope you used last (remembered in `~/.config/bebird/last-device.json`; **Forget** clears it) and otherwise takes the strongest one in range. You can also pick a specific network. Press **Connect**. The first time, it creates a NetworkManager connection for that network that
 - never becomes the default route,
 - has IPv6 turned off,
 - doesn't autoconnect on its own,
@@ -78,12 +78,12 @@ Every socket binds to the Wi-Fi interface's address, so nothing meant for the sc
 | Snapshot | `S` | saves the displayed image to `~/Pictures/bebird/`, with metadata (below) |
 | Record | `R` | records the raw stream to `~/Pictures/bebird/*.mkv` |
 | Reconnect | — | restart the video session |
-| Wi-Fi row | — | interface, scope network, Scan, Connect/Disconnect, Auto-join |
+| Wi-Fi row | — | interface, scope network (default: any), Scan, Connect/Disconnect, Auto-join, Forget |
 | | `F` / `Esc` / `Q` | fullscreen / leave fullscreen / quit |
 
 Light level, trim, auto-rotate, the Wi-Fi interface and network, and Auto-join are remembered in `~/.config/bebird/state.json`. On connect, the viewer waits for video, then re-applies the saved light level so the scope's state matches the UI.
 
-`BEBIRD_DEBUG=1 ./live.sh` prints per-second packet and frame counts.
+`BEBIRD_DEBUG=1 ./live.sh` prints per-second packet and frame counts, and the JPEG decoder's warnings. About 1 frame in 100 from the scope's encoder has a stray byte before its end marker; it decodes fine, so that warning is hidden otherwise.
 
 ### Snapshot metadata
 
