@@ -30,7 +30,7 @@ import java.net.Inet4Address
  * Callbacks arrive on ConnectivityManager's thread and may still arrive after [stop]; each one
  * checks, under [lock], that its request is still the current one and otherwise does nothing.
  */
-class ScopeWifi(context: Context) {
+class ScopeWifi(context: Context) : WifiControl {
     sealed interface State {
         data object Idle : State
         data object Requesting : State
@@ -69,16 +69,16 @@ class ScopeWifi(context: Context) {
     private val cm = appContext.getSystemService(ConnectivityManager::class.java)
     private val wm = appContext.getSystemService(WifiManager::class.java)
     private val _state = MutableStateFlow<State>(State.Idle)
-    val state: StateFlow<State> = _state.asStateFlow()
+    override val state: StateFlow<State> = _state.asStateFlow()
     // Separate from state, so learning the identity never restarts the session.
     private val _identity = MutableStateFlow<Identity?>(null)
-    val identity: StateFlow<Identity?> = _identity.asStateFlow()
+    override val identity: StateFlow<Identity?> = _identity.asStateFlow()
 
     private val lock = Any()
     private var current: Callback? = null  // guarded by lock
 
     /** File the network request for [target]. Does nothing while a request is already filed. */
-    fun start(target: Target, why: String? = null) {
+    override fun start(target: Target, why: String?) {
         // Built inside a try: a bad stored SSID or BSSID must fail this request, not the app.
         val request = try {
             val specifier = WifiNetworkSpecifier.Builder().apply {
@@ -126,7 +126,7 @@ class ScopeWifi(context: Context) {
     }
 
     /** Release the request, which drops the phone off the scope's network. */
-    fun stop() {
+    override fun stop() {
         val cb = synchronized(lock) {
             current.also {
                 current = null
@@ -144,7 +144,7 @@ class ScopeWifi(context: Context) {
      * (refused, or no networks at all, which is what Android returns without location access).
      */
     @Suppress("DEPRECATION")  // ScanResult.SSID: its replacement getWifiSsid() is API 33+
-    fun scopesInRange(): List<Identity>? {
+    override fun scopesInRange(): List<Identity>? {
         val all = try {
             wm.scanResults.orEmpty()
         } catch (e: SecurityException) {

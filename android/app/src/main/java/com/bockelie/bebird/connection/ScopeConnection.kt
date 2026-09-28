@@ -3,6 +3,7 @@ package com.bockelie.bebird.connection
 
 import android.content.Context
 import android.util.Log
+import com.bockelie.bebird.devices.BookStore
 import com.bockelie.bebird.devices.DeviceBook
 import com.bockelie.bebird.devices.DeviceStore
 import com.bockelie.bebird.devices.Identify
@@ -13,6 +14,7 @@ import com.bockelie.bebird.scope.NetworkLinks
 import com.bockelie.bebird.scope.ScopeSession
 import com.bockelie.bebird.wifi.ScopeWifi
 import com.bockelie.bebird.wifi.ScopeWifi.Target
+import com.bockelie.bebird.wifi.WifiControl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,11 +34,16 @@ import java.util.concurrent.Future
  * lost or on [disconnect]; the network request is released only after the session's STOP has
  * gone out (see [NetworkGate]). Owned by the ViewModel for now; it only needs a Context and a
  * scope, so a foreground service can own it instead when the app keeps the connection in the
- * background (#18).
+ * background (#18). Not thread-safe: call it from the main thread.
  */
-class ScopeConnection(context: Context, private val scope: CoroutineScope) {
-    private val wifi = ScopeWifi(context)
-    private val store = DeviceStore(context)
+class ScopeConnection(
+    private val wifi: WifiControl,
+    private val store: BookStore,
+    private val scope: CoroutineScope,
+    private val newSession: (ScopeWifi.State.Available) -> ScopeSession = { ScopeSession(NetworkLinks(it.network), scope) },
+) {
+    constructor(context: Context, scope: CoroutineScope) : this(ScopeWifi(context), DeviceStore(context), scope)
+
     val wifiState: StateFlow<ScopeWifi.State> = wifi.state
 
     private val _stats = MutableStateFlow(ScopeSession.Stats(status = "not connected"))
@@ -53,6 +60,9 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
     private var session: ScopeSession? = null
     private var statsJob: Job? = null
     private var remembered: Identify.Result? = null  // for the current network
+    // The request the user last asked for; null after disconnect(). A fallback runs only for it,
+    // so a late Unavailable can't file a request after Disconnect or leaving the app.
+    private var wanted: Target? = null
 
     init {
         scope.launch {
@@ -61,7 +71,7 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
                     is ScopeWifi.State.Available -> startSession(state)
                     is ScopeWifi.State.Unavailable -> {
                         stopSession()
-                        fallBack(state.target)
+                        if (state.target == wanted) fallBack(state.target)
                     }
                     else -> stopSession()
                 }
@@ -93,7 +103,10 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
     fun pickDifferent() = request(Target.AnyScope)
 
     /** Stop the session, then release the network once its STOP has gone out. */
-    fun disconnect() = gate.disconnect(stopSession())
+    fun disconnect() {
+        wanted = null
+        gate.disconnect(stopSession())
+    }
 
     fun rename(device: KnownDevice, nickname: String?) = edit { it.rename(device.key, nickname) }
 
@@ -109,6 +122,7 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
 
     private fun request(t: Target, why: String? = null) {
         disconnect()  // whatever is filed or streaming now; the gate orders the new request after it
+        wanted = t
         gate.connect { wifi.start(t, why) }
     }
 
@@ -152,7 +166,7 @@ class ScopeConnection(context: Context, private val scope: CoroutineScope) {
 
     private fun startSession(state: ScopeWifi.State.Available) {
         stopSession()  // its STOP is queued ahead of the new session's STOP and START (see ScopeSession)
-        val s = ScopeSession(NetworkLinks(state.network), scope)
+        val s = newSession(state)
         session = s
         statsJob = scope.launch { s.stats.collect { _stats.value = it } }
         s.start()

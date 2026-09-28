@@ -131,7 +131,7 @@ data class DeviceBook(val devices: List<KnownDevice> = emptyList(), val lastKey:
         private fun row(line: String, columns: Int): KnownDevice? {
             val f = line.split('\t').map(::unesc)
             if (f.size != columns) return null
-            val ssid = WifiIds.ssid(f[0])?.takeIf { it == f[0] } ?: return null
+            val ssid = WifiIds.ssid(f[0])?.takeIf { it == f[0] && WifiIds.isScope(it) } ?: return null
             val bssid = f[1].ifEmpty { null }
             val rejected = f.getOrNull(5)?.ifEmpty { null }
             if (!canonicalMac(bssid) || !canonicalMac(rejected)) return null

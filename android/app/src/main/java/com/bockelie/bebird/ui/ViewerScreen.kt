@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -57,6 +59,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -182,23 +185,27 @@ private fun DeviceSheet(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
-            for (d in book.sorted) {
-                val near = inRange?.any { d.matches(it.ssid, it.bssid) }
-                ListItem(
-                    modifier = Modifier.clickable { onSelect(d) },
-                    leadingContent = { RadioButton(selected = d.key == book.lastKey, onClick = { onSelect(d) }) },
-                    headlineContent = { Text(d.label) },
-                    supportingContent = {
-                        Text(
-                            listOfNotNull(
-                                d.ssid.takeIf { d.nickname != null },
-                                DateUtils.getRelativeTimeSpanString(d.lastSeen).toString(),
-                                stringResource(R.string.in_range).takeIf { near == true },
-                            ).joinToString(" · ")
-                        )
-                    },
-                    trailingContent = { DeviceMenu(onRename = { onRename(d) }, onForget = { onForget(d) }) },
-                )
+            Column(Modifier.selectableGroup()) {
+                for (d in book.sorted) {
+                    val near = inRange?.any { d.matches(it.ssid, it.bssid) }
+                    val selected = d.key == book.lastKey
+                    ListItem(
+                        // The whole row is the radio button, for touch and for TalkBack.
+                        modifier = Modifier.selectable(selected = selected, role = Role.RadioButton, onClick = { onSelect(d) }),
+                        leadingContent = { RadioButton(selected = selected, onClick = null) },
+                        headlineContent = { Text(d.label) },
+                        supportingContent = {
+                            Text(
+                                listOfNotNull(
+                                    d.ssid.takeIf { d.nickname != null },
+                                    DateUtils.getRelativeTimeSpanString(d.lastSeen).toString(),
+                                    stringResource(R.string.in_range).takeIf { near == true },
+                                ).joinToString(" · ")
+                            )
+                        },
+                        trailingContent = { DeviceMenu(onRename = { onRename(d) }, onForget = { onForget(d) }) },
+                    )
+                }
             }
             // Scopes in the last scan that aren't known yet (only when scans are visible at all).
             inRange.orEmpty().filter { s -> s.ssid != null && book.devices.none { it.matches(s.ssid, s.bssid) } }.forEach { s ->

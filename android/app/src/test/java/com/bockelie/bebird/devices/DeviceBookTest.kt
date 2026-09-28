@@ -130,6 +130,7 @@ class DeviceBookTest {
             "bebird-7\t\t\t5\t0",                       // v2 row in a v3 book
             "bebird-8\t\t\t5\t0\t\textra",             // extra column
             "bebird-9\t\t\t5\t0\tbad-mac",               // bad rejected BSSID
+            "HomeWifi\t\t\t5\t0\t",                    // not a scope
             good,                                       // duplicate key
         ).joinToString("\n")
         val book = DeviceBook.decode(text)
