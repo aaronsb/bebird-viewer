@@ -74,17 +74,47 @@ object ExifWriter {
     }
 
     /**
-     * [jpeg] with the Exif segment right after SOI, replacing a JFIF APP0 segment if the encoder
-     * wrote one (an Exif file doesn't need it).
+     * [jpeg] with our Exif segment and no other: SOI, then a JFIF APP0 if the encoder wrote one
+     * (JFIF wants it first), then our APP1, then the rest with any existing Exif APP1 removed.
+     * Only the header segments before the image data (SOS) are examined.
      */
     fun insert(jpeg: ByteArray, meta: SnapshotMeta): ByteArray {
-        require(jpeg.size >= 4 && jpeg[0] == 0xFF.toByte() && jpeg[1] == 0xD8.toByte()) { "not a JPEG" }
-        var rest = 2
-        if (jpeg[2] == 0xFF.toByte() && jpeg[3] == 0xE0.toByte()) {
-            val len = ((jpeg[4].toInt() and 0xFF) shl 8) or (jpeg[5].toInt() and 0xFF)
-            rest = 4 + len
+        require(jpeg.size >= 4 && jpeg[0] == FF && jpeg[1] == 0xD8.toByte()) { "not a JPEG" }
+        val out = java.io.ByteArrayOutputStream(jpeg.size + 4096)
+        out.write(jpeg, 0, 2)
+        var at = 2
+        // a leading JFIF APP0 stays first
+        if (isSegment(jpeg, at, 0xE0) && hasId(jpeg, at, "JFIF\u0000")) {
+            val end = at + 2 + length(jpeg, at)
+            out.write(jpeg, at, end - at)
+            at = end
         }
-        return jpeg.copyOf(2) + segment(meta) + jpeg.copyOfRange(rest, jpeg.size)
+        out.write(segment(meta))
+        // copy the remaining header segments, leaving out any Exif APP1, until the image data
+        while (at + 4 <= jpeg.size && jpeg[at] == FF) {
+            val marker = jpeg[at + 1].toInt() and 0xFF
+            if (marker == 0xDA || marker == 0xD9) break  // SOS or EOI: the rest is copied as is
+            val end = at + 2 + length(jpeg, at)
+            require(end <= jpeg.size) { "truncated JPEG segment" }
+            if (!(marker == 0xE1 && hasId(jpeg, at, "Exif\u0000\u0000"))) out.write(jpeg, at, end - at)
+            at = end
+        }
+        out.write(jpeg, at, jpeg.size - at)
+        return out.toByteArray()
+    }
+
+    private const val FF = 0xFF.toByte()
+
+    private fun isSegment(b: ByteArray, at: Int, marker: Int) =
+        at + 4 <= b.size && b[at] == FF && (b[at + 1].toInt() and 0xFF) == marker
+
+    /** A segment's length field (includes itself, not the marker). */
+    private fun length(b: ByteArray, at: Int) = ((b[at + 2].toInt() and 0xFF) shl 8) or (b[at + 3].toInt() and 0xFF)
+
+    /** Whether the segment at [at] starts its payload with [id]. */
+    private fun hasId(b: ByteArray, at: Int, id: String): Boolean {
+        val bytes = id.toByteArray(Charsets.US_ASCII)
+        return at + 4 + bytes.size <= b.size && bytes.indices.all { b[at + 4 + it] == bytes[it] }
     }
 
     private fun tiff(ifd0: List<Entry>, exif: List<Entry>): ByteArray {

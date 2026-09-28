@@ -129,16 +129,56 @@ class CaptureTest {
         assertEquals("ES", ascii(ifd0.getValue(ExifWriter.MODEL)))
     }
 
-    @Test fun exifGoesRightAfterSoiReplacingJfif() {
-        val app0 = byteArrayOf(0xFF.toByte(), 0xE0.toByte(), 0, 4, 1, 2)
-        val body = byteArrayOf(0xFF.toByte(), 0xDB.toByte(), 0, 2, 0xFF.toByte(), 0xD9.toByte())
-        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte()) + app0 + body
-        val out = ExifWriter.insert(jpeg, meta)
-        val seg = ExifWriter.segment(meta)
-        assertArrayEquals(byteArrayOf(0xFF.toByte(), 0xD8.toByte()) + seg + body, out)
-        // without an APP0 the rest is kept as is
-        val plain = byteArrayOf(0xFF.toByte(), 0xD8.toByte()) + body
-        assertArrayEquals(byteArrayOf(0xFF.toByte(), 0xD8.toByte()) + seg + body, ExifWriter.insert(plain, meta))
+    private fun seg(marker: Int, payload: ByteArray): ByteArray {
+        val len = payload.size + 2
+        return byteArrayOf(0xFF.toByte(), marker.toByte(), (len shr 8).toByte(), len.toByte()) + payload
+    }
+
+    private val soi = byteArrayOf(0xFF.toByte(), 0xD8.toByte())
+    private val jfif = seg(0xE0, "JFIF\u0000".toByteArray() + byteArrayOf(1, 1, 0, 0, 1, 0, 1, 0, 0))
+    private val oldExif = seg(0xE1, "Exif\u0000\u0000".toByteArray() + ByteArray(20))
+    private val xmp = seg(0xE1, "http://ns.adobe.com/xap/1.0/\u0000<x/>".toByteArray())
+    private val dqt = seg(0xDB, ByteArray(5))
+    private val scan = byteArrayOf(0xFF.toByte(), 0xDA.toByte(), 0, 2, 0x11, 0xFF.toByte(), 0xE1.toByte(), 0x22)  // SOS + data that looks like a marker
+    private val eoi = byteArrayOf(0xFF.toByte(), 0xD9.toByte())
+
+    /** The Exif APP1 segments in [jpeg]'s header, in order. */
+    private fun exifSegments(jpeg: ByteArray): List<ByteArray> {
+        val out = mutableListOf<ByteArray>()
+        var at = 2
+        while (at + 4 <= jpeg.size && jpeg[at] == 0xFF.toByte() && jpeg[at + 1] != 0xDA.toByte()) {
+            val end = at + 2 + (((jpeg[at + 2].toInt() and 0xFF) shl 8) or (jpeg[at + 3].toInt() and 0xFF))
+            if (jpeg[at + 1] == 0xE1.toByte() && String(jpeg, at + 4, 4) == "Exif") out += jpeg.copyOfRange(at, end)
+            at = end
+        }
+        return out
+    }
+
+    @Test fun jfifStaysFirstThenOurExif() {
+        val out = ExifWriter.insert(soi + jfif + dqt + scan + eoi, meta)
+        assertArrayEquals(soi + jfif + ExifWriter.segment(meta) + dqt + scan + eoi, out)
+    }
+
+    @Test fun withoutJfifExifComesRightAfterSoi() {
+        val out = ExifWriter.insert(soi + dqt + scan + eoi, meta)
+        assertArrayEquals(soi + ExifWriter.segment(meta) + dqt + scan + eoi, out)
+    }
+
+    @Test fun anExistingExifIsReplacedAndOtherApp1Kept() {
+        val out = ExifWriter.insert(soi + jfif + oldExif + xmp + dqt + scan + eoi, meta)
+        assertArrayEquals(soi + jfif + ExifWriter.segment(meta) + xmp + dqt + scan + eoi, out)
+    }
+
+    @Test fun insertingAgainLeavesExactlyOneExifThatRoundTrips() {
+        val once = ExifWriter.insert(soi + jfif + dqt + scan + eoi, meta.copy(label = "first"))
+        val twice = ExifWriter.insert(once, meta)
+        val exif = exifSegments(twice)
+        assertEquals(1, exif.size)
+        val (ifd0, sub) = parse(exif.single())
+        assertEquals(meta.description(), ascii(ifd0.getValue(ExifWriter.IMAGE_DESCRIPTION)))
+        assertEquals("ASCII\u0000\u0000\u0000" + meta.json(), String(sub.getValue(ExifWriter.USER_COMMENT).third, Charsets.US_ASCII))
+        // the image data after SOS is untouched, even bytes that look like markers
+        assertArrayEquals(scan + eoi, twice.copyOfRange(twice.size - scan.size - eoi.size, twice.size))
     }
 
     // --- zoom crop ---
