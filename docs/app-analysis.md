@@ -35,6 +35,10 @@ This is a factual summary of what the official Android app sends, and when. It i
 
   The account can later be rebound to the scope's identifier.
 
+### Hardcoded client credential
+
+Every login path requests its token from the OAuth2 endpoint `bcc.bebird.cn/prod-api/common-oauth2/oauth/token` with a `client_id` (per login method: email, mobile, Google/Facebook, WeChat, device identifier) and one `client_secret` that is the same for all of them and hardcoded in the app (`AuthInfo2Api`, `LoginImpl2.loginByMac`, `LoginFirstActivity40`, `LoginByEmailActivity40`, `LoginByOtherPhone40`). Anyone with the APK can extract it, so it can't show that a request comes from the official app. On the device-identifier path, the code sends nothing else besides the identifier itself. The value is intentionally omitted here (`client_secret=<redacted>`).
+
 ### Headers on every request
 
 Every call to Bebird's API (`bcc.bebird.cn`) carries the device identifier, the phone's brand, model, device name and OS version, the app version, the language, and the account token (`RequestTokenInterceptor2`).
