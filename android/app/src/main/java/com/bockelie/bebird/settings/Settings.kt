@@ -59,6 +59,10 @@ class Settings(private val kv: KeyValue) {
     var overlay: Boolean
         get() = kv.getBoolean("band", true)
         set(v) = kv.putBoolean("band", v)
+    /** Show the scope's unique ID (SSID suffix) in the band and saved files instead of just its model. */
+    var showScopeId: Boolean
+        get() = kv.getBoolean("show_scope_id", false)
+        set(v) = kv.putBoolean("show_scope_id", v)
     /** The free-text label shown in the band and saved in files; empty when cleared. */
     var label: String
         get() = Labels.limit(kv.getString("label", ""))

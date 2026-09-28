@@ -44,6 +44,8 @@
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="settings">Settings</string>
+    <string name="show_scope_id">Show scope ID (ES-XXXXXX) in the band and saved files</string>
+    <string name="show_scope_id_warning">Saved photos and videos will include this scope\'s unique ID.</string>
     <string name="overlay">Overlay (status band and circle)</string>
     <string name="label">Label</string>
     <string name="label_add">Add a label</string>
@@ -66,4 +68,12 @@
     <string name="power_off">Power off</string>
     <string name="power_off_title">Power off scope</string>
     <string name="power_off_message">The scope will switch off. Press its power button to turn it on again.</string>
+    <string name="record_stop">Stop %1$s</string>
+    <string name="capture_saved">Saved %1$s</string>
+    <string name="capture_failed">Couldn\'t save %1$s: %2$s</string>
+    <string name="capture_open">Open</string>
+    <string name="files">Files</string>
+    <string name="files_empty">No captures yet. They will be saved to %1$s.</string>
+    <string name="files_where">Saved to %1$s</string>
+    <string name="capture_no_viewer">No app on this phone can open that file</string>
 </resources>

@@ -231,9 +231,17 @@ class ScopeConnection(
         edit { it.seen(result.ssid, result.bssid, System.currentTimeMillis(), result.bssidConfirmed) }
     }
 
+    /** Whether sessions decode frames; off while the app is covered (see ExternalLaunch). */
+    var decoding = true
+        set(value) {
+            field = value
+            session?.decoding = value
+        }
+
     private fun startSession(state: ScopeWifi.State.Available) {
         stopSession()  // its STOP is queued ahead of the new session's STOP and START (see ScopeSession)
         val s = newSession(state)
+        s.decoding = decoding
         session = s
         streaming = false
         sessionJobs = scope.launch {

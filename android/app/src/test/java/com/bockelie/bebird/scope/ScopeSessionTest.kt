@@ -281,6 +281,24 @@ class ScopeSessionTest {
         s.stop().get(1, TimeUnit.SECONDS)
     }
 
+    @Test fun whileNotDecodingFramesStillCountAsVideo() {
+        var decoded = 0
+        val s = ScopeSession(links, scope, videoOps, ScopeSession.Timing(preStartMs = 10, tickMs = 10, retryMs = 50), realClock,
+            decode = { decoded++; null })
+        s.decoding = false
+        s.start()
+        await("START") { starts() == 1 }
+        video().incoming.put(frame())
+        Thread.sleep(200)
+        assertEquals(0, decoded)                      // not decoded while covered
+        assertEquals(0, s.stats.value.undecodable)
+        assertEquals(1, starts())                      // but it was video: no STOP/START retry
+        s.decoding = true
+        video().incoming.put(FakeLinks.frame(8))
+        await("decoded again") { decoded == 1 }
+        s.stop().get(1, TimeUnit.SECONDS)
+    }
+
     @Test fun releaseWaitsForStop() {
         val s = session()
         s.start()

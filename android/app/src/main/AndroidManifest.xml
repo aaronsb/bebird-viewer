@@ -25,9 +25,14 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
+        <!-- singleTask: one viewer, ever. A second launch (the icon while `am start` already
+             started it, say) comes back to it instead of making a second instance with its own
+             ViewModel and connection. Files/Open start their activities without NEW_TASK, so
+             they still stack in this task and Back returns here. -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

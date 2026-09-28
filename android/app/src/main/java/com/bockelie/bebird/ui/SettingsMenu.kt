@@ -3,6 +3,7 @@ package com.bockelie.bebird.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
@@ -49,6 +50,8 @@ fun SettingsMenu(
     onTheme: (ThemeMode) -> Unit,
     overlay: Boolean,
     onOverlay: (Boolean) -> Unit,
+    showScopeId: Boolean,
+    onShowScopeId: (Boolean) -> Unit,
     canPowerOff: Boolean,
     onPowerOff: () -> Unit,
 ) {
@@ -59,6 +62,16 @@ fun SettingsMenu(
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             CheckItem(stringResource(R.string.overlay), overlay) { onOverlay(!overlay) }
+            CheckItem(stringResource(R.string.show_scope_id), showScopeId) { onShowScopeId(!showScopeId) }
+            if (showScopeId) {
+                // The unique ID goes into every saved file from now on: say so where it's turned on.
+                Text(
+                    stringResource(R.string.show_scope_id_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(start = 56.dp, end = 12.dp, bottom = 8.dp).widthIn(max = 280.dp),
+                )
+            }
             HorizontalDivider()
             Text(
                 stringResource(R.string.theme), style = MaterialTheme.typography.labelMedium,

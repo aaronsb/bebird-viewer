@@ -143,28 +143,36 @@ class BandRenderer(private val font: GlyphSource) {
      * (so image and band read as one panel), and the band below, making the result
      * frame.width wide and frame.height + band height tall. Pixels inside the circle are copied
      * unchanged. With the overlay off, the frame itself is returned.
+     *
+     * [circle] is the image circle in frame pixels: by default the inscribed one; a zoomed crop
+     * passes where the scope's circle falls in it (possibly partly outside the crop).
      */
-    fun compose(frame: PixelImage, d: BandData, overlay: Boolean): PixelImage {
+    fun compose(frame: PixelImage, d: BandData, overlay: Boolean, circle: Circle = Circle.inscribed(frame.width, frame.height)): PixelImage {
         if (!overlay) return frame
         val w = frame.width
         val band = render(d, w)
         val out = IntArray(w * (frame.height + band.height))
         frame.pixels.copyInto(out)
-        frameCircle(out, w, frame.height)
+        frameCircle(out, w, frame.height, circle)
         band.pixels.copyInto(out, w * frame.height)
         return PixelImage(w, frame.height + band.height, out)
     }
 
+    /** A circle in pixel coordinates (pixel centres at integers). */
+    data class Circle(val cx: Double, val cy: Double, val r: Double) {
+        companion object {
+            /** The circle inscribed in a w × h image. */
+            fun inscribed(w: Int, h: Int) = Circle((w - 1) / 2.0, (h - 1) / 2.0, minOf(w, h) / 2.0 - 0.5)
+        }
+    }
+
     /**
-     * In the w × h frame area of [px]: a ring about one pixel thin on the inscribed circle (pixel
-     * centres within half a pixel of its radius), and the band's background outside it.
+     * In the w × h frame area of [px]: a ring about one pixel thin on [c] (pixel centres within
+     * half a pixel of its radius), and the band's background outside it.
      */
-    private fun frameCircle(px: IntArray, w: Int, h: Int) {
-        val cx = (w - 1) / 2.0
-        val cy = (h - 1) / 2.0
-        val r = minOf(w, h) / 2.0 - 0.5
+    private fun frameCircle(px: IntArray, w: Int, h: Int, c: Circle) {
         for (y in 0 until h) for (x in 0 until w) {
-            val d = Math.hypot(x - cx, y - cy) - r
+            val d = Math.hypot(x - c.cx, y - c.cy) - c.r
             when {
                 d >= 0.5 -> px[y * w + x] = BACKGROUND
                 d > -0.5 -> px[y * w + x] = CIRCLE
