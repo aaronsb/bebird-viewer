@@ -11,10 +11,7 @@ ARG CMDLINE_TOOLS_SHA1=5fdcc763663eefb86a5b8879697aa6088b041e70
 ARG UID=1000
 ARG GID=1000
 
-ENV ANDROID_HOME=/opt/android-sdk \
-    HOME=/home/builder \
-    GRADLE_USER_HOME=/home/builder/.gradle \
-    ANDROID_USER_HOME=/home/builder/.gradle/android
+ENV ANDROID_HOME=/opt/android-sdk
 ENV PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
 
 RUN apt-get update \
@@ -26,12 +23,17 @@ RUN apt-get update \
  && unzip -q /tmp/tools.zip -d $ANDROID_HOME/cmdline-tools \
  && mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest \
  && rm /tmp/tools.zip \
+ && export ANDROID_USER_HOME=/tmp/sdk-user \
  && yes | sdkmanager --licenses >/dev/null \
  && sdkmanager --install "platforms;android-35" "build-tools;34.0.0" "platform-tools" >/dev/null \
- && rm -rf /root/.android /root/.cache
+ && rm -rf /tmp/sdk-user
 
 # The home directory (and the Gradle cache volume mounted on it) belongs to the build user,
-# so a fresh named volume starts out writable by that uid.
+# so a fresh named volume starts out writable by that uid. Set after the SDK install so
+# sdkmanager's cache doesn't end up in the image's home or in every new volume.
+ENV HOME=/home/builder \
+    GRADLE_USER_HOME=/home/builder/.gradle \
+    ANDROID_USER_HOME=/home/builder/.gradle/android
 RUN mkdir -p $ANDROID_USER_HOME && chown -R $UID:$GID $HOME
 USER $UID:$GID
 WORKDIR /work

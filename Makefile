@@ -11,7 +11,7 @@ SOURCES := viewer.py wifi.py
 EXCLUDES := $(addprefix --exclude-module PyQt6.,QtWebEngineCore QtWebEngineWidgets QtQml QtQuick \
             QtMultimedia QtPdf QtSql QtTest QtDesigner QtBluetooth QtPositioning QtSensors)
 
-.PHONY: help venv run app app-image install uninstall \
+.PHONY: help venv run app app-image app-lock install uninstall \
         android-image android-test android-apk android-shell clean distclean
 .DEFAULT_GOAL := help
 
@@ -19,7 +19,7 @@ EXCLUDES := $(addprefix --exclude-module PyQt6.,QtWebEngineCore QtWebEngineWidge
 # Only the directory a build needs is mounted; nothing privileged, no Docker socket.
 UIDGID       := $(shell id -u):$(shell id -g)
 NOT_ROOT     = @test "$$(id -u)" != 0 || { echo "don't build as root: the output would be root-owned"; exit 1; }
-DOCKER_RUN   := docker run --rm --user $(UIDGID) --security-opt no-new-privileges
+DOCKER_RUN   := docker run --rm --user $(UIDGID) --cap-drop ALL --security-opt no-new-privileges
 APP_IMAGE    := bebird-viewer-build:desktop
 DROID_IMAGE  := bebird-viewer-build:android
 GRADLE_VOL   := bebird-gradle
@@ -46,11 +46,19 @@ app-image:  ## build the desktop build image (Ubuntu 22.04, PyQt6, PyInstaller)
 	$(NOT_ROOT)
 	docker build -t $(APP_IMAGE) -f docker/desktop.Dockerfile .
 
-# The source is mounted read-only and the container has no network; only dist/ is writable.
-# PyInstaller's work files stay inside the container.
-dist/$(APP): $(SOURCES) requirements.txt docker/desktop.Dockerfile | app-image
+app-lock: app-image  ## re-resolve docker/desktop-requirements.lock (pinned, hashed) from its .in file
+	$(NOT_ROOT)
+	$(DOCKER_RUN) -e CUSTOM_COMPILE_COMMAND="make app-lock" -v "$(CURDIR)/docker:/w" -w /w $(APP_IMAGE) sh -c \
+		'python3 -m venv /tmp/pt && /tmp/pt/bin/pip install -q pip-tools && /tmp/pt/bin/pip-compile -q \
+		--generate-hashes --allow-unsafe --strip-extras --no-emit-index-url \
+		--output-file desktop-requirements.lock desktop-requirements.in'
+
+# Only the sources are mounted, read-only, and the container has no network; only dist/ is
+# writable. PyInstaller's work files stay inside the container.
+dist/$(APP): $(SOURCES) docker/desktop-requirements.lock docker/desktop.Dockerfile | app-image
 	mkdir -p dist
-	$(DOCKER_RUN) --network none -v "$(CURDIR):/src:ro" -v "$(CURDIR)/dist:/out" $(APP_IMAGE) \
+	$(DOCKER_RUN) --network none $(foreach f,$(SOURCES),-v "$(CURDIR)/$(f):/src/$(f):ro") \
+		-v "$(CURDIR)/dist:/out" $(APP_IMAGE) \
 		pyinstaller --noconfirm --clean --log-level WARN --onefile --windowed \
 		--distpath /out --workpath /tmp/build --specpath /tmp/spec \
 		--name $(APP) $(EXCLUDES) /src/viewer.py

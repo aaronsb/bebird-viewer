@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Top-level Python dependencies of the desktop build image. docker/desktop-requirements.lock
+# is generated from this in a container; see the header of that file for the command.
+pip
+PyQt6>=6.5
+Pillow>=10
+pyinstaller

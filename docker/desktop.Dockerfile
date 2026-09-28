@@ -16,13 +16,14 @@ RUN apt-get update \
       libwayland-client0 libwayland-cursor0 libwayland-egl1 \
  && rm -rf /var/lib/apt/lists/*
 
-# Dependencies are baked into the image: the build container itself runs without network.
-# The pip download cache lives in a BuildKit cache mount, not on the host or in the image.
-COPY requirements.txt /tmp/requirements.txt
+# Dependencies are baked into the image, so the build container itself runs without network.
+# Every package (pip included) is pinned by version and hash, wheels only; `make app-lock`
+# regenerates the lock. The pip download cache lives in a BuildKit cache mount, not on the
+# host or in the image.
+COPY docker/desktop-requirements.lock /tmp/requirements.lock
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m venv /opt/venv \
- && /opt/venv/bin/pip install --upgrade pip \
- && /opt/venv/bin/pip install -r /tmp/requirements.txt pyinstaller
+ && /opt/venv/bin/pip install --require-hashes --only-binary=:all: -r /tmp/requirements.lock
 
 ENV PATH=/opt/venv/bin:$PATH \
     HOME=/tmp/home \
