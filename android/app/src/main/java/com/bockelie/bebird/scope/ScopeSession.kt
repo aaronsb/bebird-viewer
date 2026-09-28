@@ -17,7 +17,10 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -69,6 +72,10 @@ class ScopeSession(
 
     private val _stats = MutableStateFlow(Stats())
     val stats: StateFlow<Stats> = _stats.asStateFlow()
+
+    // Every `66 3C FE` reply, including repeats of the same value (a StateFlow would merge them).
+    private val _lightReports = MutableSharedFlow<Int>(extraBufferCapacity = 8)
+    val lightReports: SharedFlow<Int> = _lightReports.asSharedFlow()
 
     private val stopped = AtomicBoolean(false)
     private val onVideoOps = videoOps.asCoroutineDispatcher()
@@ -177,6 +184,25 @@ class ScopeSession(
         }
     }
 
+    /**
+     * Set and commit the tip light's raw level (`66 3C raw`, `66 3C FF`) on the command link.
+     * Like every command, it is queued on videoOps, so it can't slip in after STOP.
+     */
+    fun setLight(raw: Int) = command("light $raw", Protocol.lightCommands(raw))
+
+    /** Ask for the light level (`66 3C FE`); the reply arrives on [lightReports]. */
+    fun queryLight() = command("light query", listOf(Protocol.LIGHT_QUERY))
+
+    private fun command(what: String, data: List<ByteArray>) {
+        if (stopped.get()) return
+        videoOps.execute {
+            val c = ctrl ?: return@execute
+            if (stopped.get()) return@execute
+            val sent = data.all { send(c, it) }
+            Log.i(TAG, if (sent) "$what sent" else "$what could not be sent")
+        }
+    }
+
     /** Send on the video link from videoOps, unless stopped by the time it runs. */
     private suspend fun onVideo(v: ScopeLink, data: ByteArray, what: String): Boolean = withContext(onVideoOps) {
         if (stopped.get()) return@withContext false
@@ -244,9 +270,14 @@ class ScopeSession(
         while (isActive) {
             val n = receive(c, buf) ?: break
             if (n < 0) continue
-            Protocol.decodeBattery(buf.copyOf(n))?.let { b ->
+            val reply = buf.copyOf(n)
+            Protocol.decodeBattery(reply)?.let { b ->
                 if (_stats.value.battery != b) Log.i(TAG, "battery ${b.percent}% (${b.stateName})")
                 _stats.update { it.copy(battery = b) }
+            }
+            Protocol.decodeLightLevel(reply)?.let { raw ->
+                Log.i(TAG, "light reported: $raw")
+                _lightReports.tryEmit(raw)
             }
         }
     }

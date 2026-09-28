@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -63,9 +64,15 @@ class ScopeSessionTest {
     @After fun tearDown() {
         scope.cancel()
         videoOps.shutdownNow()
-        // Whatever a test did, the session only ever said START, STOP or battery; never 66 3F / 66 3E.
-        val allowed = listOf(Protocol.START, Protocol.STOP, Protocol.BATTERY).map { it.toList() }
-        synchronized(log) { log.forEach { assertTrue("sent ${it.bytes}", it.bytes in allowed) } }
+        // Whatever a test did, the session only ever sent documented commands; never 66 3F / 66 3E.
+        synchronized(log) { log.forEach { assertTrue("sent ${it.bytes}", allowed(it.bytes)) } }
+    }
+
+    /** START, STOP, battery, and the light: `66 3C nn` (0-100), `66 3C FF` commit, `66 3C FE` query. */
+    private fun allowed(b: List<Byte>): Boolean {
+        val u = b.map { it.toInt() and 0xFF }
+        return b == Protocol.START.toList() || b == Protocol.STOP.toList() || b == Protocol.BATTERY.toList() ||
+            (u.size == 3 && u[0] == 0x66 && u[1] == 0x3C && (u[2] <= 100 || u[2] == 0xFF || u[2] == 0xFE))
     }
 
     private fun session(
@@ -169,18 +176,56 @@ class ScopeSessionTest {
             sends.filter { it.link != linkA.id }.map { it.bytes })
     }
 
-    @Test fun onlyStartStopAndBatteryAreSent() {
-        // a busy session: retries, then video, then stop (tearDown checks every test the same way)
+    @Test fun onlyDocumentedCommandsAreSent() {
+        // a busy session: retries, video, light, then stop (tearDown checks every test the same way)
         val s = session(ScopeSession.Timing(preStartMs = 10, tickMs = 10, retryGapMs = 5, retryMs = 30))
         s.start()
         await("a retry") { starts() == 2 }
         video().incoming.put(frame())
         await("the frame") { s.stats.value.undecodable == 1 }
+        s.setLight(0)
+        s.setLight(50)
+        s.queryLight()
+        await("light sent") { commandSends().size >= 5 }
         s.stop().get(1, TimeUnit.SECONDS)
-        val allowed = listOf(Protocol.START, Protocol.STOP, Protocol.BATTERY).map { it.toList() }
         val sent = synchronized(log) { log.map { it.bytes } }
         assertTrue(sent.isNotEmpty())
-        assertEquals(emptyList<List<Byte>>(), sent.filter { it !in allowed })
+        assertEquals(emptyList<List<Byte>>(), sent.filter { !allowed(it) })
+    }
+
+    private fun commandSends() = synchronized(log) {
+        log.filter { it.remotePort == Protocol.COMMAND_PORT && it.bytes != Protocol.BATTERY.toList() }.map { it.bytes }
+    }
+
+    private fun command() = synchronized(opened) { opened.last { it.remotePort == Protocol.COMMAND_PORT } }
+
+    @Test fun lightIsSetThenCommittedAndReadBack() {
+        val s = session()
+        val reports = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        scope.launch { s.lightReports.collect { reports += it } }
+        s.start()
+        await("START") { starts() == 1 }
+        s.setLight(36)
+        s.queryLight()
+        await("light commands") { commandSends().size == 3 }
+        assertEquals(listOf(listOf<Byte>(0x66, 0x3C, 36), listOf<Byte>(0x66, 0x3C, 0xFF.toByte()), listOf<Byte>(0x66, 0x3C, 0xFE.toByte())), commandSends())
+        // a 1-byte reply is a light level; a repeat of the same value still arrives
+        command().incoming.put(byteArrayOf(36))
+        command().incoming.put(byteArrayOf(36))
+        await("the replies") { reports.size == 2 }
+        assertEquals(listOf(36, 36), reports.toList())
+        s.stop().get(1, TimeUnit.SECONDS)
+    }
+
+    @Test fun noLightCommandAfterStop() {
+        val s = session()
+        s.start()
+        await("START") { starts() == 1 }
+        s.stop()        // STOP is queued on the executor...
+        s.setLight(40)  // ...and a light command after it never goes out
+        s.queryLight()
+        Thread.sleep(200)
+        assertEquals(emptyList<List<Byte>>(), commandSends())
     }
 
     @Test fun retriesStopThenStartWhileNoVideo_capped() {

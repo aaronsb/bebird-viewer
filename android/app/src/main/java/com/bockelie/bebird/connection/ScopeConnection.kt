@@ -3,6 +3,8 @@ package com.bockelie.bebird.connection
 
 import android.content.Context
 import android.util.Log
+import com.bockelie.bebird.control.LightControl
+import com.bockelie.bebird.control.RollFilter
 import com.bockelie.bebird.devices.BookStore
 import com.bockelie.bebird.devices.DeviceBook
 import com.bockelie.bebird.devices.DeviceStore
@@ -14,6 +16,8 @@ import com.bockelie.bebird.scope.NetworkLinks
 import com.bockelie.bebird.scope.ScopeSession
 import com.bockelie.bebird.wifi.ScopeWifi
 import com.bockelie.bebird.wifi.ScopeWifi.Target
+import com.bockelie.bebird.settings.MemoryKeyValue
+import com.bockelie.bebird.settings.Settings
 import com.bockelie.bebird.wifi.WifiControl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +29,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.updateAndGet
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.Future
 
@@ -40,9 +46,15 @@ class ScopeConnection(
     private val wifi: WifiControl,
     private val store: BookStore,
     private val scope: CoroutineScope,
+    private val settings: Settings = Settings(MemoryKeyValue()),
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
     private val newSession: (ScopeWifi.State.Available) -> ScopeSession = { ScopeSession(NetworkLinks(it.network), scope) },
 ) {
-    constructor(context: Context, scope: CoroutineScope) : this(ScopeWifi(context), DeviceStore(context), scope)
+    constructor(context: Context, scope: CoroutineScope, settings: Settings) :
+        this(ScopeWifi(context), DeviceStore(context), scope, settings)
+
+    /** The light as the UI shows it: the level (0 % is off) and whether the scope confirmed it. */
+    data class Light(val level: Int, val status: LightControl.Status)
 
     val wifiState: StateFlow<ScopeWifi.State> = wifi.state
 
@@ -58,13 +70,29 @@ class ScopeConnection(
 
     private val gate = NetworkGate(scope, wifi::stop, STOP_TIMEOUT_MS)
     private var session: ScopeSession? = null
-    private var statsJob: Job? = null
+    private var sessionJobs: Job? = null  // following the session's stats and light replies
+    private var streaming = false          // the current session has shown a frame
     private var remembered: Identify.Result? = null  // for the current network
     // The request the user last asked for; null after disconnect(). A fallback runs only for it,
     // so a late Unavailable can't file a request after Disconnect or leaving the app.
     private var wanted: Target? = null
 
+    private val light = LightControl(settings.light, settings.lightBeforeOff)
+    private val _light = MutableStateFlow(Light(light.level, light.status))
+    val lightState: StateFlow<Light> = _light.asStateFlow()
+
+    private val roll = RollFilter()
+    private val _shownRoll = MutableStateFlow(0)
+    /** The roll angle to rotate by: the sensor's, with a 3° deadband. */
+    val shownRoll: StateFlow<Int> = _shownRoll.asStateFlow()
+
     init {
+        scope.launch {
+            while (isActive) {
+                delay(LIGHT_TICK_MS)
+                pumpLight()
+            }
+        }
         scope.launch {
             wifi.state.collect { state ->
                 when (state) {
@@ -101,6 +129,25 @@ class ScopeConnection(
 
     /** The picker, listing every "bebird*" network, to join a different scope. */
     fun pickDifferent() = request(Target.AnyScope)
+
+    /** The light slider moved (0-100 %); sent once it is still. */
+    fun setLight(percent: Int) {
+        light.set(percent, clock())
+        pumpLight()
+    }
+
+    /** Light off, or back on to the last level. */
+    fun toggleLight() {
+        light.toggle(clock())
+        pumpLight()
+    }
+
+    /** Restart the video session on the same network, as the desktop's Reconnect does. */
+    fun reconnect() {
+        val state = wifi.state.value as? ScopeWifi.State.Available ?: return
+        Log.i(TAG, "reconnect")
+        startSession(state)
+    }
 
     /** Stop the session, then release the network once its STOP has gone out. */
     fun disconnect() {
@@ -168,21 +215,55 @@ class ScopeConnection(
         stopSession()  // its STOP is queued ahead of the new session's STOP and START (see ScopeSession)
         val s = newSession(state)
         session = s
-        statsJob = scope.launch { s.stats.collect { _stats.value = it } }
+        streaming = false
+        sessionJobs = scope.launch {
+            launch {
+                s.stats.collect {
+                    _stats.value = it
+                    if (it.frame != null) _shownRoll.value = roll.update(it.angle)
+                    if (!streaming && it.frames > 0) {
+                        streaming = true
+                        light.onStreaming(clock())  // re-apply the level once video is up
+                    }
+                }
+            }
+            launch { s.lightReports.collect { light.onReported(it) } }
+        }
         s.start()
     }
 
     private fun stopSession(): Future<*>? {
         val s = session ?: return null
         session = null
-        statsJob?.cancel()
-        statsJob = null
+        streaming = false
+        sessionJobs?.cancel()
+        sessionJobs = null
         _stats.value = s.stats.value.copy(frame = null, fps = 0, status = "stopped", beacon = null)
         return s.stop()
     }
 
+    /** Send what the light control asks for, publish its state and remember the level. */
+    private fun pumpLight() {
+        val s = session
+        for (cmd in light.poll(clock(), online = s != null && streaming)) {
+            when (cmd) {
+                is LightControl.Command.Set -> s?.setLight(cmd.raw)
+                LightControl.Command.Query -> s?.queryLight()
+            }
+        }
+        val now = Light(light.level, light.status)
+        if (now != _light.value) {
+            if (now.level != _light.value.level) {
+                settings.light = light.level
+                settings.lightBeforeOff = light.beforeOff
+            }
+            _light.value = now
+        }
+    }
+
     companion object {
         private const val TAG = "BebirdSpike"
+        private const val LIGHT_TICK_MS = 50L
         // A dead link can't hold up the release for longer than this.
         private const val STOP_TIMEOUT_MS = 1000L
     }
