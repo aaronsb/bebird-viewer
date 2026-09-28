@@ -49,7 +49,7 @@ def scan(iface, rescan="auto"):
     best = {}
     for f in map(_fields, out.splitlines()):
         if len(f) >= 3 and f[0].lower().startswith(SSID_PREFIX):
-            net = {"ssid": f[0], "signal": int(f[1] or 0), "bssid": f[2].upper()}
+            net = {"ssid": f[0], "signal": int(f[1]) if f[1].isdigit() else 0, "bssid": f[2].upper()}
             if f[0] not in best or net["signal"] > best[f[0]]["signal"]:
                 best[f[0]] = net
     return sorted(best.values(), key=lambda n: -n["signal"])
@@ -108,7 +108,9 @@ def status(iface):
     if info["connection"]:
         ok, out, _ = _nmcli("-g", "802-11-wireless.ssid", "connection", "show", info["connection"])
         info["ssid"] = out.strip() if ok else ""
-    info["on_scope"] = info["connected"] and info["ip"].startswith(SCOPE_NET)
+    # a 192.168.5.x address alone isn't enough: other networks use that subnet too
+    info["on_scope"] = (info["connected"] and info["ip"].startswith(SCOPE_NET)
+                        and info["ssid"].lower().startswith(SSID_PREFIX))
     return info
 
 

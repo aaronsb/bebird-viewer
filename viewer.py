@@ -76,12 +76,20 @@ class Scope(QObject):
         self.iface = iface
         self.video = self.ctrl = None
         self.running = False
+        self.thread = None
         self._info_buf = b""
+        self._collecting_info = False  # board-info JSON is only accepted during the start-up window
 
     def _sock(self, ip, port, local_port=0):
-        # Bind to the Wi-Fi address so nothing goes out the wired LAN (which also has a 192.168.5.1)
+        # Keep scope traffic on the Wi-Fi interface: another network (e.g. a wired LAN) may also
+        # have a 192.168.5.1. SO_BINDTODEVICE pins the interface (unprivileged since Linux 5.7);
+        # binding the Wi-Fi address is the fallback where that isn't allowed.
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, self.iface.encode())
+        except OSError:
+            pass
         s.bind((ip, local_port))
         s.connect((CAM, port))
         return s
@@ -96,16 +104,25 @@ class Scope(QObject):
         self.video.settimeout(0.1)
         self.ctrl.setblocking(False)
         self.running = True
-        threading.Thread(target=self._run, daemon=True).start()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
         return True
 
     def stop(self):
+        """Stop the receive thread, then send STOP and close the sockets. Waiting for the thread
+        guarantees it can't send a START after our STOP (a repeated START can wedge the camera)."""
         self.running = False
-        time.sleep(0.15)  # let the receive loop exit before sending STOP
-        try:
-            self.video and self.video.send(STOP)
-        except OSError:
-            pass
+        if self.thread:
+            self.thread.join(timeout=1.5)
+        for sock, msg in ((self.video, STOP), (self.ctrl, None)):
+            if sock:
+                try:
+                    if msg:
+                        sock.send(msg)
+                except OSError:
+                    pass
+                sock.close()
+        self.video = self.ctrl = None
 
     def send(self, data):
         try:
@@ -118,8 +135,9 @@ class Scope(QObject):
         self.send(b"\x66\x3c\xff")  # commit: the level only takes effect after this
 
     def _handle_ctrl(self, b):
-        # board info is JSON and may span several datagrams
-        if self._info_buf or b.lstrip().startswith(b"{"):
+        # board info is JSON that may span several datagrams; only buffer it during the start-up
+        # window, so a lost fragment can't swallow later battery/light replies
+        if self._collecting_info and (self._info_buf or b.lstrip().startswith(b"{")):
             self._info_buf += b
             if self._info_buf.rstrip().endswith(b"}"):
                 try:
@@ -141,12 +159,15 @@ class Scope(QObject):
         # board info (for snapshot metadata). The scope seems to answer this only soon after
         # power-on, so the viewer also caches the last answer it got.
         self.send(b"\x66\x39\x01\x01")
-        deadline = time.time() + 0.6
-        while time.time() < deadline:
+        self._collecting_info, deadline = True, time.time() + 0.6
+        while self.running and time.time() < deadline:
             try:
                 self._handle_ctrl(self.ctrl.recv(4096))
             except (BlockingIOError, ConnectionRefusedError, OSError):
                 time.sleep(0.02)
+        self._collecting_info, self._info_buf = False, b""
+        if not self.running:
+            return                              # stopped during start-up: never send START
         self.video.send(START)                  # then exactly one START
         lost = False
         while self.running:
@@ -205,7 +226,14 @@ class Background(QObject):
         cb(result)
 
     def run(self, fn, cb):
-        threading.Thread(target=lambda: self.done.emit(cb, fn()), daemon=True).start()
+        """cb receives fn()'s result, or the exception it raised."""
+        def work():
+            try:
+                result = fn()
+            except Exception as e:  # noqa: BLE001 - reported to the user by the callback
+                result = e
+            self.done.emit(cb, result)
+        threading.Thread(target=work, daemon=True).start()
 
 
 class Viewer(QWidget):
@@ -222,6 +250,7 @@ class Viewer(QWidget):
         self.wifi_busy = False     # one nmcli operation at a time
         self.on_scope_wifi = False
         self.last_join_try = 0.0
+        self.join_backoff = 6      # seconds between auto-join attempts; grows after failures
         self.light_level = self.saved.get("light", 100)
         self.light_before_off = self.saved.get("light_before_off", 100)
         self.asserted = False
@@ -412,8 +441,10 @@ class Viewer(QWidget):
     def on_boardinfo(self, info):
         # keep only non-identifying fields; cached so snapshots have them even when the
         # scope doesn't answer (it seems to reply only soon after power-on)
-        self.board = {k: info[k] for k in ("brand", "model", "hardware", "firmware", "soc") if k in info}
-        self.save_state()
+        board = {k: info[k] for k in ("brand", "model", "hardware", "firmware", "soc") if k in info}
+        if board:
+            self.board = board
+            self.save_state()
 
     def on_battery(self, state, pct):
         self.battery = (pct, BAT_STATE.get(state, str(state)))
@@ -520,13 +551,20 @@ class Viewer(QWidget):
         return self.net_box.currentData()
 
     def wifi_op(self, fn, cb):
+        """Run one nmcli job at a time off the GUI thread. Returns False if another is running.
+        Results from a job that ran on a different interface than the current one are dropped."""
         if self.wifi_busy:
-            return
+            return False
         self.wifi_busy = True
+        iface = self.iface
         def finish(result):
             self.wifi_busy = False
-            cb(result)
+            if isinstance(result, Exception):
+                self.status.setText(f"Wi-Fi error: {result}")
+            elif iface == self.iface:
+                cb(result)
         self.bg.run(fn, finish)
+        return True
 
     def poll_wifi(self):
         self.wifi_op(lambda: wifi.status(self.iface), self.on_wifi_status)
@@ -546,7 +584,7 @@ class Viewer(QWidget):
         if was:
             self.status.setText("scope Wi-Fi lost — scope off or out of range")
         # auto-join: look for a scope network every few seconds and join when one appears
-        if self.autojoin.isChecked() and time.time() - self.last_join_try > 6:
+        if self.autojoin.isChecked() and time.time() - self.last_join_try > self.join_backoff:
             self.last_join_try = time.time()
             self.find_and_join("auto", quiet=True)
 
@@ -572,16 +610,24 @@ class Viewer(QWidget):
 
     def on_join_result(self, result):
         ok, msg = result
-        self.status.setText(msg)
+        # back off after a failed join: each attempt can take the interface off its usual network
+        self.join_backoff = 6 if ok else min(self.join_backoff * 2, 120)
+        self.last_join_try = time.time()
+        self.status.setText(msg if ok else f"{msg} (next auto-join try in {self.join_backoff} s)")
         self.poll_wifi()  # picks up the new state, records the device and starts the video
 
     def toggle_wifi(self):
+        if self.wifi_busy:
+            self.status.setText("Wi-Fi is busy — try again in a moment")
+            return
         if self.on_scope_wifi:
-            self.autojoin.setChecked(False)  # otherwise it would rejoin straight away
-            self.scope.stop()
             iface = self.iface
-            self.wifi_op(lambda: wifi.disconnect(iface), lambda r: (self.status.setText(r[1]), self.poll_wifi()))
+            if self.wifi_op(lambda: wifi.disconnect(iface),
+                            lambda r: (self.status.setText(r[1]), self.poll_wifi())):
+                self.autojoin.setChecked(False)  # otherwise it would rejoin straight away
+                self.scope.stop()
         else:
+            self.join_backoff = 6  # a manual Connect resets the auto-join backoff
             self.find_and_join("yes")
 
     # the last-used scope, kept in ~/.config/bebird/last-device.json
@@ -618,6 +664,9 @@ class Viewer(QWidget):
 
     def on_scan(self, nets):
         self.scan_btn.setEnabled(True)
+        if isinstance(nets, Exception):
+            self.status.setText(f"Wi-Fi scan failed: {nets}")
+            return
         self.note_seen(nets)
         if nets:
             self.status.setText("in range: " + ", ".join(f"{n['ssid']} ({n['signal']}%)" for n in nets))
