@@ -224,3 +224,7 @@ See [docs/app-analysis.md](docs/app-analysis.md) for what the official app does 
 Copyright (C) 2026 Aaron Bockelie. Licensed under the [GNU General Public License v3.0 or later](LICENSE) (`GPL-3.0-or-later`).
 
 Versions up to and including commit `398f346` were released under the MIT License, and copies obtained under those terms stay MIT.
+
+### Third-party material
+
+- The Android app's Move icon (annotate mode) uses the path of the `open_with` icon from Google's [Material Design icons](https://github.com/google/material-design-icons), licensed under the [Apache License 2.0](LICENSES/Apache-2.0.txt).
