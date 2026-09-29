@@ -65,9 +65,10 @@ private val MoveIcon: ImageVector = ImageVector.Builder("Move", 24.dp, 24.dp, 24
 private const val TEXT_MAX = 40
 
 /**
- * The controls while annotating, in place of the live ones: the tool, the colour, Undo and
- * Clear, Move (a toggle: drag marks to move them, hold to delete), and Resume (back to the live view, dropping unsaved marks after a confirmation) and
- * Save (both files, then back to the live view; on a failure the marks stay for another try).
+ * The controls while annotating, in place of the live ones: the drawing tool, the colour,
+ * Undo, Clear, Move (a toggle: drag a mark to move it, hold to delete), Resume (back to the
+ * live view, dropping unsaved marks after a confirmation) and Save (both files, then back to
+ * the live view; on a failure the marks stay for another try).
  * Back does what Resume does. Nothing changes while a save runs.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -89,9 +90,12 @@ fun AnnotateControls(
         ToolRow(tools.tool) { tools.draw(it) }
         ColorRow(tools.color) { tools.color = it }
         // Resume and Save wrap onto a line of their own on a narrow screen.
-        FlowRow(verticalArrangement = Arrangement.Center, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { onEdit(Sketch::undo) }, enabled = !saving && sketch.canUndo) { Text(stringResource(R.string.annotate_undo)) }
-            TextButton(onClick = { onEdit(Sketch::clear) }, enabled = !saving && sketch.marks.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val centred = Modifier.align(Alignment.CenterVertically)
+            TextButton(onClick = { onEdit(Sketch::undo) }, enabled = !saving && sketch.canUndo, modifier = centred) {
+                Text(stringResource(R.string.annotate_undo))
+            }
+            TextButton(onClick = { onEdit(Sketch::clear) }, enabled = !saving && sketch.marks.isNotEmpty(), modifier = centred) {
                 Text(stringResource(R.string.annotate_clear))
             }
             val moveName = stringResource(R.string.annotate_move_description)
@@ -99,10 +103,10 @@ fun AnnotateControls(
                 checked = tools.tool == Tool.MOVE,
                 onCheckedChange = { tools.toggleMove() },
                 enabled = !saving,
-                modifier = Modifier.semantics { contentDescription = moveName },
+                modifier = centred.semantics { contentDescription = moveName },
             ) { Icon(MoveIcon, contentDescription = null) }
             Spacer(Modifier.weight(1f))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(centred, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = leave, enabled = !saving) { Text(stringResource(R.string.annotate_resume)) }
                 Button(onClick = onSave, enabled = !saving && sketch.marks.isNotEmpty()) { Text(stringResource(R.string.save)) }
             }

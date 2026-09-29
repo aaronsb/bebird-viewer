@@ -80,6 +80,7 @@ import kotlinx.coroutines.withContext
 @Stable
 class AnnotateTools {
     var tool by mutableStateOf(Tool.ARROW)
+        private set
     var color by mutableIntStateOf(Palette.RED)
     var textAt by mutableStateOf<Pt?>(null)
     var drawTool by mutableStateOf(Tool.ARROW)
@@ -143,14 +144,14 @@ fun AnnotateCanvas(
         val h = fit.height.roundToInt()
         var stroke by remember { mutableStateOf(emptyList<Pt>()) }  // the drag in progress
         var move by remember { mutableStateOf<MoveState?>(null) }  // a Move press, while it lasts
+        // A dropped mark, shown where it landed until a layer drawn from the current marks has it
+        // (apart from [move], so pressing again meanwhile doesn't put it back at its old spot).
+        var landing by remember { mutableStateOf<MoveState?>(null) }
         // While Move holds a mark, the layer leaves it out and draws it alone, so a drag slides
         // that mark's own pixels instead of drawing everything again for each movement.
-        val held = move?.takeIf { it.phase == Phase.PRESSED || it.phase == Phase.DRAGGING }?.mark
+        val held = move?.takeIf { it.phase != Phase.DELETED }?.mark
         val layer = rememberLayer(marks, held, image.width, image.height, renderer)
-        // A dropped mark stays shown where it landed until the layer has it.
-        LaunchedEffect(layer, move) {
-            if (move?.phase == Phase.COMMITTED && layer?.picked == null && layer?.marks === marks) move = null
-        }
+        LaunchedEffect(layer, landing) { if (landing != null && layer?.marks === marks) landing = null }
         with(LocalDensity.current) {
             Box(Modifier.offset { IntOffset(fit.left.roundToInt(), fit.top.roundToInt()) }.size(w.toDp(), h.toDp())) {
                 // As the live view shows it: the image circle, and the hair-thin ring with the overlay.
@@ -169,8 +170,18 @@ fun AnnotateCanvas(
                         filterQuality = FilterQuality.None,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    val m = move?.takeIf { it.mark === l.picked }
-                    if (l.lone != null && m?.phase != Phase.DELETED) {
+                    // The layer's lone mark: where it is being dragged or has landed; where it is, if
+                    // still one of the marks (a tap on it); else nowhere (deleted, or undone meanwhile).
+                    val lm = landing
+                    val mv = move
+                    val at: Pair<Int, Int>? = when {
+                        l.lone == null -> null
+                        lm != null && lm.mark === l.picked -> lm.dx to lm.dy
+                        mv != null && mv.mark === l.picked -> if (mv.phase == Phase.DELETED) null else mv.dx to mv.dy
+                        marks.any { it === l.picked } -> 0 to 0
+                        else -> null
+                    }
+                    if (l.lone != null && at != null) {
                         val k = fit.width / image.width  // screen px per frame px
                         Image(
                             bitmap = l.lone,
@@ -178,8 +189,8 @@ fun AnnotateCanvas(
                             contentScale = ContentScale.FillBounds,
                             filterQuality = FilterQuality.None,
                             modifier = Modifier.fillMaxSize().graphicsLayer {
-                                translationX = (m?.dx ?: 0) * k
-                                translationY = (m?.dy ?: 0) * k
+                                translationX = at.first * k
+                                translationY = at.second * k
                             },
                         )
                     }
@@ -200,7 +211,6 @@ fun AnnotateCanvas(
                         // Found again by identity when acting: Undo with another finger may have moved it in the list.
                         fun index() = current.indexOfFirst { it === mark }
                         var state = MoveState(mark, picker.bounds(mark), Phase.PRESSED)
-                        var dropped = false
                         try {
                             move = state
                             val (outcome, at) = awaitMovePressOutcome(down, viewConfiguration.touchSlop, viewConfiguration.longPressTimeoutMillis)
@@ -217,7 +227,7 @@ fun AnnotateCanvas(
                                 PressOutcome.MOVE -> {
                                     fun follow(p: Offset) {
                                         val to = fit.toImage(p.x, p.y)
-                                        val (px, py) = picker.offsetPx(mark, to.x - start.x, to.y - start.y)
+                                        val (px, py) = picker.offsetPx(mark, to.x - start.x, to.y - start.y, state.bounds)
                                         state = state.copy(phase = Phase.DRAGGING, dx = px, dy = py)
                                         move = state
                                     }
@@ -231,8 +241,7 @@ fun AnnotateCanvas(
                                             val i = index()
                                             if (i >= 0 && (state.dx != 0 || state.dy != 0)) {
                                                 moveMark(i, picker.shifted(mark, state.dx, state.dy))
-                                                move = state.copy(phase = Phase.COMMITTED)
-                                                dropped = true
+                                                landing = state
                                             }
                                             break
                                         }
@@ -244,7 +253,7 @@ fun AnnotateCanvas(
                                 PressOutcome.NONE -> Unit
                             }
                         } finally {
-                            if (!dropped) move = null
+                            move = null
                         }
                     }
                 } else if (tool == Tool.TEXT) {
@@ -286,7 +295,7 @@ fun AnnotateCanvas(
             for (m in pending) strokes(m, fit, image.width, image.height)
             Drag.mark(tools.tool, stroke, tools.color)?.let { strokes(it, fit, image.width, image.height) }
             // The mark a Move press holds: what will move, or (red) what was just deleted.
-            move?.takeIf { it.phase != Phase.COMMITTED }?.let { m ->
+            move?.let { m ->
                 val b = m.bounds
                 val dx = m.dx.toFloat() / image.width
                 val dy = m.dy.toFloat() / image.height
@@ -318,8 +327,8 @@ private fun DrawScope.strokes(m: Mark, fit: ImageFit, iw: Int, ih: Int) {
     }
 }
 
-/** Where a Move press is: held, being dragged, just deleted (a long press), or dropped and waiting for the layer. */
-private enum class Phase { PRESSED, DRAGGING, DELETED, COMMITTED }
+/** Where a Move press is: held, being dragged, or just deleted (a long press). */
+private enum class Phase { PRESSED, DRAGGING, DELETED }
 
 /** A Move press on [mark] (its drawn [bounds]), moved by ([dx], [dy]) whole frame pixels so far. */
 private data class MoveState(val mark: Mark, val bounds: Picker.Bounds, val phase: Phase, val dx: Int = 0, val dy: Int = 0)
@@ -334,9 +343,8 @@ private suspend fun AwaitPointerEventScope.awaitMovePressOutcome(
 ): Pair<PressOutcome, Offset> {
     var elapsed = 0L
     while (true) {
-        // no event before the timeout: the finger is still down and still
-        val event = withTimeoutOrNull(timeoutMs - elapsed) { awaitPointerEvent() }
-            ?: return (classifyMovePress(true, true, false, 0f, slop, timeoutMs, timeoutMs) ?: PressOutcome.DELETE) to down.position
+        // no event before the timeout: the finger is still down and still, a long press
+        val event = withTimeoutOrNull(timeoutMs - elapsed) { awaitPointerEvent() } ?: return PressOutcome.DELETE to down.position
         val change = event.changes.firstOrNull { it.id == down.id }
         if (change != null) elapsed = change.uptimeMillis - down.uptimeMillis
         val outcome = classifyMovePress(

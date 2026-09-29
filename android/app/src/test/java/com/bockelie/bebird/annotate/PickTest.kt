@@ -95,8 +95,10 @@ class PickTest {
         near(0.2f, a.from.x); near(0.55f, a.to.y)
         val p = picker.moved(Mark.Pen(listOf(Pt(0.1f, 0.1f), Pt(0.2f, 0.3f)), red), dx, dy) as Mark.Pen
         near(0.2f, p.points[0].x); near(0.35f, p.points[1].y)
-        val t = picker.moved(Mark.Text(Pt(0.2f, 0.5f), "AB", red), dx, dy) as Mark.Text
-        near(0.3f, t.at.x); near(0.55f, t.at.y)
+        val t0 = Mark.Text(Pt(0.2f, 0.5f), "AB", red)
+        val t = picker.moved(t0, dx, dy) as Mark.Text
+        val (b0, b1) = renderer.textBounds(t0, 480, 480) to renderer.textBounds(t, 480, 480)
+        assertEquals(b0.left + 48, b1.left); assertEquals(b0.top + 24, b1.top)
         assertEquals(red, t.color)
     }
 
@@ -147,6 +149,20 @@ class PickTest {
         assertEquals(shifted, picker.moved(box, 10.7f / 480, -3.6f / 480))
     }
 
+    @Test fun textLandsExactlyWholePixelsAway() {
+        // anchors whose x * 480 sits on or just off a pixel boundary, where float error bites
+        for (x in listOf(0.1f, 100f / 480, 0.25f, 1f / 3, 0.4166667f, 0.7f)) for (px in listOf(-37, -1, 1, 13, 48)) {
+            val t = Mark.Text(Pt(x, 0.5f), "AB", red)
+            val before = renderer.textBounds(t, 480, 480)
+            val after = renderer.textBounds(picker.shifted(t, px, 7) as Mark.Text, 480, 480)
+            assertEquals("x=$x px=$px", before.left + px, after.left)
+            assertEquals(before.top + 7, after.top)
+            // and again from where it landed
+            val again = renderer.textBounds(picker.shifted(picker.shifted(t, px, 7), -px, -7) as Mark.Text, 480, 480)
+            assertEquals(before, again)
+        }
+    }
+
     @Test fun aLabelWiderThanTheFrameSlidesUntilAnEndReachesTheEdge() {
         val wide = Mark.Text(Pt(0.1f, 0.5f), "x".repeat(40), red)  // 640 px at scale 2
         val b = picker.bounds(wide)
@@ -164,8 +180,9 @@ class PickTest {
     @Test fun aLabelAlreadyOverTheEdgeCanComeBackButGoesNoFurther() {
         val long = Mark.Text(Pt(0.8f, 0.5f), "a long label past the edge", red)
         assertTrue(renderer.textBounds(long, 480, 480).right > 480)
-        near(0.8f, (picker.moved(long, 0.05f, 0f) as Mark.Text).at.x)
-        near(0.7f, (picker.moved(long, -0.1f, 0f) as Mark.Text).at.x)
+        val left = renderer.textBounds(long, 480, 480).left
+        assertEquals(left, renderer.textBounds(picker.moved(long, 0.05f, 0f) as Mark.Text, 480, 480).left)
+        assertEquals(left - 48, renderer.textBounds(picker.moved(long, -0.1f, 0f) as Mark.Text, 480, 480).left)
     }
 
     @Test fun theClampOnItsOwn() {

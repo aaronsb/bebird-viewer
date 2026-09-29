@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.bockelie.bebird.annotate
 
+import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -56,15 +57,24 @@ class Picker(private val renderer: AnnotationRenderer, private val w: Int, priva
     /**
      * How far [m] may move for a drag of ([dx], [dy]) image units, in whole frame pixels (so the
      * screen can slide the mark's own pixels and the file gets exactly those): held within the
-     * frame by [clamp], rounded towards zero so it never passes the limit.
+     * frame by [clamp], rounded towards zero so it never passes the limit. [b] is [m]'s bounds,
+     * if already known (a drag asks on every movement).
      */
-    fun offsetPx(m: Mark, dx: Float, dy: Float): Pair<Int, Int> {
-        val b = bounds(m)
+    fun offsetPx(m: Mark, dx: Float, dy: Float, b: Bounds = bounds(m)): Pair<Int, Int> {
         return (clamp(dx, b.left, b.right) * w).toInt() to (clamp(dy, b.top, b.bottom) * h).toInt()
     }
 
-    /** [m] moved by ([px], [py]) frame pixels. */
+    /**
+     * [m] moved by ([px], [py]) frame pixels. Text is drawn from whole pixels, so its anchor
+     * goes to the middle of the pixel it now starts in: float error can't then land it a pixel
+     * short of where the screen showed it.
+     */
     fun shifted(m: Mark, px: Int, py: Int): Mark {
+        if (m is Mark.Text) {
+            val x = (floor(m.at.x * w.toDouble()) + px + 0.5) / w
+            val y = (floor(m.at.y * h.toDouble()) + py + 0.5) / h
+            return m.copy(at = Pt(x.toFloat(), y.toFloat()))
+        }
         val dx = px.toFloat() / w
         val dy = py.toFloat() / h
         fun Pt.by() = Pt(x + dx, y + dy)
@@ -73,7 +83,7 @@ class Picker(private val renderer: AnnotationRenderer, private val w: Int, priva
             is Mark.Box -> m.copy(a = m.a.by(), b = m.b.by())
             is Mark.Arrow -> m.copy(from = m.from.by(), to = m.to.by())
             is Mark.Pen -> m.copy(points = m.points.map { it.by() })
-            is Mark.Text -> m.copy(at = m.at.by())
+            is Mark.Text -> error("text is handled above")
         }
     }
 
