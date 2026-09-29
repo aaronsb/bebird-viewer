@@ -106,6 +106,30 @@ class AnnotationRendererTest {
         assertEquals(fy * 1080 / 480, sy, 1.0)
     }
 
+    @Test fun theScreenLayerHasTheSavedFilesPixels() {
+        // the screen shows render() at the frame's size over the frame; the file is paint()
+        val grey = 0xFF808080.toInt()
+        val frame = PixelImage(480, 480, IntArray(480 * 480) { grey })
+        val marks = listOf(
+            Mark.Text(Pt(0.8f, 0.3f), "label runs off the edge", red),
+            Mark.Arrow(Pt(0.1f, 0.9f), Pt(0.5f, 0.5f), Palette.CYAN),
+            Mark.Pen(listOf(Pt(0.2f, 0.2f), Pt(0.3f, 0.25f), Pt(0.35f, 0.4f)), Palette.WHITE),
+        )
+        val layer = renderer.render(marks, 480, 480)
+        val file = renderer.paint(frame, marks)
+        for (i in layer.pixels.indices) assertEquals(if (layer.pixels[i] == clear) grey else layer.pixels[i], file.pixels[i])
+    }
+
+    @Test fun aRenderNoLongerWantedStopsAtTheNextMark() {
+        val marks = List(5) { Mark.Box(Pt(0.1f * it, 0.1f), Pt(0.1f * it + 0.05f, 0.2f), red) }
+        var checks = 0
+        val stop = runCatching {
+            renderer.render(marks, 100, 100) { if (++checks == 2) throw IllegalStateException("cancelled") }
+        }.exceptionOrNull()
+        assertTrue(stop is IllegalStateException)
+        assertEquals(2, checks)
+    }
+
     @Test fun paintDrawsOnACopyAndOnlyInsideTheArea() {
         val grey = 0xFF808080.toInt()
         val image = PixelImage(100, 130, IntArray(100 * 130) { grey })  // a 100 x 100 frame over a 30-px band

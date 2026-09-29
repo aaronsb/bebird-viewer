@@ -18,14 +18,18 @@ import kotlin.math.sin
 /**
  * Draws [Mark]s into ARGB pixels, the band's way: pixels chosen by a distance test (no
  * anti-aliasing), text from the band's bitmap font at a whole scale. Every stroke has a thin
- * black edge so it shows on light and dark tissue alike. Sizes are fractions of the drawing
- * area's width, so the on-screen layer and the saved file look the same at any size. Pure.
+ * black edge so it shows on light and dark areas alike. Sizes are fractions of the drawing
+ * area's width. The screen shows a layer rendered at the frame's own size, so it has the
+ * saved file's pixels exactly. Pure.
  */
 class AnnotationRenderer(private val font: GlyphSource) {
-    /** [marks] alone on a transparent [width] × [height] image: the on-screen layer. */
-    fun render(marks: List<Mark>, width: Int, height: Int): PixelImage {
+    /**
+     * [marks] alone on a transparent [width] × [height] image: the on-screen layer. [keepGoing]
+     * runs before each mark and may throw to stop a render that is no longer wanted.
+     */
+    fun render(marks: List<Mark>, width: Int, height: Int, keepGoing: () -> Unit = {}): PixelImage {
         val px = IntArray(width * height)
-        draw(px, width, width, height, marks)
+        draw(px, width, width, height, marks, keepGoing)
         return PixelImage(width, height, px)
     }
 
@@ -40,10 +44,11 @@ class AnnotationRenderer(private val font: GlyphSource) {
         return PixelImage(image.width, image.height, px)
     }
 
-    private fun draw(px: IntArray, stride: Int, w: Int, h: Int, marks: List<Mark>) {
+    private fun draw(px: IntArray, stride: Int, w: Int, h: Int, marks: List<Mark>, keepGoing: () -> Unit = {}) {
         val half = half(w)
         val edge = edge(w)
         for (m in marks) {
+            keepGoing()
             if (m is Mark.Text) {
                 text(px, stride, w, h, m)
                 continue

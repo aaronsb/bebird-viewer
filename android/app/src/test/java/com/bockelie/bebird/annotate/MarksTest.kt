@@ -56,6 +56,22 @@ class MarksTest {
         assertEquals(Mark.Arrow(Pt(0.1f, 0.1f), Pt(0.4f, 0.5f), Palette.GREEN), Drag.mark(Tool.ARROW, pts, Palette.GREEN))
     }
 
+    @Test fun aDragStartsWhereTheFingerWentDown() {
+        // the canvas feeds the down point first, then every move (none lost to touch slop)
+        val down = Pt(0.3f, 0.3f)
+        for (tool in listOf(Tool.ARROW, Tool.BOX, Tool.ELLIPSE, Tool.PEN)) {
+            var pts = Drag.extend(emptyList(), down, tool)
+            for (p in listOf(Pt(0.305f, 0.3f), Pt(0.4f, 0.35f), Pt(0.6f, 0.5f))) pts = Drag.extend(pts, p, tool)
+            when (val m = Drag.mark(tool, pts, Palette.RED)) {
+                is Mark.Arrow -> assertEquals(down, m.from)
+                is Mark.Box -> assertEquals(down, m.a)
+                is Mark.Ellipse -> assertEquals(down, m.a)
+                is Mark.Pen -> assertEquals(down, m.points.first())
+                else -> throw AssertionError("$tool made $m")
+            }
+        }
+    }
+
     @Test fun thePenKeepsItsPathButSkipsTinySteps() {
         var pts = emptyList<Pt>()
         for (p in listOf(Pt(0.1f, 0.1f), Pt(0.1001f, 0.1f), Pt(0.2f, 0.1f), Pt(0.2f, 0.3f))) pts = Drag.extend(pts, p, Tool.PEN)
