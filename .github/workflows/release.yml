@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Builds the signed release APK in the same container as `make android-release` does locally and
-# publishes it as a GitHub Release. Pushing a tag vX.Y.Z publishes; running it by hand
+# publishes it as a GitHub Release. The tag need not be GPG-signed (CI has no public key to check
+# it); GPG is local only: `make release-sign` adds the checksum's signature after publishing. Pushing a tag vX.Y.Z publishes; running it by hand
 # (workflow_dispatch) is a dry run that only uploads the APK as a workflow artifact.
 # Secrets and how to cut a release: docs/building.md#release-builds.
 name: Release
@@ -26,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      cert: ${{ steps.verify.outputs.cert }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,6 +75,7 @@ jobs:
         run: rm -f "$RUNNER_TEMP/release.keystore"
 
       - name: Verify signature and certificate
+        id: verify
         if: steps.keystore.outputs.signed == 'true'
         env:
           EXPECTED_CERT: ${{ vars.BEBIRD_CERT_SHA256 || secrets.BEBIRD_CERT_SHA256 }}
@@ -90,6 +93,7 @@ jobs:
           else
             echo "::warning::BEBIRD_CERT_SHA256 is not set: the signing certificate ($actual) was not checked"
           fi
+          echo "cert=$actual" >> "$GITHUB_OUTPUT"
 
       - name: Name and checksum
         env:
@@ -133,11 +137,31 @@ jobs:
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          CERT: ${{ needs.build.outputs.cert }}
         run: |
-          # Notes: the CHANGELOG.md section for this version, else GitHub's generated notes.
+          # Notes: the CHANGELOG.md section for this version (else GitHub's generated notes), then
+          # how to verify the download.
+          notes="$RUNNER_TEMP/notes.md"
           awk -v head="## [$VERSION]" 'index($0, head) == 1 {on = 1; next} on && /^## \[/ {exit} on' \
-            CHANGELOG.md > "$RUNNER_TEMP/notes.md" 2>/dev/null || true
-          if grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then notes=(--notes-file "$RUNNER_TEMP/notes.md")
-          else notes=(--generate-notes); fi
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "bebird-viewer $VERSION" "${notes[@]}" \
-            "out/bebird-$VERSION.apk" "out/bebird-$VERSION.apk.sha256" LICENSE LICENSES/Apache-2.0.txt
+            CHANGELOG.md > "$notes" 2>/dev/null || true
+          if grep -q '[^[:space:]]' "$notes"; then generate=(); else generate=(--generate-notes); fi
+          apk=bebird-$VERSION.apk
+          cat >> "$notes" <<EOF
+
+          ## Verifying the download
+
+          With the files in one directory:
+
+          \`\`\`sh
+          sha256sum -c $apk.sha256
+          gpg --verify $apk.sha256.asc $apk.sha256
+          apksigner verify --print-certs $apk
+          \`\`\`
+
+          \`$apk.sha256.asc\`, the maintainer's GPG signature of the checksum, is added shortly after the release is published. apksigner must report this signing certificate SHA-256 digest, the same for every release:
+
+          \`$CERT\`
+          EOF
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "bebird-viewer $VERSION" \
+            --notes-file "$notes" "${generate[@]}" \
+            "out/$apk" "out/$apk.sha256" LICENSE LICENSES/Apache-2.0.txt

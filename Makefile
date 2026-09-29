@@ -13,7 +13,7 @@ EXCLUDES := $(addprefix --exclude-module PyQt6.,QtWebEngineCore QtWebEngineWidge
 
 .PHONY: help venv run app app-image app-lock install uninstall \
         android-image android-test android-apk android-release android-release-verify android-shell \
-        clean distclean
+        release-sign clean distclean
 .DEFAULT_GOAL := help
 
 # Containers run as the calling user, so everything they write is owned by you, never root.
@@ -118,6 +118,21 @@ endif
 android-release-verify: android-image  ## check an APK's v2/v3 signature, print its certificate and SHA-256: APK=path
 	@test -f "$(APK)" || { echo "usage: make android-release-verify APK=path/to/app.apk"; exit 1; }
 	@$(call verify_apk,$(APK))
+
+# Runs on your machine, not in Docker: it needs your gpg-agent and gh login. The release workflow
+# never sees the GPG key; this adds a detached signature of the published checksum afterwards.
+REL_TAG = v$(VERSION)
+REL_APK = bebird-$(VERSION).apk
+release-sign:  ## GPG-sign a published release's .sha256 and upload the .asc: VERSION=X.Y.Z [GPG_KEY=id]
+	@test -n "$(VERSION)" || { echo "usage: make release-sign VERSION=X.Y.Z [GPG_KEY=key id]"; exit 1; }
+	@set -e; d=$$(mktemp -d); trap 'rm -rf "$$d"' EXIT; \
+	gh release download $(REL_TAG) --dir "$$d" --pattern $(REL_APK) --pattern $(REL_APK).sha256; \
+	(cd "$$d" && sha256sum -c $(REL_APK).sha256); \
+	gpg --armor --detach-sign $(if $(GPG_KEY),--local-user "$(GPG_KEY)") \
+		--output "$$d/$(REL_APK).sha256.asc" "$$d/$(REL_APK).sha256"; \
+	gpg --verify "$$d/$(REL_APK).sha256.asc" "$$d/$(REL_APK).sha256"; \
+	gh release upload $(REL_TAG) "$$d/$(REL_APK).sha256.asc"; \
+	echo "uploaded $(REL_APK).sha256.asc to $(REL_TAG)"
 
 android-shell: android-image  ## open a shell in the Android build container
 	$(DOCKER_RUN) -it -v "$(CURDIR)/android:/work" -v $(GRADLE_VOL):/home/builder/.gradle $(DROID_IMAGE) bash

@@ -22,6 +22,6 @@ The first release of the Android app, as a signed APK on GitHub Releases.
   - A grace period (1 minute by default) that keeps the connection while you switch apps briefly, with a countdown notification.
   - Light, dark or system theme, and screen-reader support for the live view.
 - Desktop app (Linux, PyQt6): live video, light control, auto-rotate, snapshots and recordings, and Wi-Fi handling through NetworkManager, plus command-line tools. Runs from source or as a standalone binary.
-- Containerized builds (`make`) and a release workflow that publishes the signed APK with its SHA-256 checksum.
+- Containerized builds (`make`) and a release workflow that publishes the signed APK with its SHA-256 checksum, and `make release-sign` to add a GPG signature of the checksum.
 
 [0.1.0]: https://github.com/aaronsb/bebird-viewer/releases/tag/v0.1.0

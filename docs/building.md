@@ -9,6 +9,7 @@ Both builds run in Docker containers, never directly on your machine, so you nee
 | `make android-apk` | build the Android debug APK |
 | `make android-release` | build the Android release APK, signed when a key is configured (see [Release builds](#release-builds)) |
 | `make android-release-verify APK=…` | check an APK's signature and print its certificate and SHA-256 |
+| `make release-sign VERSION=…` | GPG-sign a published release's checksum (on your machine; see [Cutting a release](#cutting-a-release)) |
 | `make android-shell` | open a shell in the Android build container |
 | `make clean` | remove build output (desktop and Android) |
 | `make distclean` | also remove `.venv`, the Gradle cache volume and the build images |
@@ -91,14 +92,36 @@ With `BEBIRD_CERT_SHA256` set, the workflow refuses to publish an APK signed wit
 
 1. In `android/app/build.gradle.kts`, raise `versionCode` by one and set `versionName` to the new version (`X.Y.Z`).
 2. In `CHANGELOG.md`, give the version its own section, `## [X.Y.Z] - YYYY-MM-DD`, and a link at the bottom.
-3. Merge that to `main`, then tag it and push the tag:
+3. Merge that to `main`, then tag it, signed with your GPG key, and push the tag:
 
    ```sh
-   git tag -a vX.Y.Z -m "bebird-viewer X.Y.Z"
+   git tag -s vX.Y.Z -m "bebird-viewer X.Y.Z"
    git push origin vX.Y.Z
    ```
 
-The workflow checks that the tag matches `versionName`, runs the unit tests, builds and signs the APK, verifies the signature and certificate, and creates the GitHub Release with `bebird-X.Y.Z.apk`, its `.sha256`, `LICENSE` and `LICENSES/Apache-2.0.txt`. The release notes are the version's `CHANGELOG.md` section, or GitHub's generated notes if there is none. R8's `mapping.txt`, which turns obfuscated stack traces back into source names, is kept as a workflow artifact; download it if you want it beyond GitHub's artifact retention.
+4. When the workflow has published the release, sign its checksum on your machine:
+
+   ```sh
+   make release-sign VERSION=X.Y.Z        # GPG_KEY=<key id> to use a key other than the default
+   ```
+
+The workflow checks that the tag matches `versionName`, runs the unit tests, builds and signs the APK, verifies the signature and certificate, and creates the GitHub Release with `bebird-X.Y.Z.apk`, its `.sha256`, `LICENSE` and `LICENSES/Apache-2.0.txt`. The release notes are the version's `CHANGELOG.md` section, or GitHub's generated notes if there is none, followed by how to verify the download. R8's `mapping.txt`, which turns obfuscated stack traces back into source names, is kept as a workflow artifact; download it if you want it beyond GitHub's artifact retention.
+
+The workflow doesn't require the tag to be signed, since it has no public key to check it against, but a signed tag lets anyone check that the release was cut from a commit you vouched for (`git tag -v vX.Y.Z`).
+
+GPG never runs in CI; the private key stays on your machine. `make release-sign` runs on the host, not in Docker, because it uses your `gpg-agent` and your `gh` login. It downloads the APK and its `.sha256` from the release, checks one against the other, makes a detached ASCII-armoured signature of the `.sha256` (`gpg --armor --detach-sign`) and uploads it as `bebird-X.Y.Z.apk.sha256.asc`.
+
+### Verifying a release
+
+With the release's files in one directory:
+
+```sh
+sha256sum -c bebird-X.Y.Z.apk.sha256                          # the APK matches its checksum
+gpg --verify bebird-X.Y.Z.apk.sha256.asc bebird-X.Y.Z.apk.sha256   # the checksum is signed by the maintainer's key
+apksigner verify --print-certs bebird-X.Y.Z.apk               # Android signing certificate
+```
+
+The certificate's SHA-256 digest must be the one given in the release notes; it is the same for every release. `make android-release-verify APK=bebird-X.Y.Z.apk` runs `apksigner` in the build container.
 
 To try the workflow without publishing, run it by hand (Actions → Release → Run workflow, or `gh workflow run release.yml`). It builds, signs if the secrets are set, and uploads the APK as a workflow artifact only.
 
