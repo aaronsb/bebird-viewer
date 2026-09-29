@@ -44,6 +44,7 @@ class ScopeConnectionPowerOffTest {
         val starts = CopyOnWriteArrayList<Target>()
         override fun start(target: Target, why: String?) { starts += target }
         @Volatile var releaseMs = 0L  // how long the network takes to go
+        override fun markEnding() {}
         override fun stop() {
             releases += links.sends()
             Thread.sleep(releaseMs)

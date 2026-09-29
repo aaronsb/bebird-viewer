@@ -38,6 +38,7 @@ class ScopeConnectionTest {
 
         // Leaves the state alone, so the connection's collector still sees a late Unavailable:
         // exactly the window the guard is for.
+        override fun markEnding() {}
         override fun stop() {}
 
         override fun scopesInRange(): List<ScopeWifi.Identity>? = null

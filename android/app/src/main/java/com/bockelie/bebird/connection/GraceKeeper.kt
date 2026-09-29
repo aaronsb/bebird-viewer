@@ -62,6 +62,11 @@ class GraceKeeper(
     fun onLeave() {
         val covered = cover.coversStop(clock())
         cover.returned()
+        if (!connection.isWanted && connection.wifiState.value == ScopeWifi.State.Lost) {
+            // Lost, and released already (#37): nothing to keep or end, and back on the screen
+            // the circle still says the connection was lost.
+            return
+        }
         val grace = settings.graceSeconds * 1000L
         leave(if (covered) maxOf(grace, cover.capMs) else grace, covered)
     }
@@ -93,7 +98,10 @@ class GraceKeeper(
         _kept.value = null
     }
 
-    /** The connection let go on its own (the network went while kept): nothing left to end. */
+    /**
+     * The connection let go on its own while kept (the network went, #37, or wasn't found):
+     * nothing left to end, and no keepalive to keep.
+     */
     private fun lostWhileKept() {
         if (_kept.value == null) return
         Log.i(TAG, "the connection went while kept; nothing left to keep")
@@ -143,9 +151,9 @@ class GraceKeeper(
     private fun leave(graceMs: Long, covered: Boolean = false) {
         if (_kept.value != null) return
         val powerOff = settings.powerOffAfterGrace
-        val found = connection.wifiState.value.let { it !is ScopeWifi.State.Unavailable && it !is ScopeWifi.State.Failed }
+        val found = connection.wifiState.value.let { it !is ScopeWifi.State.Unavailable && it !is ScopeWifi.State.Failed && it != ScopeWifi.State.Lost }
         if (!connection.isWanted || !found) {
-            connection.disconnect()  // a connect still waiting for a release, or one that found nothing
+            connection.disconnect()  // a connect still waiting for a release, or one that found nothing or was lost
             return
         }
         if (graceMs == 0L && holds == 0) {

@@ -38,6 +38,7 @@ class ScopeConnectionLightTest {
         override val state = MutableStateFlow<ScopeWifi.State>(ScopeWifi.State.Idle)
         override val identity = MutableStateFlow<ScopeWifi.Identity?>(null)
         override fun start(target: Target, why: String?) {}
+        override fun markEnding() {}
         override fun stop() {}
         override fun scopesInRange(): List<ScopeWifi.Identity>? = null
     }

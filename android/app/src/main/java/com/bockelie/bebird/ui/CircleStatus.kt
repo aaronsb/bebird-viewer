@@ -7,8 +7,9 @@ import com.bockelie.bebird.wifi.ScopeWifi
 
 /**
  * What the empty image circle says (#32): the connection's state and what to do next. Each hint
- * names the button the screen shows in that state: Connect while idle, not found or failed;
- * Disconnect while connecting, connected or lost; Reconnect only once the network is joined.
+ * names the button the screen shows in that state: Connect while idle, not found, failed or lost
+ * (a loss releases the request, #37); Disconnect while connecting or connected; Reconnect only
+ * once the network is joined.
  */
 enum class CircleStatus(@StringRes val title: Int, @StringRes val hint: Int) {
     NOT_CONNECTED(R.string.circle_not_connected, R.string.circle_not_connected_hint),

@@ -17,9 +17,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.RequiresApi
 import com.bockelie.bebird.devices.WifiIds
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import java.net.Inet4Address
 
 /**
@@ -27,8 +25,9 @@ import java.net.Inet4Address
  * Android counterpart of wifi.py. The phone's default network is left alone: the process is
  * never bound to the scope's network; each socket is bound with [Network.bindSocket] instead.
  *
- * Callbacks arrive on ConnectivityManager's thread and may still arrive after [stop]; each one
- * checks, under [lock], that its request is still the current one and otherwise does nothing.
+ * Callbacks arrive on ConnectivityManager's thread and may still arrive after [stop]; [slot]
+ * ignores any but the current request's. A loss releases the request here and now (#37): the
+ * scope's network doesn't come back to an old request, so Connect files a new one.
  */
 class ScopeWifi(context: Context) : WifiControl {
     sealed interface State {
@@ -36,11 +35,18 @@ class ScopeWifi(context: Context) : WifiControl {
         data object Requesting : State
         /** [target] is the request that joined it, so callers know which scope this is. */
         data class Available(val network: Network, val target: Target) : State
+        /**
+         * The network went (scope off, battery, out of range) and its request has been released;
+         * until the next [start] or [stop], so the screen can tell it from a deliberate Disconnect.
+         */
         data object Lost : State
         /** The user dismissed the system's picker, or [target] was not found. */
         data class Unavailable(val target: Target) : State
         /** The request could not be filed, e.g. the permission was revoked. */
         data class Failed(val reason: String) : State
+
+        /** A request is filed and not yet released: there is something for Disconnect to end. */
+        val filed: Boolean get() = this == Requesting || this is Available
     }
 
     /** What to ask Android for. */
@@ -68,14 +74,9 @@ class ScopeWifi(context: Context) : WifiControl {
     private val appContext = context.applicationContext
     private val cm = appContext.getSystemService(ConnectivityManager::class.java)
     private val wm = appContext.getSystemService(WifiManager::class.java)
-    private val _state = MutableStateFlow<State>(State.Idle)
-    override val state: StateFlow<State> = _state.asStateFlow()
-    // Separate from state, so learning the identity never restarts the session.
-    private val _identity = MutableStateFlow<Identity?>(null)
-    override val identity: StateFlow<Identity?> = _identity.asStateFlow()
-
-    private val lock = Any()
-    private var current: Callback? = null  // guarded by lock
+    private val slot = RequestSlot<Callback>()
+    override val state: StateFlow<State> = slot.state
+    override val identity: StateFlow<Identity?> = slot.identity
 
     /** File the network request for [target]. Does nothing while a request is already filed. */
     override fun start(target: Target, why: String?) {
@@ -99,7 +100,7 @@ class ScopeWifi(context: Context) : WifiControl {
                 .build()
         } catch (e: IllegalArgumentException) {
             Log.e(TAG, "invalid network $target", e)
-            synchronized(lock) { if (current == null) _state.value = State.Failed("invalid network: ${e.message}") }
+            slot.failed("invalid network: ${e.message}")
             return
         }
         val kind = when (target) {
@@ -108,32 +109,21 @@ class ScopeWifi(context: Context) : WifiControl {
                 else "exact ssid=${target.ssid}, no bssid (picker expected)"
         } + (why?.let { ", $it" } ?: "")
         val cb = newCallback(target, kind)
-        // Held across requestNetwork so a fast first callback waits until `current` is set.
-        synchronized(lock) {
-            if (current != null) return
-            try {
-                cm.requestNetwork(request, cb)
-            } catch (e: RuntimeException) {  // SecurityException, TooManyRequestsException
-                Log.e(TAG, "network request failed ($kind)", e)
-                _state.value = State.Failed(e.message ?: e.javaClass.simpleName)
-                return
-            }
-            current = cb
-            _identity.value = null
-            _state.value = State.Requesting
+        try {
+            if (!slot.file(cb) { cm.requestNetwork(request, cb) }) return
+        } catch (e: RuntimeException) {  // SecurityException, TooManyRequestsException
+            Log.e(TAG, "network request failed ($kind)", e)
+            slot.failed(e.message ?: e.javaClass.simpleName)
+            return
         }
         Log.i(TAG, "request: $kind")
     }
 
+    override fun markEnding() = slot.markEnding()
+
     /** Release the request, which drops the phone off the scope's network. */
     override fun stop() {
-        val cb = synchronized(lock) {
-            current.also {
-                current = null
-                _state.value = State.Idle
-                _identity.value = null
-            }
-        } ?: return
+        val cb = slot.release() ?: return
         runCatching { cm.unregisterNetworkCallback(cb) }
         Log.i(TAG, "request released")
     }
@@ -192,28 +182,24 @@ class ScopeWifi(context: Context) : WifiControl {
             this.requestedAt = requestedAt
         }
 
-        /** Run [block] only while this callback's request is the current one. */
-        private inline fun ifCurrent(block: () -> Unit) = synchronized(lock) { if (current === this) block() }
-
-        override fun onAvailable(network: Network) = ifCurrent {
+        override fun onAvailable(network: Network) {
+            if (!slot.isCurrent(this)) return
             val ms = SystemClock.elapsedRealtime() - requestedAt
             // A picker takes the user seconds; an approved exact request joins in about one.
             Log.i(TAG, "available: $network after $ms ms (request: $kind)")
-            _state.value = State.Available(network, target)
+            slot.update(this, State.Available(network, target))
         }
 
-        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = ifCurrent {
-            val info = caps.transportInfo as? WifiInfo ?: return@ifCurrent
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            val info = caps.transportInfo as? WifiInfo ?: return
             @Suppress("DEPRECATION")  // getSSID(): its replacement getWifiSsid() is API 33+ and not public
             val rawSsid = info.ssid
             val id = Identity(WifiIds.ssid(rawSsid), WifiIds.bssid(info.bssid))
-            if (id != _identity.value) {
-                Log.i(TAG, "wifi info: raw ssid=$rawSsid raw bssid=${info.bssid} -> $id")
-                _identity.value = id
-            }
+            if (slot.identify(this, id)) Log.i(TAG, "wifi info: raw ssid=$rawSsid raw bssid=${info.bssid} -> $id")
         }
 
-        override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) = ifCurrent {
+        override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) {
+            if (!slot.isCurrent(this)) return
             val local = lp.linkAddresses.map { it.address }.filterIsInstance<Inet4Address>()
             val gateways = lp.routes.mapNotNull { it.gateway as? Inet4Address }
             Log.i(TAG, "link $network: iface=${lp.interfaceName} local=$local gateways=$gateways")
@@ -222,16 +208,17 @@ class ScopeWifi(context: Context) : WifiControl {
             }
         }
 
-        override fun onLost(network: Network) = ifCurrent {
-            Log.i(TAG, "lost: $network")
-            _state.value = State.Lost
+        override fun onLost(network: Network) {
+            if (!slot.lost(this)) return
+            Log.i(TAG, "lost: $network; releasing the request")
+            runCatching { cm.unregisterNetworkCallback(this) }
         }
 
-        override fun onUnavailable() = ifCurrent {
+        override fun onUnavailable() {
+            if (!slot.isCurrent(this)) return
             val ms = SystemClock.elapsedRealtime() - requestedAt
             Log.i(TAG, "unavailable after $ms ms (request: $kind)")
-            _state.value = State.Unavailable(target)
-            current = null  // the framework has already released the request
+            slot.unavailable(this, target)  // the framework has already released the request
         }
     }
 

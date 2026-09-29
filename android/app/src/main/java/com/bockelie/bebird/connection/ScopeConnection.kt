@@ -36,8 +36,9 @@ import java.util.concurrent.Future
 /**
  * The scope connection: the Wi-Fi request, the video session on it, and the remembered
  * devices. A session starts when the scope's network becomes available and stops when it is
- * lost or on [disconnect]; the network request is released only after the session's STOP has
- * gone out (see [NetworkGate]). One per app (see [com.bockelie.bebird.BebirdApp]), shared by
+ * lost or on [disconnect]; on [disconnect] the network request is released only after the
+ * session's STOP has gone out (see [NetworkGate]), and on a loss [ScopeWifi] has released it
+ * already (#37). One per app (see [com.bockelie.bebird.BebirdApp]), shared by
  * the screen and the service that keeps it through the background grace period (#18, see
  * [GraceKeeper]). Not thread-safe: call it from the main thread.
  */
@@ -68,7 +69,7 @@ class ScopeConnection(
     /** Scopes in the phone's last Wi-Fi scan, or null if scans aren't available; see [refreshInRange]. */
     val inRange: StateFlow<List<ScopeWifi.Identity>?> = _inRange.asStateFlow()
 
-    private val gate = NetworkGate(scope, wifi::stop, STOP_TIMEOUT_MS)
+    private val gate = NetworkGate(scope, wifi::stop, STOP_TIMEOUT_MS, wifi::markEnding)
     private var session: ScopeSession? = null
     private var sessionJobs: Job? = null  // following the session's stats and light replies
     private var streaming = false          // the current session has shown a frame
@@ -86,7 +87,7 @@ class ScopeConnection(
     // The request connectOnLaunch() made: if it finds nothing (scope off), no fallback, since
     // that could show Android's picker nobody asked for.
     private var quiet: Target? = null
-    /** Called when the connection lets go on its own while not decoding (see [GraceKeeper]). */
+    /** Called when the connection lets go on its own: lost, or not found while not decoding (see [GraceKeeper]). */
     var onLetGo: (() -> Unit)? = null
 
     /** A connection was asked for and not ended since: something to keep in the background. */
@@ -124,6 +125,7 @@ class ScopeConnection(
                             }
                         }
                     }
+                    ScopeWifi.State.Lost -> lost()
                     else -> stopSession()
                 }
             }
@@ -166,7 +168,7 @@ class ScopeConnection(
 
     /** Make [device] the one Connect goes to; if connected, switch to it now. */
     fun select(device: KnownDevice) {
-        val active = wifi.state.value.let { it !is ScopeWifi.State.Idle && it !is ScopeWifi.State.Unavailable && it !is ScopeWifi.State.Failed }
+        val active = wifi.state.value.filed
         edit { it.select(device.key) }
         if (active) connect()
     }
@@ -197,7 +199,7 @@ class ScopeConnection(
     /** Stop the session, then release the network once its STOP has gone out. */
     fun disconnect() {
         wanted = null
-        gate.disconnect(stopSession())
+        gate.disconnect(stopSession())  // marks the request ending, so a loss from here reads as Idle
     }
 
     /** Wait up to [timeoutMs] for the network release after [disconnect] or [powerOff]. */
@@ -214,6 +216,8 @@ class ScopeConnection(
         if (session == null || !streaming) return false
         Log.i(TAG, "power off")
         wanted = null
+        // The scope drops its network after 66 3E, maybe before the release: the gate marks the
+        // request ending, so that loss reads as Idle.
         gate.disconnect(stopSession(ScopeSession::powerOff, "powered off"))
         settings.poweredOffAt = clock()
         return true
@@ -249,6 +253,24 @@ class ScopeConnection(
         val fallback = BssidFallback.afterUnavailable(target) ?: return
         Log.w(TAG, "exact request ssid=${fallback.ssid} bssid=${fallback.suspect} found nothing; retrying by SSID only")
         request(fallback, "fallback after bssid ${fallback.suspect} found nothing")
+    }
+
+    /**
+     * The network went (scope off, battery, out of range) and [ScopeWifi] has released its
+     * request: end any session without a STOP, which has no network to go over, and want
+     * nothing more, so Connect starts afresh. The device stays remembered. A loss can come with
+     * no session, since the state flow may skip Available. Ignored with nothing wanted (already
+     * handled, or after [disconnect]) or with a new request waiting on the gate: a loss published
+     * just before [request], which marks its old request ending ([WifiControl.markEnding]).
+     */
+    private fun lost() {
+        val dropped = stopSession(ScopeSession::drop, "connection lost")
+        if (dropped == null && (wanted == null || gate.isConnecting)) return
+        if (dropped == null) _stats.value = _stats.value.copy(frame = null, fps = 0, status = "connection lost", beacon = null)
+        Log.i(TAG, "connection lost; the request is released")
+        wanted = null
+        quiet = null
+        onLetGo?.invoke()
     }
 
     private fun edit(change: (DeviceBook) -> DeviceBook) {
