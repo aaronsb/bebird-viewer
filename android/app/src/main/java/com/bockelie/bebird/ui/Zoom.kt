@@ -59,6 +59,7 @@ import com.bockelie.bebird.focus.OverlayRenderer
 import com.bockelie.bebird.focus.OverlayShape
 import com.bockelie.bebird.focus.ScaleDisclaimer
 import com.bockelie.bebird.focus.ScaleOverlay
+import com.bockelie.bebird.proto.Protocol
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -67,13 +68,14 @@ import kotlinx.coroutines.withContext
  * The image circle inside a rectangular viewport. Pinch zooms (1-6x) and drag pans, clipped
  * to the viewport; double-tap resets. Display only: nothing here changes what is received.
  * While there is no [frame], the circle says [status] (#32); while the scale is shown, a note
- * says it is approximate (#35). Both are drawn with [text] once the band's fonts are loaded.
+ * says it is approximate (#35); while the scope's [battery] is low, BATTERY LOW shows under
+ * CLOSE (#48). All three are drawn with [text] once the band's fonts are loaded.
  */
 @Composable
 fun ZoomableCircle(
     frame: Bitmap?, rotation: Int, outline: Boolean, view: ZoomView, modifier: Modifier,
     proximity: List<OverlayShape> = emptyList(), overlayRenderer: OverlayRenderer? = null,
-    status: CircleStatus? = null, text: PixelText? = null,
+    status: CircleStatus? = null, text: PixelText? = null, battery: Protocol.Battery? = null,
 ) {
     // Outside the image circle the viewport is the band's black, not the theme's surface, so
     // image and band read as one panel (as in saved stills with the overlay).
@@ -162,6 +164,8 @@ fun ZoomableCircle(
             if (frame != null && overlayRenderer != null) {
                 CloseLayer(proximity.filter(ScaleOverlay::isClose), overlayRenderer, side.toInt(), Modifier.align(Alignment.TopStart))
             }
+            // Under CLOSE's slot, fixed like it; independent of the scale.
+            BatteryLayer(battery, frame != null, text, side.toInt(), Modifier.align(Alignment.TopStart))
             // The scale is an estimate: said at the upper right, upright and fixed like CLOSE (#35).
             if (text != null && ScaleDisclaimer.shown(frame != null, proximity)) {
                 DisclaimerLayer(text, w.toInt(), h.toInt(), side.toInt(), Modifier.align(Alignment.TopEnd))
@@ -340,6 +344,38 @@ private fun DisclaimerLayer(text: PixelText, viewportW: Int, viewportH: Int, sid
             contentScale = ContentScale.FillBounds,
             filterQuality = FilterQuality.None,
             modifier = modifier.padding(top = inset, end = inset).size((image.width * s).toDp(), (image.height * s).toDp()),
+        )
+    }
+}
+
+/**
+ * BATTERY LOW at CLOSE's whole scale, while a picture is shown and [battery] is low (with
+ * [BatteryLow]'s hysteresis, kept here). TalkBack announces it when it appears.
+ */
+@Composable
+private fun BatteryLayer(battery: Protocol.Battery?, hasFrame: Boolean, text: PixelText?, side: Int, modifier: Modifier) {
+    var low by remember { mutableStateOf(false) }
+    val percent = battery?.percent
+    val charging = battery?.state == 2  // charging: the band's "+"
+    LaunchedEffect(percent, charging) { low = BatteryLow.next(low, percent, charging) }
+    if (!low || !hasFrame || text == null) return
+    val k = maxOf(1, side / FrameGeometry.SIZE)
+    val label = stringResource(R.string.battery_low)
+    val description = stringResource(R.string.battery_low_description)
+    val image = remember(text, label, k) {
+        val box = BatteryLow.box(text, label, k)
+        text.draw(listOf(PixelText.Line(label, 1, 1)), box.width / k, box.height / k, BatteryLow.RED, outline = true)
+            .toBitmap().asImageBitmap()
+    }
+    with(LocalDensity.current) {
+        Image(
+            bitmap = image,
+            contentDescription = description,
+            contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.None,
+            modifier = modifier.offset { IntOffset(BatteryLow.LEFT * k, BatteryLow.TOP * k) }
+                .size((image.width * k).toDp(), (image.height * k).toDp())
+                .semantics { liveRegion = LiveRegionMode.Polite },
         )
     }
 }

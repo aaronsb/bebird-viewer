@@ -246,6 +246,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                         overlayRenderer = overlayRenderer,
                         status = CircleStatus.of(wifi, stats.frame != null),
                         text = vm.pixelText.collectAsStateWithLifecycle().value,
+                        battery = stats.battery,
                     )
                 }
                 // While paused, the band as it was at that moment (and as it is saved).
