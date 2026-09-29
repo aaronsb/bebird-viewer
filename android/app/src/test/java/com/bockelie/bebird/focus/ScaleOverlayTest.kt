@@ -40,7 +40,8 @@ class ScaleOverlayTest {
         assertEquals(240 + 210 * Math.cos(Math.toRadians(-15.0)), edge.x1, 1e-9)
     }
 
-    private fun crosshair(locked: Boolean) = ScaleOverlay.crosshair(240.0, ScaleOverlay.PX_PER_MM, locked)
+    private fun crosshair(locked: Boolean) =
+        ScaleOverlay.crosshair(240.0, ScaleOverlay.PX_PER_MM, if (locked) ScaleOverlay.LOCK else ScaleOverlay.GREY, if (locked) 2 else 1)
 
     @Test fun theCrosshairIsFourShortArmsRoundTheCentre() {
         // 0.1 to 0.4 mm out at 40 px/mm: 4 to 16 px, well inside the ⌀2 ring (radius 40)

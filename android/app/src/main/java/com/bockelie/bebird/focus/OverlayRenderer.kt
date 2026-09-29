@@ -94,14 +94,26 @@ class OverlayRenderer(private val font: GlyphSource) {
             segment(l, max(0.5, l.width * k / 2.0), l.color)
         }
 
+        /**
+         * Along the segment, pixel centres whose signed distance s from the line has
+         * −half ≤ s < half: half-open like [arc], so a width-2 line is 2 px wide wherever it
+         * falls, as a width-2 ring is. Past the ends, rounded caps (distance < half).
+         */
         private fun segment(l: OverlayShape.Line, half: Double, color: Int) {
             val x0 = X(l.x0); val y0 = Y(l.y0); val x1 = X(l.x1); val y1 = Y(l.y1)
             val dx = x1 - x0; val dy = y1 - y0
-            val len2 = dx * dx + dy * dy
+            val len = hypot(dx, dy)
             for (y in max(0, floor(min(y0, y1) - half).toInt())..min(h - 1, ceil(max(y0, y1) + half).toInt())) {
                 for (x in max(0, floor(min(x0, x1) - half).toInt())..min(w - 1, ceil(max(x0, x1) + half).toInt())) {
-                    val t = if (len2 == 0.0) 0.0 else (((x - x0) * dx + (y - y0) * dy) / len2).coerceIn(0.0, 1.0)
-                    if (hypot(x - (x0 + t * dx), y - (y0 + t * dy)) < half) set(x, y, color)
+                    val t = if (len == 0.0) 0.0 else ((x - x0) * dx + (y - y0) * dy) / (len * len)
+                    val hit = if (len > 0.0 && t in 0.0..1.0) {
+                        val s = ((x - x0) * dy - (y - y0) * dx) / len
+                        s >= -half && s < half
+                    } else {
+                        val e = t.coerceIn(0.0, 1.0)
+                        hypot(x - (x0 + e * dx), y - (y0 + e * dy)) < half
+                    }
+                    if (hit) set(x, y, color)
                 }
             }
         }

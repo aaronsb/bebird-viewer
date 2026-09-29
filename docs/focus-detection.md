@@ -213,7 +213,7 @@ The scale is **40 px/mm ±10 %** at the tip end, from ruler captures of 38.8–4
   - Lines have a black outline underneath for contrast.
 - **CLOSE indicator:** a yellow (255,215,0) triangle with a black outline and a black "!" (Unifont U+26A0), upper left at x 18, y 16, 40 px. The word "CLOSE" follows it in yellow with a black outline. It must not claim to prevent contact.
 
-The rings and ticks are meant to be drawn by the same one-pixel ring-by-distance renderer as the overlay circle, with a per-pixel angle test for the dashes. The labels use the bundled bitmap font, so the screen and saved output match.
+The rings and ticks are meant to be drawn by the same one-pixel ring-by-distance renderer as the overlay circle, with a per-pixel angle test for the dashes. Straight lines use the rings' half-open width rule (−half ≤ distance < half), so a 2-px line is 2 px wide wherever it falls, as a 2-px ring is. The labels use the bundled bitmap font, so the screen and saved output match.
 
 ## 9. Cost
 

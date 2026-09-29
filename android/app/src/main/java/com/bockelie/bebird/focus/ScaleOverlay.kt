@@ -105,7 +105,7 @@ object ScaleOverlay {
                 }
                 val d = RINGS * pxPerMm * 0.72
                 out += OverlayShape.Label(c + d + 6, c - d - 6, TOLERANCE_LABEL, TextAnchor.LEFT_BOTTOM, col)
-                out += crosshair(c, pxPerMm, locked)
+                out += crosshair(c, pxPerMm, col, w)
             }
             ScaleStyle.BOWTIE -> {
                 val r0 = 0.5 * pxPerMm
@@ -140,7 +140,7 @@ object ScaleOverlay {
                     }
                 }
                 out += OverlayShape.Label(c + 3.2 * pxPerMm, c + r1 * s15 + 6, TOLERANCE_LABEL, TextAnchor.LEFT_TOP, col)
-                out += crosshair(c, pxPerMm, locked)
+                out += crosshair(c, pxPerMm, col, w)
             }
             ScaleStyle.BAR -> {
                 // straight scale through the centre, to lay along a ruler: a tick per mm, long every 5
@@ -169,12 +169,10 @@ object ScaleOverlay {
     /**
      * A small crosshair at the centre ([center], [center]) of the ring and bowtie scales, to line
      * things up against (#36): four arms, up, down, left and right, from [CROSS_GAP_MM] to
-     * [CROSS_ARM_MM] out. Upright; no label. Coloured and sized like the scale ([locked]), but
-     * solid even unlocked: arms this short would show one dash or none.
+     * [CROSS_ARM_MM] out. Upright; no label. In the scale's [col]our and [w]idth, but solid even
+     * unlocked: arms this short would show one dash or none.
      */
-    fun crosshair(center: Double, pxPerMm: Double, locked: Boolean): List<OverlayShape> {
-        val col = if (locked) LOCK else GREY
-        val w = if (locked) 2 else 1
+    fun crosshair(center: Double, pxPerMm: Double, col: Int, w: Int): List<OverlayShape> {
         val a = CROSS_GAP_MM * pxPerMm
         val b = CROSS_ARM_MM * pxPerMm
         val c = center
