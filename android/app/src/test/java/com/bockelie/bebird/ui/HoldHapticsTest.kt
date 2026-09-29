@@ -3,6 +3,7 @@ package com.bockelie.bebird.ui
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -10,24 +11,27 @@ import org.junit.Test
 
 /** The vibration while Disconnect and Quit fill (#44), as data. */
 class HoldHapticsTest {
-    private val disconnect = HoldPattern.of(Hold.DISCONNECT_MS)
-    private val quit = HoldPattern.of(Hold.QUIT_MS)
+    private val disconnect = HoldPattern.of(HoldFeel.LIGHT, Hold.DISCONNECT_MS)
+    private val quit = HoldPattern.of(HoldFeel.HEAVY, Hold.QUIT_MS)
 
-    private fun List<Pulse>.end() = maxOf { it.atMs + it.durationMs }
+    private fun List<HoldPulse>.end() = maxOf { it.atMs + it.durationMs }
 
-    @Test fun eachButtonGetsItsOwnPattern() {
+    @Test fun eachButtonSaysHowItFeels() {
         assertEquals(HoldPattern.light(Hold.DISCONNECT_MS), disconnect)
         assertEquals(HoldPattern.heavy(Hold.QUIT_MS), quit)
         assertNotEquals(disconnect, quit)
+        // the feel, not the length, decides: a longer Disconnect would still tick
+        assertEquals(HoldPattern.light(5_000), HoldPattern.of(HoldFeel.LIGHT, 5_000))
     }
 
     @Test fun disconnectTicksSpeedUpAsItFills() {
         val starts = disconnect.fill.map { it.atMs }
         val gaps = starts.zipWithNext { a, b -> b - a }
         assertEquals(0L, starts.first())  // felt at once, on the press
-        assertEquals(HoldPattern.TICK_GAP_START_MS, gaps.first())
+        // from about TICK_GAP_START_MS (as close as fits) down to exactly TICK_GAP_END_MS
+        assertTrue("gaps $gaps", gaps.first() in HoldPattern.TICK_GAP_START_MS - 20..HoldPattern.TICK_GAP_START_MS)
+        assertEquals(HoldPattern.TICK_GAP_END_MS, gaps.last())
         assertTrue("gaps $gaps", gaps.zipWithNext().all { (a, b) -> b < a })
-        assertTrue("gaps $gaps", gaps.last() < HoldPattern.TICK_GAP_START_MS / 2)
         assertTrue(disconnect.fill.all { it.durationMs == HoldPattern.TICK_MS })
         val amps = disconnect.fill.map { it.amplitude }
         assertTrue("amplitudes $amps", amps.zipWithNext().all { (a, b) -> b >= a })
@@ -52,11 +56,16 @@ class HoldHapticsTest {
     }
 
     @Test fun theFillEndsBeforeTheHoldCompletes() {
-        for (ms in listOf(Hold.DISCONNECT_MS, Hold.QUIT_MS, 1_000L, 3_000L, 4_000L, 8_000L)) {
-            val p = HoldPattern.of(ms)
-            assertTrue("$ms ms", p.fill.isNotEmpty())
-            assertTrue("$ms ms: fill ends at ${p.fill.end()}", p.fill.end() <= ms)
-            assertTrue("$ms ms: out of order", p.fill.zipWithNext().all { (a, b) -> b.atMs >= a.atMs + a.durationMs })
+        for (feel in HoldFeel.entries) for (ms in listOf(Hold.DISCONNECT_MS, Hold.QUIT_MS, 1_000L, 3_000L, 4_000L, 8_000L)) {
+            val p = HoldPattern.of(feel, ms)
+            assertTrue("$feel $ms ms", p.fill.isNotEmpty())
+            assertTrue("$feel $ms ms: fill ends at ${p.fill.end()}", p.fill.end() <= ms)
+            assertTrue("$feel $ms ms: out of order", p.fill.zipWithNext().all { (a, b) -> b.atMs >= a.atMs + a.durationMs })
+            if (feel == HoldFeel.LIGHT) {
+                val gaps = p.fill.zipWithNext { a, b -> b.atMs - a.atMs }
+                assertEquals("$ms ms", HoldPattern.TICK_GAP_END_MS, gaps.last())
+                assertTrue("$ms ms: gaps $gaps", gaps.zipWithNext().all { (a, b) -> b < a })
+            }
         }
     }
 
@@ -77,14 +86,14 @@ class HoldHapticsTest {
     }
 
     @Test fun pulsesBecomeAnOffOnWaveform() {
-        val w = Waveform.of(listOf(Pulse(0, 12, 60), Pulse(320, 12, 80), Pulse(600, 40, 300)))
+        val w = HoldWaveform.of(listOf(HoldPulse(0, 12, 60), HoldPulse(320, 12, 80), HoldPulse(600, 40, 300)))
         assertArrayEquals(longArrayOf(0, 12, 308, 12, 268, 40), w.timings)
         assertArrayEquals(intArrayOf(0, 60, 0, 80, 0, 255), w.amplitudes)  // capped at 255
     }
 
     @Test fun everyPatternIsAValidWaveform() {
         for (p in listOf(disconnect, quit)) for (pulses in listOf(p.fill, p.done)) {
-            val w = Waveform.of(pulses)
+            val w = HoldWaveform.of(pulses)
             assertEquals(w.timings.size, w.amplitudes.size)
             assertTrue(w.timings.all { it >= 0 })
             assertEquals(pulses.end(), w.timings.sum())
@@ -93,7 +102,35 @@ class HoldHapticsTest {
         }
     }
 
+    @Test fun withoutAmplitudeControlStrengthBecomesLength() {
+        val ticks = HoldPattern.onOff(disconnect.fill)
+        assertTrue(ticks.all { it.amplitude == HoldPattern.MAX_AMP })
+        assertTrue("ticks ${ticks.map { it.durationMs }}", ticks.all { it.durationMs in HoldPattern.ON_OFF_MIN_MS..HoldPattern.ON_OFF_MAX_MS })
+        assertTrue(ticks.zipWithNext().all { (a, b) -> b.durationMs >= a.durationMs })  // stronger is longer
+        assertEquals(disconnect.fill.map { it.atMs }, ticks.map { it.atMs })  // the same rhythm
+        for (p in listOf(disconnect, quit)) for (pulses in listOf(p.fill, p.done)) {
+            val on = HoldPattern.onOff(pulses)
+            assertTrue(on.zip(pulses).all { (a, b) -> a.durationMs >= b.durationMs })  // never shorter
+            HoldWaveform.of(on)  // still in order, no overlap
+            assertTrue(on.zipWithNext().all { (a, b) -> b.atMs - (a.atMs + a.durationMs) >= HoldPattern.ON_OFF_MIN_GAP_MS })
+        }
+    }
+
+    @Test fun oneHoldAtATime() {
+        // two fingers on the top row: the second hold button can't start, stop or replace anything
+        val turn = HoldTurn()
+        val quitButton = Any()
+        val disconnectButton = Any()
+        assertTrue(turn.take(quitButton))
+        assertFalse(turn.take(disconnectButton))
+        turn.give(disconnectButton)  // its release: not its turn to give
+        assertTrue(turn.isHeldBy(quitButton))
+        assertTrue(turn.take(quitButton))  // a key press on the same button: still its turn
+        turn.give(quitButton)
+        assertTrue(turn.take(disconnectButton))
+    }
+
     @Test fun overlappingPulsesAreRefused() {
-        assertThrows(IllegalArgumentException::class.java) { Waveform.of(listOf(Pulse(0, 50, 100), Pulse(40, 10, 100))) }
+        assertThrows(IllegalArgumentException::class.java) { HoldWaveform.of(listOf(HoldPulse(0, 50, 100), HoldPulse(40, 10, 100))) }
     }
 }

@@ -194,6 +194,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 val holdToQuit = stringResource(if (canPowerOff) R.string.hold_to_quit_power_off else R.string.hold_to_quit)
                 HoldButton(
                     Hold.QUIT_MS,
+                    feel = HoldFeel.HEAVY,
                     onHeld = vm::quit,  // MainActivity closes the app once it's done
                     enabled = !quitting,
                     onTap = { hint(holdToQuit) },

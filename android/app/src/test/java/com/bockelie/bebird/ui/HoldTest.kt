@@ -42,6 +42,21 @@ class HoldTest {
         assertEquals(Hold.Release.DONE, hold.release(60_000))
     }
 
+    @Test fun isDoneOnlyBetweenCompletionAndLettingGo() {
+        // what keeps the completion's vibration from being cut off (#44)
+        assertFalse(hold.isDone)
+        hold.press(0)
+        assertFalse(hold.isDone)
+        hold.complete(2_000)
+        assertTrue(hold.isDone)
+        hold.release(2_100)
+        assertFalse(hold.isDone)
+        hold.press(3_000)
+        hold.complete(5_000)
+        hold.cancel()
+        assertFalse(hold.isDone)
+    }
+
     @Test fun letGoEarlyCancels() {
         hold.press(0)
         assertEquals(Hold.Release.CANCELLED, hold.release(1_500))

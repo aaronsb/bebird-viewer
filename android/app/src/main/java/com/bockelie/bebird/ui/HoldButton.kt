@@ -121,12 +121,14 @@ class Hold(val durationMs: Long, private val tapMs: Long = TAP_MS) {
 
 /**
  * A button that acts only once held for [durationMs] (#38): while held it fills from left to
- * right in its content colour, and let go early the fill drains back. It vibrates as it fills and
- * again on completion ([HoldPattern], #44); let go early, the vibration stops at once. [onHeld]
- * runs on completion, without waiting for the release; holding on doesn't repeat it. A tap runs [onTap], for a hint. It holds the same way with
- * Enter, Space or the D-pad centre key once focused. A screen reader gets [onHeld] as the click
- * action, with no hold, labelled [description] (or the visible content if null). Not [enabled]:
- * greyed out, and no press starts.
+ * right in its content colour, and let go early the fill drains back. It vibrates as it fills
+ * and again on completion, as [feel] says ([HoldPattern], #44); let go early, the vibration
+ * stops at once. One hold at a time across the app ([HoldTurn]): a press on another hold button
+ * meanwhile does nothing. [onHeld] runs on completion, without waiting for the release; holding
+ * on doesn't repeat it. A tap runs [onTap], for a hint. It holds the same way with Enter, Space
+ * or the D-pad centre key once focused. A screen reader gets [onHeld] as the click action, with
+ * no hold, labelled [description] (or the visible content if null). Not [enabled]: greyed out,
+ * and no press starts.
  */
 @Composable
 fun HoldButton(
@@ -134,6 +136,7 @@ fun HoldButton(
     onHeld: () -> Unit,
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
+    feel: HoldFeel = HoldFeel.LIGHT,
     enabled: Boolean = true,
     description: String? = null,
     colors: ButtonColors = ButtonDefaults.buttonColors(),
@@ -142,7 +145,7 @@ fun HoldButton(
 ) {
     val fill = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
-    val driver = remember(durationMs) { HoldDriver(Hold(durationMs), HoldPattern.of(durationMs), fill, scope) }
+    val driver = remember(durationMs, feel) { HoldDriver(Hold(durationMs), HoldPattern.of(feel, durationMs), fill, scope) }
     val context = LocalContext.current
     val vibrator = remember(context) { HoldVibrator(context) }
     SideEffect {
@@ -213,12 +216,16 @@ fun HoldButton(
     }
 }
 
-/** Drives a [Hold] from a pointer or a key: the frame ticker, the fill and the vibration. Main thread. */
+/**
+ * Drives a [Hold] from a pointer or a key: the frame ticker, the fill and the vibration. Only
+ * while it has the [turn] does it play or stop anything. Main thread.
+ */
 private class HoldDriver(
     private val hold: Hold,
     private val pattern: HoldPattern,
     private val fill: Animatable<Float, AnimationVector1D>,
     private val scope: CoroutineScope,
+    private val turn: HoldTurn = HoldTurn.shared,
 ) {
     var vibrator: HoldVibrator? = null
     var onHeld: () -> Unit = {}
@@ -226,9 +233,10 @@ private class HoldDriver(
     var enabled = true
     private var ticker: Job? = null
 
-    /** A press began; false if one is already held, or the button is disabled. */
+    /** A press began; false if one is already held, here or on another hold button, or disabled. */
     fun press(): Boolean {
-        if (!enabled || !hold.press(uptimeMs())) return false
+        if (!enabled || hold.isHeld || !turn.take(this)) return false
+        hold.press(uptimeMs())
         vibrator?.play(pattern.fill)
         ticker = scope.launch {
             while (isActive) {
@@ -252,6 +260,7 @@ private class HoldDriver(
         if (!hold.isHeld) return
         // Early: stop at once. Complete: let the completion finish, even as the button goes.
         if (!hold.isDone) vibrator?.cancel()
+        turn.give(this)
         val how = if (released) {
             hold.release(uptimeMs())
         } else {
