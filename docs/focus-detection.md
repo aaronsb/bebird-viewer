@@ -197,7 +197,7 @@ It is drawn in raw-frame coordinates centred at (240, 240).
 
 **Saved stills (#43).** The scale is saved with the picture, because it is what makes a saved image useful for sizing:
 
-- **Snapshot:** one image with the scale drawn in as shown at the moment of capture (style, and grey-dashed or locked). There is no scale when the style is Off or estimation is off, and then the file is exactly what it was before. A zoomed crop gets the scale too, cropped and enlarged with the picture.
+- **Snapshot:** one image with the scale drawn in as shown at the moment of capture (style, and grey-dashed or locked). There is no scale when the style is Off or estimation is off, and then the file is exactly what it was before. A zoomed crop gets the scale too, drawn at the crop's resolution with full-frame stroke widths (thin lines) rather than enlarged.
 - **Annotate:** the scale shown at the moment of pausing (or none) stays with the paused frame and is shown while annotating. Save writes the raw frame without scale or marks, and `<name>_annotated.jpg` with the scale and then the marks.
 - **Drawing:** upright, centred on the upright frame's centre, at the same px/mm as on screen at zoom 1 (40 px/mm on a 480-px frame), and only inside the image circle, as the screen clips it. A short note, "APPROX. SCALE / needs focus", goes at the frame's upper right, since the file travels without the app.
 - **Never saved:** CLOSE (a live warning, not part of the record), and the scale in video recordings.

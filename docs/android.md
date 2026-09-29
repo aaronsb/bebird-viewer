@@ -88,9 +88,9 @@ Snapshots carry the same metadata as the desktop's (see [Snapshot metadata](desk
 
 | Ring | Bowtie | Bar |
 |---|---|---|
-| <img src="media/scale-ring.webp" alt="Five cyan rings, labelled ⌀2 to ⌀10 mm, around a centre crosshair over a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="media/scale-bowtie.webp" alt="A cyan bowtie with arcs at ⌀2 to ⌀10 mm across a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="media/scale-bar.webp" alt="A cyan bar marked 0 to 10 whose ticks line up with the ruler's mm marks, and a yellow CLOSE warning top left" width="200"> |
+| <img src="media/scale-ring.webp" alt="Five teal rings, labelled ⌀2 to ⌀10 mm, around a centre crosshair over a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="media/scale-bowtie.webp" alt="A teal bowtie with arcs at ⌀2 to ⌀10 mm across a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="media/scale-bar.webp" alt="A teal bar marked 0 to 10 whose ticks line up with the ruler's mm marks, and a yellow CLOSE warning top left" width="200"> |
 
-- The scale is labelled "mm ±10%". It is grey and dashed until the estimator judges the picture in focus, then solid cyan.
+- The scale is labelled "mm ±10%". It is grey and dashed until the estimator judges the picture in focus, then solid teal.
 - A note beside it reads APPROXIMATE SCALE / Valid only when in focus / No distance sensor.
 - The Scale selector under the picture picks the style or turns it off. The CLOSE indicator can be turned off in **Proximity…**.
 - It is best effort: no CLOSE doesn't mean nothing is near.
@@ -99,7 +99,7 @@ Snapshots carry the same metadata as the desktop's (see [Snapshot metadata](desk
 
 The scale travels with the picture, because it is what makes a saved image useful for sizing:
 
-- **Snapshot:** the scale is drawn in as shown at that moment: the same style, grey and dashed or solid cyan. It is upright, centred on the picture, and the same size as on screen at zoom 1 (40 px per mm on the 480-px frame). The zoomed crop gets it too, enlarged with the picture. With the scale off, or proximity estimation off, nothing changes.
+- **Snapshot:** the scale is drawn in as shown at that moment: the same style, grey and dashed or solid teal. It is upright, centred on the picture, and the same size as on screen at zoom 1 (40 px per mm on the 480-px frame). The zoomed crop gets it too, drawn at the crop's own resolution with thin lines rather than enlarged with the picture. With the scale off, or proximity estimation off, nothing changes.
 - **Annotate:** **Save** writes the plain picture without the scale and the annotated copy with it (see [Annotate](#annotate)).
 - A short note, APPROX. SCALE / needs focus, sits in the picture's upper right corner, since the file travels without the app.
 - **CLOSE** is never saved; it is a live warning. Videos never have the scale.
@@ -128,6 +128,10 @@ How it works, and its limits: [focus-detection.md](focus-detection.md).
 - **Zoom in**, **Zoom out** and **Reset zoom** are available as accessibility actions on the picture, in place of pinch and double-tap. They step through 1, 1.5, 2, 3, 4 and 6×, and only the actions that would do something are offered.
 - The mm scale says which scale it is and whether it is locked, for example "Ring scale, 2 to 10 millimetres, locked".
 - **BATTERY LOW** is announced politely as "Scope battery low".
+- **CLOSE** is announced politely when it appears, as "CLOSE: something is probably at the tip end".
+- The scale note (APPROXIMATE SCALE / Valid only when in focus / No distance sensor) is read as a full sentence.
+- When there is no picture, the circle's status and hint (for example "NOT CONNECTED. Turn the scope on, then tap Connect") are announced as they change.
+- **Disconnect** and **Quit** act on a double-tap, with no hold.
 
 ## Debugging
 
