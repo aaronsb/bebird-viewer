@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.bockelie.bebird.focus
 
+import android.graphics.Bitmap
 import android.os.SystemClock
 import com.bockelie.bebird.connection.ScopeConnection
 import com.bockelie.bebird.settings.KeyValue
@@ -36,7 +37,10 @@ class ProximityPipeline(connection: ScopeConnection, kv: KeyValue, scope: Corout
             connection.stats.map { it.frame to it.angle }.distinctUntilChanged().collect { (frame, roll) ->
                 when {
                     frame == null -> _result.value = null  // the stream stopped
-                    frame.width != FrameGeometry.SIZE || frame.height != FrameGeometry.SIZE -> Unit
+                    // lumaInto needs the raw 480 × 480 frame as a software ARGB_8888 bitmap (what
+                    // BitmapFactory decodes by default); anything else is skipped, not converted
+                    frame.width != FrameGeometry.SIZE || frame.height != FrameGeometry.SIZE ||
+                        frame.config != Bitmap.Config.ARGB_8888 -> Unit
                     else -> frames.offer(SystemClock.elapsedRealtime() / 1000.0, roll) { buffers -> frame.lumaInto(buffers) }
                 }
             }
