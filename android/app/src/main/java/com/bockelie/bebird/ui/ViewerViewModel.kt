@@ -8,9 +8,12 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import com.bockelie.bebird.band.BandData
+import com.bockelie.bebird.annotate.AnnotationRenderer
+import com.bockelie.bebird.annotate.Sketch
 import com.bockelie.bebird.capture.Capture
 import com.bockelie.bebird.capture.CaptureFolder
 import com.bockelie.bebird.capture.CaptureNames
+import com.bockelie.bebird.capture.Frames
 import com.bockelie.bebird.capture.SnapshotMeta
 import com.bockelie.bebird.capture.ZoomCrop
 import com.bockelie.bebird.proto.Protocol
@@ -37,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -78,6 +82,9 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     // The proximity overlay draws its labels with the band's font.
     private val _overlayRenderer = MutableStateFlow<OverlayRenderer?>(null)
     val overlayRenderer: StateFlow<OverlayRenderer?> = _overlayRenderer.asStateFlow()
+    // So do annotations' text labels.
+    private val _annotationRenderer = MutableStateFlow<AnnotationRenderer?>(null)
+    val annotationRenderer: StateFlow<AnnotationRenderer?> = _annotationRenderer.asStateFlow()
 
     init {
         Log.i("BebirdSpike", "ViewModel created (${Integer.toHexString(System.identityHashCode(this))})")
@@ -86,6 +93,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
                 val fonts = BandFonts.shared(app.assets)
                 _bandRenderer.value = BandRenderer(fonts)
                 _overlayRenderer.value = OverlayRenderer(fonts)
+                _annotationRenderer.value = AnnotationRenderer(fonts)
             } catch (e: Exception) {
                 Log.e("BebirdSpike", "band fonts failed to load", e)
             }
@@ -192,6 +200,46 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     fun snapshot(zoom: Float, zoomRect: ZoomCrop.Rect?) {
         val shot = shot(zoom = zoom, zoomRect = zoomRect) ?: return
         capture.snapshot(shot) { _captureResults.tryEmit(it) }
+    }
+
+    // --- annotate (#16) ---
+
+    /**
+     * A paused frame being annotated: [shot] as it was when paused, its frame already turned
+     * upright (rotation 0; the meta keeps the rotation applied), and the marks so far.
+     */
+    class Annotating(val shot: Capture.Shot, val sketch: Sketch)
+
+    private val _annotating = MutableStateFlow<Annotating?>(null)
+    /** The paused frame and its marks while annotating, else null (the live view). */
+    val annotating: StateFlow<Annotating?> = _annotating.asStateFlow()
+
+    /**
+     * Pause on the current frame to annotate it. Only the view pauses: the session keeps
+     * receiving (and keeping the scope alive) as before. Not while recording.
+     */
+    fun startAnnotating(zoom: Float) {
+        if (_recordingSince.value != null || _annotating.value != null) return
+        val s = shot(zoom = zoom) ?: return
+        val upright = Frames.rotated(s.frame, s.rotation)
+        _annotating.value = Annotating(Capture.Shot(upright, 0, s.overlay, s.renderer, s.band, s.meta, null), Sketch())
+    }
+
+    fun editAnnotations(change: (Sketch) -> Sketch) {
+        _annotating.update { a -> a?.let { Annotating(it.shot, change(it.sketch)) } }
+    }
+
+    /** Back to the live view; unsaved marks are dropped. */
+    fun resumeLive() {
+        _annotating.value = null
+    }
+
+    /** Save the paused frame and its annotated copy, then go back to the live view. */
+    fun saveAnnotated() {
+        val a = _annotating.value ?: return
+        val renderer = _annotationRenderer.value ?: return
+        capture.snapshotAnnotated(a.shot, a.sketch.marks, renderer) { _captureResults.tryEmit(it) }
+        _annotating.value = null
     }
 
     // --- another app over ours (Files, Open) ---

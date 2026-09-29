@@ -11,6 +11,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -92,6 +94,7 @@ internal val wifiPermission =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.NEARBY_WIFI_DEVICES
     else Manifest.permission.ACCESS_FINE_LOCATION
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ViewerScreen(vm: ViewerViewModel) {
     val conn = vm.connection
@@ -161,6 +164,11 @@ fun ViewerScreen(vm: ViewerViewModel) {
         )
     }
 
+    // Annotate (#16): a paused frame replaces the live view, and its tools the live controls.
+    val annotating by vm.annotating.collectAsStateWithLifecycle()
+    val annotationRenderer by vm.annotationRenderer.collectAsStateWithLifecycle()
+    val annotateTools = remember { AnnotateTools() }
+
     val stoppedNotice = stringResource(R.string.proximity_stopped)
     LaunchedEffect(proximityStopped) { if (vm.proximity.takeStoppedNotice()) snackbar.showSnackbar(stoppedNotice) }
 
@@ -194,62 +202,87 @@ fun ViewerScreen(vm: ViewerViewModel) {
             )
             // Viewport and band as one panel: no gap between them.
             Column(Modifier.fillMaxWidth().weight(1f)) {
-                ZoomableCircle(
-                    frame = stats.frame,
-                    rotation = RollFilter.rotation(shownRoll, autoRotate, trim),
-                    outline = overlayOn,
-                    view = zoomView,
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    proximity = ScaleOverlay.forFrame(proximityResult, proximityState.style, proximityState.close),
-                    overlayRenderer = overlayRenderer,
-                )
+                val paused = annotating
+                val annotations = annotationRenderer
+                if (paused != null && annotations != null) {
+                    // No proximity scale here: it is never in saved files.
+                    AnnotateCanvas(
+                        image = paused.shot.frame, marks = paused.sketch.marks, renderer = annotations, tools = annotateTools,
+                        outline = paused.shot.overlay, onMark = { m -> vm.editAnnotations { it.add(m) } },
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                    )
+                } else {
+                    ZoomableCircle(
+                        frame = stats.frame,
+                        rotation = RollFilter.rotation(shownRoll, autoRotate, trim),
+                        outline = overlayOn,
+                        view = zoomView,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        proximity = ScaleOverlay.forFrame(proximityResult, proximityState.style, proximityState.close),
+                        overlayRenderer = overlayRenderer,
+                    )
+                }
+                // While paused, the band as it was at that moment (and as it is saved).
                 StatusBandSlot(
                     renderer = renderer,
-                    showBand = overlayOn,
-                    data = bandDataOf(stats, light, shownRoll, trim, book.last, online, label, now, showScopeId),
+                    showBand = paused?.shot?.overlay ?: overlayOn,
+                    data = paused?.shot?.band ?: bandDataOf(stats, light, shownRoll, trim, book.last, online, label, now, showScopeId),
                 ) { Readouts(stats, shownRoll) }
             }
-            // The scale style lives here, above Light; greyed out (keeping its value, and the
-            // row's height) while proximity estimation is off.
-            ScaleRow(proximityState.style, enabled = proximityState.enabled, onStyle = vm.proximity.options::setStyle)
-            LightRow(light, onToggle = conn::toggleLight, onLevel = conn::setLight)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // The switch and its label are one control, so TalkBack names it.
-                Row(
-                    Modifier.weight(1f).toggleable(value = autoRotate, role = Role.Switch, onValueChange = vm::setAutoRotate),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Switch(checked = autoRotate, onCheckedChange = null)
-                    Text(stringResource(R.string.auto_rotate), Modifier.padding(start = 8.dp))
-                }
-                val minus = stringResource(R.string.trim_minus_description)
-                val plus = stringResource(R.string.trim_plus_description)
-                TextButton(onClick = { vm.stepTrim(-1) }, modifier = Modifier.semantics { contentDescription = minus }) {
-                    Text(stringResource(R.string.trim_minus))
-                }
-                Text(
-                    stringResource(R.string.trim_value, signed(trim, 4)),
-                    style = MaterialTheme.typography.bodyMedium.merge(tabular),
+            val paused = annotating
+            if (paused != null) {
+                AnnotateControls(
+                    annotateTools, paused.sketch, onEdit = vm::editAnnotations, onResume = vm::resumeLive, onSave = vm::saveAnnotated,
                 )
-                TextButton(onClick = { vm.stepTrim(1) }, modifier = Modifier.semantics { contentDescription = plus }) {
-                    Text(stringResource(R.string.trim_plus))
+            } else {
+                // The scale style lives here, above Light; greyed out (keeping its value, and the
+                // row's height) while proximity estimation is off.
+                ScaleRow(proximityState.style, enabled = proximityState.enabled, onStyle = vm.proximity.options::setStyle)
+                LightRow(light, onToggle = conn::toggleLight, onLevel = conn::setLight)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // The switch and its label are one control, so TalkBack names it.
+                    Row(
+                        Modifier.weight(1f).toggleable(value = autoRotate, role = Role.Switch, onValueChange = vm::setAutoRotate),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Switch(checked = autoRotate, onCheckedChange = null)
+                        Text(stringResource(R.string.auto_rotate), Modifier.padding(start = 8.dp))
+                    }
+                    val minus = stringResource(R.string.trim_minus_description)
+                    val plus = stringResource(R.string.trim_plus_description)
+                    TextButton(onClick = { vm.stepTrim(-1) }, modifier = Modifier.semantics { contentDescription = minus }) {
+                        Text(stringResource(R.string.trim_minus))
+                    }
+                    Text(
+                        stringResource(R.string.trim_value, signed(trim, 4)),
+                        style = MaterialTheme.typography.bodyMedium.merge(tabular),
+                    )
+                    TextButton(onClick = { vm.stepTrim(1) }, modifier = Modifier.semantics { contentDescription = plus }) {
+                        Text(stringResource(R.string.trim_plus))
+                    }
                 }
-            }
-            LabelRow(label, onEdit = { editingLabel = true }, onClear = { vm.setLabel("") })
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Only while frames are arriving; captures never talk to the scope.
-                // canPowerOff is ScopeConnection.isStreaming: this session has shown a frame
-                val streaming = canPowerOff && stats.frame != null
-                FilledTonalButton(
-                    onClick = { vm.snapshot(zoomView.zoom, stats.frame?.let { zoomView.crop(it.width) }) },
-                    enabled = streaming,
-                ) { Text(stringResource(R.string.snapshot)) }
-                RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording)
-                FilesButton(vm, snackbar)
-                Spacer(Modifier.weight(1f))
-                OutlinedButton(onClick = conn::reconnect, enabled = online) {
-                    Icon(Icons.Default.Refresh, contentDescription = null)
-                    Text(stringResource(R.string.reconnect), Modifier.padding(start = 4.dp))
+                LabelRow(label, onEdit = { editingLabel = true }, onClear = { vm.setLabel("") })
+                // Wraps onto a second line on a narrow screen rather than squeezing the buttons.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Only while frames are arriving; captures never talk to the scope.
+                    // canPowerOff is ScopeConnection.isStreaming: this session has shown a frame
+                    val streaming = canPowerOff && stats.frame != null
+                    FilledTonalButton(
+                        onClick = { vm.snapshot(zoomView.zoom, stats.frame?.let { zoomView.crop(it.width) }) },
+                        enabled = streaming,
+                    ) { Text(stringResource(R.string.snapshot)) }
+                    RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording)
+                    // Not while recording: the file would carry on behind the paused view.
+                    FilledTonalButton(
+                        onClick = { annotateTools.textAt = null; vm.startAnnotating(zoomView.zoom) },
+                        enabled = streaming && recordingSince == null && annotationRenderer != null,
+                    ) { Text(stringResource(R.string.annotate)) }
+                    FilesButton(vm, snackbar)
+                    Spacer(Modifier.weight(1f))
+                    OutlinedButton(onClick = conn::reconnect, enabled = online) {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Text(stringResource(R.string.reconnect), Modifier.padding(start = 4.dp))
+                    }
                 }
             }
         }
