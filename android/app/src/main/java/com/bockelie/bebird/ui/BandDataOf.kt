@@ -31,7 +31,7 @@ fun bandDataOf(
     showScopeId: Boolean,
 ) = BandData(
     batteryPercent = stats.battery?.percent,
-    charging = stats.battery?.state == 2,
+    charging = stats.battery?.isCharging == true,
     lightPercent = light.level.takeIf { online },
     roll = shownRoll.takeIf { stats.frame != null },
     trim = trim,

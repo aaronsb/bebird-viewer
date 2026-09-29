@@ -63,10 +63,14 @@ class PixelText(private val font: GlyphSource) {
 
     /**
      * [lines] in [color] on a transparent [imageW] × [imageH] image. With [outline], each glyph's
-     * pixels are first drawn one pixel out in all eight directions in black, as for CLOSE, so
-     * the text reads over the picture; the caller leaves a pixel of room round the lines.
+     * pixels are first drawn one pixel out in all eight directions in [outlineColor] (black, as
+     * for CLOSE), so the text reads over the picture; the caller leaves a pixel of room round
+     * the lines.
      */
-    fun draw(lines: List<Line>, imageW: Int, imageH: Int, color: Int, outline: Boolean = false): PixelImage {
+    fun draw(
+        lines: List<Line>, imageW: Int, imageH: Int, color: Int,
+        outline: Boolean = false, outlineColor: Int = BandRenderer.BACKGROUND,
+    ): PixelImage {
         val px = IntArray(imageW * imageH)
         for (line in lines) {
             var x = line.x
@@ -78,7 +82,7 @@ class PixelText(private val font: GlyphSource) {
                     continue
                 }
                 if (outline) for (dy in -1..1) for (dx in -1..1) {
-                    if (dx != 0 || dy != 0) drawGlyph(px, imageW, imageH, g, x + dx, line.y + dy, 1, BandRenderer.BACKGROUND)
+                    if (dx != 0 || dy != 0) drawGlyph(px, imageW, imageH, g, x + dx, line.y + dy, 1, outlineColor)
                 }
                 drawGlyph(px, imageW, imageH, g, x, line.y, 1, color)
                 x += g.cells * PixelFont.CELL

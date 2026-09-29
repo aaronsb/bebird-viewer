@@ -2,6 +2,10 @@
 package com.bockelie.bebird.ui
 
 import com.bockelie.bebird.band.PixelText
+import com.bockelie.bebird.proto.Protocol
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.scan
 
 /**
  * BATTERY LOW in the viewport's upper left, under CLOSE's slot (#48): when it shows, and where.
@@ -12,9 +16,6 @@ object BatteryLow {
     const val ON_AT = 20
     /** ...and off again only at this or above, so it doesn't flicker round the threshold. */
     const val OFF_AT = 25
-    /** In the band's font, outlined in black like CLOSE's label. */
-    const val RED = 0xFFFF3B30.toInt()
-
     /** From the viewport's left edge, in font pixels: CLOSE's triangle starts here. */
     const val LEFT = 8
     /** From its top: the height of CLOSE's slot, whether or not CLOSE is showing. */
@@ -30,6 +31,16 @@ object BatteryLow {
         percent >= OFF_AT -> false
         else -> was
     }
+
+    /**
+     * The warning for a stream of battery readings (null: none, as when a new session starts),
+     * carrying the hysteresis from one reading to the next. Held by the ViewModel, so rotating
+     * the screen or annotating doesn't reset it.
+     */
+    fun latch(readings: Flow<Protocol.Battery?>): Flow<Boolean> =
+        readings.distinctUntilChanged()
+            .scan(false) { was, b -> next(was, b?.percent, b?.isCharging == true) }
+            .distinctUntilChanged()
 
     /** The label's box in viewport pixels at CLOSE's whole scale [k]: its lines and outline. */
     data class Box(val left: Int, val top: Int, val width: Int, val height: Int)

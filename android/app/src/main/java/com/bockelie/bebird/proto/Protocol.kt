@@ -69,6 +69,9 @@ object Protocol {
 
     /** Battery reply / beacon field: high 16 bits state, low 16 bits percent. */
     data class Battery(val state: Int, val percent: Int) {
+        /** On the charger and charging: the band's "+". */
+        val isCharging: Boolean get() = state == 2
+
         val stateName: String
             get() = when (state) {
                 0, 1 -> "battery"

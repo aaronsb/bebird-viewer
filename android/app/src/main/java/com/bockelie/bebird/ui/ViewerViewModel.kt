@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZonedDateTime
@@ -63,6 +65,10 @@ import kotlinx.coroutines.withContext
 class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     private val settings = (app as BebirdApp).settings
     val connection: ScopeConnection = (app as BebirdApp).connection
+
+    /** BATTERY LOW (#48), with its hysteresis kept here so rotation and annotate don't reset it. */
+    val batteryLow: StateFlow<Boolean> =
+        BatteryLow.latch(connection.stats.map { it.battery }).stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /** Proximity estimation (#27): its settings and the latest result, app-scoped like the connection. */
     val proximity: ProximityPipeline = (app as BebirdApp).proximity

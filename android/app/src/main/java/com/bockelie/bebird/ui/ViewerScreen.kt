@@ -246,7 +246,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                         overlayRenderer = overlayRenderer,
                         status = CircleStatus.of(wifi, stats.frame != null),
                         text = vm.pixelText.collectAsStateWithLifecycle().value,
-                        battery = stats.battery,
+                        batteryLow = vm.batteryLow.collectAsStateWithLifecycle().value,
                     )
                 }
                 // While paused, the band as it was at that moment (and as it is saved).
@@ -425,7 +425,7 @@ private fun Readouts(s: ScopeSession.Stats, roll: Int) {
         val style = MaterialTheme.typography.labelLarge.merge(tabular)
         Text(
             if (battery == null) stringResource(R.string.battery_unknown)
-            else stringResource(R.string.battery_value, fixed(battery.percent, 3), if (battery.state == 2) "+" else "\u2007"),
+            else stringResource(R.string.battery_value, fixed(battery.percent, 3), if (battery.isCharging) "+" else "\u2007"),
             style = style,
         )
         Text(stringResource(R.string.fps_value, fixed(s.fps, 2)), style = style)

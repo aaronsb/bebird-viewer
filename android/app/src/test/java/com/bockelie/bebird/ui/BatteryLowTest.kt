@@ -9,6 +9,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.bockelie.bebird.proto.Protocol
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.runBlocking
 
 class BatteryLowTest {
     private val text = PixelText(Fonts.source)
@@ -50,6 +59,33 @@ class BatteryLowTest {
             val p = ScaleDisclaimer.place(text, note, w, h, k, 112 * k) ?: continue
             val noteLeft = w - ScaleDisclaimer.INSET * p.scale - p.width * p.scale
             assertTrue("${w}x$h: overlaps the disclaimer", b.left + b.width <= noteLeft)
+        }
+    }
+
+    @Test fun theLatchKeepsItsStateAcrossCollectorsAndResetsWithTheSession() = runBlocking {
+        val readings = MutableStateFlow<Protocol.Battery?>(null)
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        try {
+            // as the ViewModel holds it
+            val low = BatteryLow.latch(readings).stateIn(scope, SharingStarted.Eagerly, false)
+            val seen = listOf(30, 20, 22).map { readings.value = Protocol.Battery(1, it); low.value }
+            assertEquals(listOf(false, true, true), seen)
+            // the screen recreated (rotation, annotate): a new collector sees it still on at 22-24 %
+            assertEquals(true, low.first())
+            readings.value = Protocol.Battery(1, 24)
+            assertEquals(true, low.value)
+            // charging hides it
+            readings.value = Protocol.Battery(2, 24)
+            assertEquals(false, low.value)
+            readings.value = Protocol.Battery(1, 20)
+            assertEquals(true, low.value)
+            // a new session starts with no reading: reset, and 22 % doesn't bring it back
+            readings.value = null
+            assertEquals(false, low.value)
+            readings.value = Protocol.Battery(1, 22)
+            assertEquals(false, low.value)
+        } finally {
+            scope.cancel()
         }
     }
 }
