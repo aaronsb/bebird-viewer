@@ -2,7 +2,7 @@
 
 A native Android app (Kotlin, Jetpack Compose, Android 10+) in [`android/`](../android/), app ID `com.bockelie.bebird`. It is still in progress; progress is tracked in [#8](https://github.com/aaronsb/bebird-viewer/issues/8). To build it, see [building.md](building.md).
 
-<img src="media/android-ring.webp" alt="The Android app streaming a close-up of a ruler with the ring scale and centre crosshair, and all live controls below the picture" width="320" align="right">
+<img src="media/android-ring.webp" alt="The Android app streaming a close-up of a ruler with the ring scale, centre crosshair and a CLOSE warning, and all live controls below the picture" width="320" align="right">
 
 ## Screen
 
@@ -78,7 +78,7 @@ Snapshots carry the same metadata as the desktop's (see [Snapshot metadata](desk
 
 | Ring | Bowtie | Bar |
 |---|---|---|
-| <img src="media/scale-ring.webp" alt="Five cyan rings, labelled ⌀2 to ⌀10 mm, around a centre crosshair, over a ruler" width="200"> | <img src="media/scale-bowtie.webp" alt="A cyan bowtie with arcs at ⌀2 to ⌀10 mm across a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="media/scale-bar.webp" alt="A cyan bar marked 0 to 10 whose ticks line up with the ruler's mm marks, and a yellow CLOSE warning top left" width="200"> |
+| <img src="media/scale-ring.webp" alt="Five cyan rings, labelled ⌀2 to ⌀10 mm, around a centre crosshair over a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="media/scale-bowtie.webp" alt="A cyan bowtie with arcs at ⌀2 to ⌀10 mm across a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="media/scale-bar.webp" alt="A cyan bar marked 0 to 10 whose ticks line up with the ruler's mm marks, and a yellow CLOSE warning top left" width="200"> |
 
 - The scale is labelled "mm ±10%". It is grey and dashed until the estimator judges the picture in focus, then solid cyan.
 - A note beside it reads APPROXIMATE SCALE / Valid only when in focus / No distance sensor.

@@ -3,7 +3,7 @@
 A viewer for **Bebird "ES" Wi-Fi otoscope / ear cameras** that works without the vendor app, an account, or an internet connection. It talks only to the scope, over the scope's own Wi-Fi. There is an Android app and a Linux desktop app.
 
 <p>
-<img src="docs/media/android-ring.webp" alt="The Android app streaming a close-up of a ruler. Cyan rings of an approximate mm scale, labelled ⌀2 to ⌀10, surround a small crosshair in the centre. Above the picture are the scope selector, Disconnect, a power button and a settings gear; below it the status band, the Scale selector set to Ring, Light at 100%, Auto-rotate with trim, a Label field reading ESP32, and Snapshot, Record, Annotate and Files buttons." width="270">
+<img src="docs/media/android-ring.webp" alt="The Android app streaming a close-up of a ruler. Cyan rings of an approximate mm scale, labelled ⌀2 to ⌀10, surround a small crosshair in the centre, with a yellow CLOSE warning top left. Above the picture are the scope selector, Disconnect, a power button and a settings gear; below it the status band, the Scale selector set to Ring, Light at 100%, Auto-rotate with trim, a Label field reading Ruler, and Snapshot, Record, Annotate and Files buttons." width="270">
 <img src="docs/media/android-annotate.webp" alt="The Android app in annotate mode on the same ruler picture: a yellow oval around one gap between the ruler's marks, a red arrow pointing at it, and the red text 1 mm. Below are the tools Oval, Box, Arrow, Pen and Text, five colours, Undo, Clear, a move tool, Resume and Save." width="270">
 </p>
 
@@ -23,7 +23,7 @@ Android 10 or later. What you can do:
 
 | Ring | Bowtie | Bar |
 |---|---|---|
-| <img src="docs/media/scale-ring.webp" alt="Five cyan rings, labelled ⌀2 to ⌀10 mm, around a centre crosshair, over a ruler" width="200"> | <img src="docs/media/scale-bowtie.webp" alt="A cyan bowtie with arcs at ⌀2 to ⌀10 mm across a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="docs/media/scale-bar.webp" alt="A cyan bar marked 0 to 10 whose ticks line up with the ruler's mm marks, and a yellow CLOSE warning top left" width="200"> |
+| <img src="docs/media/scale-ring.webp" alt="Five cyan rings, labelled ⌀2 to ⌀10 mm, around a centre crosshair over a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="docs/media/scale-bowtie.webp" alt="A cyan bowtie with arcs at ⌀2 to ⌀10 mm across a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="docs/media/scale-bar.webp" alt="A cyan bar marked 0 to 10 whose ticks line up with the ruler's mm marks, and a yellow CLOSE warning top left" width="200"> |
 
 ### Getting started
 
