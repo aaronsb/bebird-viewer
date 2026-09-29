@@ -25,6 +25,7 @@ data class SnapshotMeta(
     val device: String?,  // nickname, or the SSID without "bebird-"
     val model: String?,   // from the scope's beacon, if heard
     val annotated: Boolean = false,  // marks drawn over the picture (#16)
+    val scale: ScaleMeta? = null,    // the proximity scale drawn in, if any (#43)
 ) {
     /** ImageDescription: a readable ASCII line, as the desktop writes (no degree signs). */
     fun description(): String = buildString {
@@ -60,6 +61,12 @@ data class SnapshotMeta(
         )
         // only on annotated copies, so other captures stay as the desktop writes them
         if (annotated) fields["annotated"] = true
+        // likewise only when a scale is drawn in, so captures without one are unchanged
+        scale?.let {
+            fields["proximity_scale"] = linkedMapOf(
+                "style" to it.style, "locked" to it.locked, "px_per_mm" to it.pxPerMm, "tolerance_pct" to it.tolerancePct,
+            )
+        }
         return Json.write(fields)
     }
 }
@@ -103,3 +110,9 @@ object Json {
         out.append('"')
     }
 }
+
+/**
+ * The proximity scale as drawn into a still: [style] ("ring", "bowtie", "bar"), whether the
+ * estimator had [locked] it, and its [pxPerMm] in that image's pixels, good to ±[tolerancePct] %.
+ */
+data class ScaleMeta(val style: String, val locked: Boolean, val pxPerMm: Double, val tolerancePct: Int = 10)

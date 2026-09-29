@@ -148,13 +148,13 @@ fun ZoomableCircle(
                 }
                 // The proximity scale is centred on the image centre and zooms and pans with the
                 // picture (so mm stay true on screen), but stays upright: see scaleLayerRotation.
-                // Display only; saved files don't include it.
+                // Captures don't take this layer: saved stills draw the scale themselves (capture/ScaleStamp, #43).
                 if (frame != null && overlayRenderer != null) {
                     ScaleLayer(proximity.filterNot(ScaleOverlay::isClose), overlayRenderer, side.toInt(), scaleLayerRotation(rotation))
                 }
             }
             // Where the circle sits at zoom 1, whatever the zoom or pan left from the last picture.
-            // Display only, like the scale: captures take the frame, never this layer.
+            // Display only: captures take the frame, never this layer.
             if (frame == null && status != null && text != null) {
                 StatusLayer(status, text, w.toInt(), h.toInt(), side.toInt(), Modifier.align(Alignment.TopStart))
             }

@@ -6,7 +6,8 @@ import com.bockelie.bebird.band.PixelText
 /**
  * The note at the viewport's upper right while the proximity scale is on screen (#35): the scale
  * is an estimate, not a measurement. Upright and fixed to the viewport, like CLOSE at the upper
- * left, whose width it keeps clear of. Display only, like the scale. Pure.
+ * left, whose width it keeps clear of. On screen only: saved stills carry their own shorter
+ * note with the scale (capture/ScaleStamp). Pure.
  */
 object ScaleDisclaimer {
     /** [lines] in a [width] × [height] image (a pixel of outline round them), shown [scale] times larger. */

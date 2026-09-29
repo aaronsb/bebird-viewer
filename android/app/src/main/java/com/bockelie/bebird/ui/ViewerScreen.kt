@@ -225,9 +225,10 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 val paused = annotating
                 val annotations = annotationRenderer
                 if (paused != null && annotations != null) {
-                    // No proximity scale here: it is never in saved files.
+                    // The proximity scale as it was when paused, as the annotated copy saves it (#43).
                     AnnotateCanvas(
                         image = paused.shot.frame, marks = paused.sketch.marks, renderer = annotations, tools = annotateTools,
+                        scale = paused.scaleLayer,
                         outline = paused.shot.overlay, enabled = !paused.progress.saving,
                         onMark = { m -> vm.editAnnotations { it.add(m) } },
                         onMove = { i, m -> vm.editAnnotations { it.replace(i, m) } },

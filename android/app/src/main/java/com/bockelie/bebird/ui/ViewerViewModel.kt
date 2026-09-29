@@ -2,6 +2,7 @@
 package com.bockelie.bebird.ui
 
 import android.app.Application
+import android.graphics.Bitmap
 import android.util.Log
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -38,6 +39,10 @@ import com.bockelie.bebird.focus.OverlayRenderer
 import com.bockelie.bebird.focus.ProximityPipeline
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.band.PixelText
+import com.bockelie.bebird.band.toBitmap
+import com.bockelie.bebird.capture.SavedScale
+import com.bockelie.bebird.capture.ScaleStamp
+import com.bockelie.bebird.focus.ScaleStyle
 import com.bockelie.bebird.connection.ScopeConnection
 import com.bockelie.bebird.control.RollFilter
 import com.bockelie.bebird.settings.ThemeMode
@@ -96,6 +101,16 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     private val _pixelText = MutableStateFlow<PixelText?>(null)
     val pixelText: StateFlow<PixelText?> = _pixelText.asStateFlow()
 
+    // Draws the proximity scale into saved stills (#43), once the fonts are in.
+    @Volatile private var scaleStamp: ScaleStamp? = null
+
+    /** The proximity scale on screen now, as a saved still carries it: none when estimation or the scale is off. */
+    private fun scaleShown(): SavedScale? {
+        val result = proximity.result.value ?: return null
+        val style = proximity.options.state.value.style
+        return if (style == ScaleStyle.NONE) null else SavedScale(style, result.locked)
+    }
+
     init {
         Log.i("BebirdSpike", "ViewModel created (${Integer.toHexString(System.identityHashCode(this))})")
         viewModelScope.launch(Dispatchers.IO) {
@@ -105,6 +120,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
                 _overlayRenderer.value = OverlayRenderer(fonts)
                 _annotationRenderer.value = AnnotationRenderer(fonts)
                 _pixelText.value = PixelText(fonts)
+                scaleStamp = ScaleStamp(OverlayRenderer(fonts), PixelText(fonts))
             } catch (e: Exception) {
                 Log.e("BebirdSpike", "band fonts failed to load", e)
             }
@@ -204,7 +220,10 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
             device = bandData(taken.toLocalDateTime()).device,  // exactly what the band shows
             model = stats.beacon?.model,
         )
-        return Capture.Shot(frame, rotation, overlay, _bandRenderer.value, bandData(taken.toLocalDateTime()), meta, zoomRect)
+        return Capture.Shot(
+            frame, rotation, overlay, _bandRenderer.value, bandData(taken.toLocalDateTime()), meta, zoomRect,
+            scale = scaleShown(), stamp = scaleStamp,
+        )
     }
 
     /** Save the frame as shown; when zoomed in ([zoomRect] non-null), the visible crop too. */
@@ -220,7 +239,11 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
      * upright (rotation 0; the meta keeps the rotation applied), the marks so far, and how
      * saving them stands.
      */
-    class Annotating(val shot: Capture.Shot, val sketch: Sketch, val progress: SaveProgress = SaveProgress())
+    class Annotating(
+        val shot: Capture.Shot, val sketch: Sketch, val progress: SaveProgress = SaveProgress(),
+        /** The proximity scale shown when pausing (and saved on the annotated copy), as drawn over the frame; null if none. */
+        val scaleLayer: Bitmap? = null,
+    )
 
     private val _annotating = MutableStateFlow<Annotating?>(null)
     /** The paused frame and its marks while annotating, else null (the live view). */
@@ -237,8 +260,15 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         val s = shot(zoom = zoom) ?: return
         pausing = viewModelScope.launch {
             try {
-                val upright = withContext(Dispatchers.Default) { Frames.rotated(s.frame, s.rotation) }
-                _annotating.value = Annotating(Capture.Shot(upright, 0, s.overlay, s.renderer, s.band, s.meta, null), Sketch())
+                val (upright, drawnScale) = withContext(Dispatchers.Default) {
+                    val upright = Frames.rotated(s.frame, s.rotation)
+                    // If the scale can't be drawn, pause without it (and save none) rather than not at all.
+                    upright to ScaleStamp.drawnOrNone(s.scale, { Log.e("BebirdSpike", "scale not drawn on the paused frame", it) }) { sc ->
+                        s.stamp?.layer(sc, upright.width, upright.height)?.toBitmap()
+                    }
+                }
+                val paused = Capture.Shot(upright, 0, s.overlay, s.renderer, s.band, s.meta, null, drawnScale?.first, s.stamp)
+                _annotating.value = Annotating(paused, Sketch(), scaleLayer = drawnScale?.second)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -253,7 +283,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Change the marks; not while a save runs. */
     fun editAnnotations(change: (Sketch) -> Sketch) {
-        _annotating.update { a -> if (a == null || !AnnotateRules.canEdit(a.progress)) a else Annotating(a.shot, change(a.sketch), a.progress) }
+        _annotating.update { a -> if (a == null || !AnnotateRules.canEdit(a.progress)) a else Annotating(a.shot, change(a.sketch), a.progress, a.scaleLayer) }
     }
 
     /** Back to the live view; unsaved marks are dropped. Not while a save runs. */
@@ -271,13 +301,13 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         val a = _annotating.value ?: return
         if (a.progress.saving) return
         val renderer = _annotationRenderer.value ?: return
-        val started = Annotating(a.shot, a.sketch, a.progress.start())
+        val started = Annotating(a.shot, a.sketch, a.progress.start(), a.scaleLayer)
         _annotating.value = started
         capture.snapshotAnnotated(
             a.shot, a.sketch.marks, renderer, a.progress.savedOriginal, done = { _captureResults.tryEmit(it) },
         ) { outcome ->
             _annotating.update { cur ->
-                if (cur !== started) cur else started.progress.finish(outcome)?.let { Annotating(cur.shot, cur.sketch, it) }
+                if (cur !== started) cur else started.progress.finish(outcome)?.let { Annotating(cur.shot, cur.sketch, it, cur.scaleLayer) }
             }
         }
     }

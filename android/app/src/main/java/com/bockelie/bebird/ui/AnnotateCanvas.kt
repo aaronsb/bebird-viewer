@@ -116,7 +116,8 @@ class AnnotateTools {
 }
 
 /**
- * The paused, upright [image] fitted whole in the viewport (no zoom), with [marks] over it.
+ * The paused, upright [image] fitted whole in the viewport (no zoom), with the proximity
+ * [scale] kept from the pause (if one was shown) and [marks] over it.
  * Dragging draws with the current tool, from where the finger went down, following that
  * finger only; with Text, a tap chooses where the label goes; with Move, a drag on a mark
  * moves it and holding still on it deletes it. No input while not [enabled]
@@ -126,7 +127,7 @@ class AnnotateTools {
  */
 @Composable
 fun AnnotateCanvas(
-    image: Bitmap, marks: List<Mark>, renderer: AnnotationRenderer, tools: AnnotateTools, outline: Boolean,
+    image: Bitmap, marks: List<Mark>, renderer: AnnotationRenderer, tools: AnnotateTools, scale: Bitmap?, outline: Boolean,
     enabled: Boolean, onMark: (Mark) -> Unit, onMove: (Int, Mark) -> Unit, onDelete: (Int) -> Unit, modifier: Modifier,
 ) {
     val description = stringResource(R.string.annotate_canvas_description)
@@ -166,6 +167,16 @@ fun AnnotateCanvas(
                     modifier = Modifier.fillMaxSize().clip(CircleShape).background(Color.Black)
                         .then(if (outline) Modifier.border(Dp.Hairline, Color(BandRenderer.CIRCLE), CircleShape) else Modifier),
                 )
+                // The proximity scale kept from the pause, under the marks as in the saved copy.
+                scale?.let {
+                    Image(
+                        bitmap = it.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        filterQuality = FilterQuality.None,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 layer?.let { l ->
                     Image(
                         bitmap = l.base,

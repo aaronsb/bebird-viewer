@@ -193,7 +193,15 @@ else                                -> SEARCHING
 
 ## 8. Overlay
 
-It is shown on screen only, and whether it is burned into captures is left open. It is drawn in raw-frame coordinates centred at (240, 240).
+It is drawn in raw-frame coordinates centred at (240, 240).
+
+**Saved stills (#43).** The scale is saved with the picture, because it is what makes a saved image useful for sizing:
+
+- **Snapshot:** one image with the scale drawn in as shown at the moment of capture (style, and grey-dashed or locked). There is no scale when the style is Off or estimation is off, and then the file is exactly what it was before. A zoomed crop gets the scale too, cropped and enlarged with the picture.
+- **Annotate:** the scale shown at the moment of pausing (or none) stays with the paused frame and is shown while annotating. Save writes the raw frame without scale or marks, and `<name>_annotated.jpg` with the scale and then the marks.
+- **Drawing:** upright, centred on the upright frame's centre, at the same px/mm as on screen at zoom 1 (40 px/mm on a 480-px frame), and only inside the image circle, as the screen clips it. A short note, "APPROX. SCALE / needs focus", goes at the frame's upper right, since the file travels without the app.
+- **Never saved:** CLOSE (a live warning, not part of the record), and the scale in video recordings.
+- **Metadata:** the UserComment JSON gains `"proximity_scale": {"style", "locked", "px_per_mm", "tolerance_pct"}` only when a scale is drawn in. `px_per_mm` is in that image's pixels, so a zoomed crop records its enlargement.
 
 The scale is **40 px/mm ±10 %** at the tip end, from ruler captures of 38.8–43.3 px/mm. Spacing is uniform, because distortion is below the noise out to about 4 mm. Tip angle and pressure alone change the magnification by 5–10 %.
 
@@ -214,7 +222,7 @@ The scale is **40 px/mm ±10 %** at the tip end, from ruler captures of 38.8–4
   - Lines have a black outline underneath for contrast.
 - **CLOSE indicator:** a yellow (255,215,0) triangle with a black outline and a black "!" (Unifont U+26A0), upper left at x 18, y 16, 40 px. The word "CLOSE" follows it in yellow with a black outline. It must not claim to prevent contact.
 
-The rings and ticks are meant to be drawn by the same one-pixel ring-by-distance renderer as the overlay circle, with a per-pixel angle test for the dashes. Straight lines use the rings' half-open width rule (−half ≤ distance < half), so a 2-px line is 2 px wide wherever it falls, as a 2-px ring is. The labels use the bundled bitmap font, so the screen and saved output match.
+The rings and ticks are meant to be drawn by the same one-pixel ring-by-distance renderer as the overlay circle, with a per-pixel angle test for the dashes. Straight lines use the rings' half-open width rule (−half ≤ distance < half), so a 2-px line is 2 px wide wherever it falls, as a 2-px ring is. The labels use the bundled bitmap font, so the screen and saved stills match.
 
 ## 9. Cost
 

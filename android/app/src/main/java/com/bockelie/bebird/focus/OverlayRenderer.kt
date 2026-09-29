@@ -22,13 +22,14 @@ import kotlin.math.sqrt
 class OverlayRenderer(private val font: GlyphSource) {
     /**
      * Render [shapes] into a [width] × [height] image at [f] output pixels per raw pixel, with
-     * the raw point ([originX], [originY]) at the output's top left.
+     * the raw point ([originX], [originY]) at the output's top left. Strokes and text are [k]
+     * times their size: by default f's whole part, so they keep their look at any display size.
      */
     fun render(
         shapes: List<OverlayShape>, width: Int, height: Int, f: Double,
-        originX: Double = 0.0, originY: Double = 0.0,
+        originX: Double = 0.0, originY: Double = 0.0, k: Int = max(1, floor(f).toInt()),
     ): PixelImage {
-        val c = Canvas(IntArray(width * height), width, height, f, originX, originY, max(1, floor(f).toInt()))
+        val c = Canvas(IntArray(width * height), width, height, f, originX, originY, k)
         for (s in shapes) when (s) {
             is OverlayShape.Arc -> c.arc(s)
             is OverlayShape.Line -> c.line(s)

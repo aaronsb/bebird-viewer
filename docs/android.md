@@ -49,7 +49,7 @@ Leaving the app stops and saves a recording. Opening Files, or a capture from th
 
 ## Snapshots, recordings and Files
 
-- **Snapshot** saves a JPEG. When the picture is zoomed in, it also saves a crop of the zoomed view.
+- **Snapshot** saves a JPEG. When the picture is zoomed in, it also saves a crop of the zoomed view. When the mm scale is shown, it is drawn into both (see [Scale in saved pictures](#scale-in-saved-pictures)).
 - **Record** records MP4 video.
 - With the overlay on, the status band and circle are burned into what is saved.
 - Everything goes under `Pictures/Bebird/`, in a folder per day (`Pictures/Bebird/YYYY-MM-DD/`). File names follow the desktop's: `bebird-YYYYMMDD-HHMMSS.jpg`, with `_zoomed` or `_annotated` added for the zoomed crop and the annotated copy.
@@ -67,7 +67,7 @@ Snapshots carry the same metadata as the desktop's (see [Snapshot metadata](desk
 - **Colours:** red, yellow, green, cyan, white.
 - **Move** (the four-arrow button): drag a mark to move it; hold on it to delete it.
 - **Undo** and **Clear**.
-- **Save** saves the plain picture and an annotated copy (`_annotated.jpg`, marked as annotated in its metadata).
+- **Save** saves the plain picture, with no scale and no marks, and an annotated copy (`_annotated.jpg`, marked as annotated in its metadata). If the mm scale was shown when you paused, it stays on the paused frame under your marks and goes into the annotated copy.
 - **Resume** goes back to the live view. Unsaved marks are discarded after a confirmation.
 
 <br clear="right">
@@ -83,7 +83,17 @@ Snapshots carry the same metadata as the desktop's (see [Snapshot metadata](desk
 - The scale is labelled "mm ±10%". It is grey and dashed until the estimator judges the picture in focus, then solid cyan.
 - A note beside it reads APPROXIMATE SCALE / Valid only when in focus / No distance sensor.
 - The Scale selector under the picture picks the style or turns it off. The CLOSE indicator can be turned off in **Proximity…**.
-- It is best effort: no CLOSE doesn't mean nothing is near. It is shown on screen only and is not in saved files.
+- It is best effort: no CLOSE doesn't mean nothing is near.
+
+### Scale in saved pictures
+
+The scale travels with the picture, because it is what makes a saved image useful for sizing:
+
+- **Snapshot:** the scale is drawn in as shown at that moment: the same style, grey and dashed or solid cyan. It is upright, centred on the picture, and the same size as on screen at zoom 1 (40 px per mm on the 480-px frame). The zoomed crop gets it too, enlarged with the picture. With the scale off, or proximity estimation off, nothing changes.
+- **Annotate:** **Save** writes the plain picture without the scale and the annotated copy with it (see [Annotate](#annotate)).
+- A short note, APPROX. SCALE / needs focus, sits in the picture's upper right corner, since the file travels without the app.
+- **CLOSE** is never saved; it is a live warning. Videos never have the scale.
+- The metadata of a picture with the scale records it: `proximity_scale` in the UserComment, with the style, whether it was locked (solid), its px per mm in that image, and the ±10 % tolerance. Pictures without the scale have no such entry.
 
 ### Use common sense
 
