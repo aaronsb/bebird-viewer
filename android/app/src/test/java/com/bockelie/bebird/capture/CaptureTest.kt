@@ -32,8 +32,13 @@ class CaptureTest {
 
     @Test fun theAnnotatedCopySharesTheStillsName() {
         val t = LocalDateTime.of(2026, 9, 29, 23, 59, 58)
-        assertEquals("bebird-20260929-235958_annotated.jpg", CaptureNames.annotated(t))
-        assertEquals(CaptureNames.still(t).removeSuffix(".jpg") + "_annotated.jpg", CaptureNames.annotated(t))
+        assertEquals("bebird-20260929-235958_annotated.jpg", CaptureNames.annotated(CaptureNames.still(t)))
+    }
+
+    @Test fun theAnnotatedCopyFollowsTheNameTheStillWasSavedUnder() {
+        // a snapshot took bebird-…-235958.jpg that second, so MediaStore renamed this still
+        assertEquals("bebird-20260929-235958 (1)_annotated.jpg", CaptureNames.annotated("bebird-20260929-235958 (1).jpg"))
+        assertEquals("bebird-20260929-235958 (2)_annotated.jpg", CaptureNames.annotated("bebird-20260929-235958 (2).jpg"))
     }
 
     // --- metadata ---

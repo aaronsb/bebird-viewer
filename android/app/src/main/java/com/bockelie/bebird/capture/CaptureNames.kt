@@ -8,8 +8,11 @@ import java.time.LocalDateTime
 object CaptureNames {
     fun still(time: LocalDateTime, zoomed: Boolean = false) = base(time) + (if (zoomed) "_zoomed" else "") + ".jpg"
 
-    /** The annotated copy of the still [still] would name for the same [time]. */
-    fun annotated(time: LocalDateTime) = base(time) + "_annotated.jpg"
+    /**
+     * The annotated copy's name for a still saved as [still]: the same base name, whatever
+     * MediaStore made of it ("bebird-… (1).jpg" when a snapshot took the name that second).
+     */
+    fun annotated(still: String) = still.removeSuffix(".jpg") + "_annotated.jpg"
 
     fun video(time: LocalDateTime) = base(time) + ".mp4"
 

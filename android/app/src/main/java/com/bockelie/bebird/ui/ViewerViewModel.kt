@@ -8,7 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import com.bockelie.bebird.band.BandData
+import com.bockelie.bebird.annotate.AnnotateRules
 import com.bockelie.bebird.annotate.AnnotationRenderer
+import com.bockelie.bebird.annotate.SaveProgress
 import com.bockelie.bebird.annotate.Sketch
 import com.bockelie.bebird.capture.Capture
 import com.bockelie.bebird.capture.CaptureFolder
@@ -36,7 +38,9 @@ import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.connection.ScopeConnection
 import com.bockelie.bebird.control.RollFilter
 import com.bockelie.bebird.settings.ThemeMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -206,40 +210,68 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * A paused frame being annotated: [shot] as it was when paused, its frame already turned
-     * upright (rotation 0; the meta keeps the rotation applied), and the marks so far.
+     * upright (rotation 0; the meta keeps the rotation applied), the marks so far, and how
+     * saving them stands.
      */
-    class Annotating(val shot: Capture.Shot, val sketch: Sketch)
+    class Annotating(val shot: Capture.Shot, val sketch: Sketch, val progress: SaveProgress = SaveProgress())
 
     private val _annotating = MutableStateFlow<Annotating?>(null)
     /** The paused frame and its marks while annotating, else null (the live view). */
     val annotating: StateFlow<Annotating?> = _annotating.asStateFlow()
+    private var pausing: Job? = null  // turning the paused frame upright, off the main thread
 
     /**
      * Pause on the current frame to annotate it. Only the view pauses: the session keeps
-     * receiving (and keeping the scope alive) as before. Not while recording.
+     * receiving (and keeping the scope alive) as before. Not while recording. The frame is
+     * held from now, so a disconnect while it is being turned upright changes nothing.
      */
     fun startAnnotating(zoom: Float) {
-        if (_recordingSince.value != null || _annotating.value != null) return
+        if (!AnnotateRules.canAnnotate(_recordingSince.value != null, _annotating.value != null, pausing != null)) return
         val s = shot(zoom = zoom) ?: return
-        val upright = Frames.rotated(s.frame, s.rotation)
-        _annotating.value = Annotating(Capture.Shot(upright, 0, s.overlay, s.renderer, s.band, s.meta, null), Sketch())
+        pausing = viewModelScope.launch {
+            try {
+                val upright = withContext(Dispatchers.Default) { Frames.rotated(s.frame, s.rotation) }
+                _annotating.value = Annotating(Capture.Shot(upright, 0, s.overlay, s.renderer, s.band, s.meta, null), Sketch())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.e("BebirdSpike", "pausing to annotate failed", e)
+                _captureResults.tryEmit(Capture.Result.Failed(CaptureNames.still(s.meta.taken.toLocalDateTime()), e.message ?: e.javaClass.simpleName))
+            } finally {
+                if (pausing === coroutineContext[Job]) pausing = null
+            }
+        }
     }
 
+    /** Change the marks; not while a save runs. */
     fun editAnnotations(change: (Sketch) -> Sketch) {
-        _annotating.update { a -> a?.let { Annotating(it.shot, change(it.sketch)) } }
+        _annotating.update { a -> if (a == null || !AnnotateRules.canEdit(a.progress)) a else Annotating(a.shot, change(a.sketch), a.progress) }
     }
 
-    /** Back to the live view; unsaved marks are dropped. */
+    /** Back to the live view; unsaved marks are dropped. Not while a save runs. */
     fun resumeLive() {
-        _annotating.value = null
+        pausing?.cancel()
+        pausing = null
+        _annotating.update { a -> if (a != null && a.progress.saving) a else null }
     }
 
-    /** Save the paused frame and its annotated copy, then go back to the live view. */
+    /**
+     * Save the paused frame and its annotated copy. Back to the live view once both are
+     * saved; if either fails the frame stays paused with its marks, and Save tries again.
+     */
     fun saveAnnotated() {
         val a = _annotating.value ?: return
+        if (a.progress.saving) return
         val renderer = _annotationRenderer.value ?: return
-        capture.snapshotAnnotated(a.shot, a.sketch.marks, renderer) { _captureResults.tryEmit(it) }
-        _annotating.value = null
+        val started = Annotating(a.shot, a.sketch, a.progress.start())
+        _annotating.value = started
+        capture.snapshotAnnotated(
+            a.shot, a.sketch.marks, renderer, a.progress.savedOriginal, done = { _captureResults.tryEmit(it) },
+        ) { outcome ->
+            _annotating.update { cur ->
+                if (cur !== started) cur else started.progress.finish(outcome)?.let { Annotating(cur.shot, cur.sketch, it) }
+            }
+        }
     }
 
     // --- another app over ours (Files, Open) ---
@@ -272,6 +304,8 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleRecording() = if (_recordingSince.value == null) startRecording() else stopRecording()
 
     private fun startRecording() {
+        // never behind a paused view: the recording would carry on unseen
+        if (!AnnotateRules.canRecord(_annotating.value != null, pausing != null)) return
         recordingOverlay = _overlay.value
         val first = shot(overlay = recordingOverlay) ?: return
         val name = CaptureNames.video(first.meta.taken.toLocalDateTime())
