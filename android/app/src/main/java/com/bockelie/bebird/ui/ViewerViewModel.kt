@@ -236,6 +236,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Save the frame as shown; when zoomed in ([zoomRect] non-null), the visible crop too. */
     fun snapshot(zoom: Float, zoomRect: ZoomCrop.Rect?) {
+        if (!CaptureRules.canSnapshot(_quitting.value)) return
         val shot = shot(zoom = zoom, zoomRect = zoomRect) ?: return
         capture.snapshot(shot) { _captureResults.tryEmit(it) }
     }
@@ -264,7 +265,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
      * held from now, so a disconnect while it is being turned upright changes nothing.
      */
     fun startAnnotating(zoom: Float) {
-        if (!AnnotateRules.canAnnotate(_recordingSince.value != null, _annotating.value != null, pausing != null)) return
+        if (!CaptureRules.canAnnotate(_recordingSince.value != null, _annotating.value != null, pausing != null, _quitting.value)) return
         val s = shot(zoom = zoom) ?: return
         pausing = viewModelScope.launch {
             try {
@@ -354,8 +355,8 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startRecording() {
-        // never behind a paused view: the recording would carry on unseen
-        if (!AnnotateRules.canRecord(_annotating.value != null, pausing != null)) return
+        // never behind a paused view: the recording would carry on unseen; nor once Quit has begun
+        if (!CaptureRules.canRecord(_annotating.value != null, pausing != null, _quitting.value)) return
         recordingOverlay = _overlay.value
         val first = shot(overlay = recordingOverlay) ?: return
         val name = CaptureNames.video(first.meta.taken.toLocalDateTime())

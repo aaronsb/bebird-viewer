@@ -77,6 +77,7 @@ fun LiveControls(
     val recordingSince by vm.recordingSince.collectAsStateWithLifecycle()
     val annotationRenderer by vm.annotationRenderer.collectAsStateWithLifecycle()
     val online = conn.wifiState.collectAsStateWithLifecycle().value is ScopeWifi.State.Available
+    val quitting by vm.quitting.collectAsStateWithLifecycle()  // nothing starts once Quit has begun
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // The scale style lives here, above Light; greyed out (keeping its value, and the
         // row's height) while proximity estimation is off.
@@ -110,28 +111,28 @@ fun LiveControls(
         // below them at the right, as its icon alone if its word doesn't fit.
         Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SnapshotButton(
-                enabled = streaming,
+                enabled = streaming && !quitting,
                 onClick = { vm.snapshot(zoomView.zoom, frame?.let { zoomView.crop(it.width) }) },
                 modifier = Modifier.fillMaxHeight(),
             )
-            RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording, modifier = Modifier.fillMaxHeight())
+            RecordButton(recordingSince, enabled = streaming && !quitting, onClick = vm::toggleRecording, modifier = Modifier.fillMaxHeight())
             var width by remember { mutableIntStateOf(Int.MAX_VALUE) }
             Column(Modifier.weight(1f).onSizeChanged { width = it.width }) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     // Not while recording: the file would carry on behind the paused view.
                     FilledTonalButton(
                         onClick = onAnnotate,
-                        enabled = streaming && recordingSince == null && annotationRenderer != null,
+                        enabled = streaming && recordingSince == null && annotationRenderer != null && !quitting,
                         contentPadding = CompactPadding,
                     ) { Text(stringResource(R.string.annotate)) }
-                    FilesButton(vm, snackbar)
+                    FilesButton(vm, snackbar, enabled = !quitting)
                 }
                 val reconnect = stringResource(R.string.reconnect)
                 val labelWidth = rememberTextMeasurer().measure(reconnect, MaterialTheme.typography.labelLarge).size.width
                 val extras = with(LocalDensity.current) { RECONNECT_EXTRAS.roundToPx() }
                 val withLabel = reconnectShowsLabel(width, labelWidth, extras)
                 OutlinedButton(
-                    onClick = conn::reconnect, enabled = online, contentPadding = CompactPadding,
+                    onClick = conn::reconnect, enabled = online && !quitting, contentPadding = CompactPadding,
                     modifier = Modifier.align(Alignment.End).semantics { if (!withLabel) contentDescription = reconnect },
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = null)

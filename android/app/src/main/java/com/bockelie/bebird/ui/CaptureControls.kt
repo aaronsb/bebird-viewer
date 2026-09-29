@@ -13,6 +13,7 @@ import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
@@ -35,8 +36,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.bockelie.bebird.R
 import com.bockelie.bebird.capture.Capture
@@ -60,8 +64,9 @@ fun SnapshotButton(enabled: Boolean, onClick: () -> Unit, modifier: Modifier = M
 
 /**
  * Record, big like Snapshot (#54): a dot over "Record"; while recording, in the error colours, a
- * square over "Stop" and the elapsed time (fixed-width digits). A double click on the press, so
- * it feels unlike Snapshot's single one.
+ * square over "Stop" and the elapsed time (fixed-width digits). As wide as the widest of those
+ * at the current font size, so starting, stopping or passing 10:00 never reflows the row. A
+ * double click on the press, so it feels unlike Snapshot's single one.
  */
 @Composable
 fun RecordButton(since: Long?, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -79,7 +84,13 @@ fun RecordButton(since: Long?, enabled: Boolean, onClick: () -> Unit, modifier: 
             contentColor = MaterialTheme.colorScheme.onError,
         )
     }
-    TallButton(onClick, enabled || since != null, HoldVibrator::doubleClick, colors, modifier) {
+    // The widest of its labels, measured as drawn: "Record", "Stop" and a two-digit-minute time.
+    val measurer = rememberTextMeasurer()
+    val style = MaterialTheme.typography.labelLarge
+    val words = listOf(stringResource(R.string.record), stringResource(R.string.stop))
+    val widest = (words.map { measurer.measure(it, style).size.width } + measurer.measure(WIDEST_TIME, style.merge(tabular)).size.width).max()
+    val minWidth = with(LocalDensity.current) { widest.toDp() } + CompactPadding.calculateLeftPadding(LayoutDirection.Ltr) * 2
+    TallButton(onClick, enabled || since != null, HoldVibrator::doubleClick, colors, modifier.widthIn(min = minWidth)) {
         if (since == null) {
             Icon(painterResource(R.drawable.ic_record), contentDescription = null)
             Text(stringResource(R.string.record), maxLines = 1)
@@ -119,6 +130,9 @@ private fun TallButton(
         Column(horizontalAlignment = Alignment.CenterHorizontally, content = content)
     }
 }
+
+/** The widest time Record shows in practice: fixed-width digits, so any two-digit minute. */
+private const val WIDEST_TIME = "00:00"
 
 /** Narrower than a button's own padding, so the capture rows fit a 360 dp screen. */
 val CompactPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
@@ -165,7 +179,7 @@ private class OpenCapture : ActivityResultContracts.OpenDocument() {
  * app to show a file, a snackbar says so.
  */
 @Composable
-fun FilesButton(vm: ViewerViewModel, host: SnackbarHostState) {
+fun FilesButton(vm: ViewerViewModel, host: SnackbarHostState, enabled: Boolean = true) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val empty = stringResource(R.string.files_empty, CaptureNames.ROOT)
@@ -188,7 +202,7 @@ fun FilesButton(vm: ViewerViewModel, host: SnackbarHostState) {
                 }
             }
         }
-    }, contentPadding = CompactPadding) {
+    }, enabled = enabled, contentPadding = CompactPadding) {
         Text(stringResource(R.string.files))
     }
 }
