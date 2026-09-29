@@ -12,7 +12,8 @@ EXCLUDES := $(addprefix --exclude-module PyQt6.,QtWebEngineCore QtWebEngineWidge
             QtMultimedia QtPdf QtSql QtTest QtDesigner QtBluetooth QtPositioning QtSensors)
 
 .PHONY: help venv run app app-image app-lock install uninstall \
-        android-image android-test android-apk android-shell clean distclean
+        android-image android-test android-apk android-release android-release-verify android-shell \
+        clean distclean
 .DEFAULT_GOAL := help
 
 # Containers run as the calling user, so everything they write is owned by you, never root.
@@ -24,7 +25,15 @@ APP_IMAGE    := bebird-viewer-build:desktop
 DROID_IMAGE  := bebird-viewer-build:android
 GRADLE_VOL   := bebird-gradle
 GRADLE       := ./gradlew --console=plain
-DROID_RUN    := $(DOCKER_RUN) -v "$(CURDIR)/android:/work" -v $(GRADLE_VOL):/home/builder/.gradle $(DROID_IMAGE)
+DROID_MOUNTS := -v "$(CURDIR)/android:/work" -v $(GRADLE_VOL):/home/builder/.gradle
+DROID_RUN    := $(DOCKER_RUN) $(DROID_MOUNTS) $(DROID_IMAGE)
+RELEASE_DIR  := android/app/build/outputs/apk/release
+APKSIGNER    := /opt/android-sdk/build-tools/34.0.0/apksigner
+# Release signing (docs/building.md): the keystore file is mounted read-only, and the passwords
+# are passed by name only, so their values never appear on a command line or in make's output.
+KEYSTORE_IN  := /run/bebird/release.keystore
+SIGN_ARGS    = $(if $(BEBIRD_KEYSTORE),-v "$(abspath $(BEBIRD_KEYSTORE)):$(KEYSTORE_IN):ro" \
+               -e BEBIRD_KEYSTORE=$(KEYSTORE_IN) -e BEBIRD_KEYSTORE_PASSWORD -e BEBIRD_KEY_ALIAS -e BEBIRD_KEY_PASSWORD)
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | expand -t 16
@@ -87,6 +96,28 @@ android-test: android-image  ## run the Android unit tests (in Docker)
 android-apk: android-image  ## build the debug APK into android/app/build/outputs/apk/debug/ (in Docker)
 	$(DROID_RUN) $(GRADLE) assembleDebug
 	@ls -lh android/app/build/outputs/apk/debug/*.apk
+
+# apksigner checks only what a device at the APK's minSdk (29) needs, which is v3 alone;
+# --min-sdk-version 24 makes it verify the v2 signature as well. $(1) is the APK.
+verify_apk = $(DOCKER_RUN) --network none -v "$(abspath $(1)):/apk/$(notdir $(1)):ro" $(DROID_IMAGE) \
+	$(APKSIGNER) verify --print-certs -v --min-sdk-version 24 "/apk/$(notdir $(1))" && sha256sum "$(1)"
+
+# Signed when BEBIRD_KEYSTORE and the other BEBIRD_* variables are set, unsigned otherwise.
+# The output directory is emptied first so a stale signed or unsigned APK can't be picked up.
+android-release: android-image  ## build the release APK into android/app/build/outputs/apk/release/ (in Docker)
+	$(if $(BEBIRD_KEYSTORE),@test -f "$(BEBIRD_KEYSTORE)" || { echo "BEBIRD_KEYSTORE: no such file: $(BEBIRD_KEYSTORE)"; exit 1; })
+	rm -rf $(RELEASE_DIR)
+	$(DOCKER_RUN) $(SIGN_ARGS) $(DROID_MOUNTS) $(DROID_IMAGE) $(GRADLE) assembleRelease
+	@ls -lh $(RELEASE_DIR)/*.apk
+ifdef BEBIRD_KEYSTORE
+	@$(call verify_apk,$(RELEASE_DIR)/app-release.apk)
+else
+	@echo "unsigned: BEBIRD_KEYSTORE is not set"; sha256sum $(RELEASE_DIR)/app-release-unsigned.apk
+endif
+
+android-release-verify: android-image  ## check an APK's v2/v3 signature, print its certificate and SHA-256: APK=path
+	@test -f "$(APK)" || { echo "usage: make android-release-verify APK=path/to/app.apk"; exit 1; }
+	@$(call verify_apk,$(APK))
 
 android-shell: android-image  ## open a shell in the Android build container
 	$(DOCKER_RUN) -it -v "$(CURDIR)/android:/work" -v $(GRADLE_VOL):/home/builder/.gradle $(DROID_IMAGE) bash

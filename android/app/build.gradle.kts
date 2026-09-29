@@ -10,6 +10,13 @@ plugins {
 // The one place the app ID lives; the Kotlin sources sit under the same package root.
 val appId = "com.bockelie.bebird"
 
+// Release signing comes only from the environment or Gradle properties (-P), never from a file in
+// the repository. Without BEBIRD_KEYSTORE the release APK is built unsigned (CI on pull requests,
+// contributors); it never falls back to the debug key.
+fun signingValue(name: String): String? =
+    (providers.gradleProperty(name).orNull ?: providers.environmentVariable(name).orNull)?.takeIf { it.isNotEmpty() }
+val releaseKeystore = signingValue("BEBIRD_KEYSTORE")
+
 android {
     namespace = appId
     compileSdk = 35
@@ -22,9 +29,28 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                fun required(name: String) = signingValue(name) ?: error("BEBIRD_KEYSTORE is set but $name is not")
+                storeFile = file(releaseKeystore)
+                storePassword = required("BEBIRD_KEYSTORE_PASSWORD")
+                keyAlias = required("BEBIRD_KEY_ALIAS")
+                keyPassword = required("BEBIRD_KEY_PASSWORD")
+                // v1 (JAR signing) is only for Android 6 and older; v3 lets the key be rotated later.
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
         }
     }
     compileOptions {

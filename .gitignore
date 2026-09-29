@@ -15,3 +15,7 @@ fw/
 build/
 dist/
 *.spec
+# release signing: keystores and their passwords never go in git (docs/building.md)
+*.jks
+*.keystore
+release-signing.properties

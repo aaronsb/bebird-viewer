@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Builds in the same container as `make android-test android-apk` does locally.
+# Builds in the same container as `make android-test android-apk android-release` does locally.
 name: Android
 
 on:
@@ -34,6 +34,9 @@ jobs:
         run: make android-test
       - name: Debug APK
         run: make android-apk
+      # Unsigned: catches R8 breaking the build or dropping a required asset.
+      - name: Release APK (unsigned)
+        run: make android-release
       - uses: actions/upload-artifact@v4
         with:
           name: bebird-viewer-debug-apk
