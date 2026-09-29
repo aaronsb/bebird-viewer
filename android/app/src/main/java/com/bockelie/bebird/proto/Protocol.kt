@@ -3,7 +3,7 @@ package com.bockelie.bebird.proto
 
 /**
  * The Bebird "ES" scope's UDP protocol: ports, command bytes and reply decoders.
- * README.md's protocol section is the spec; this mirrors viewer.py. Pure Kotlin, no Android.
+ * docs/protocol.md is the spec; this mirrors viewer.py. Pure Kotlin, no Android.
  *
  * Deliberately absent: `66 3F 01 00` (switches the ES camera off until a power cycle). Never send it.
  * `66 3E` ("reboot" in the vendor app, in practice powers the scope off) is fenced: only
