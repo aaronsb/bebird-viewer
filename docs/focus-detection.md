@@ -7,6 +7,7 @@ This is a **best-effort proximity hint**:
 - It never guarantees anything, and it doesn't prevent contact.
 - **The absence of the cue must not be read as clearance.** A smooth or featureless surface reads soft even when in focus, so misses are possible.
 - The wording stays "proximity" and "CLOSE", never anything medical.
+- It is estimated from picture cues (relative sharpness, the brightness trend, movement in the view) and the scope's roll angle; the scope has no distance sensor. Always rely on common sense when handling the scope; the indicators never replace it.
 
 The algorithm was developed and tuned with a desktop prototype, first on recorded sessions and then live. The Kotlin port lives in `android/app/src/main/java/com/bockelie/bebird/focus/`:
 

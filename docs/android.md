@@ -85,6 +85,10 @@ Snapshots carry the same metadata as the desktop's (see [Snapshot metadata](desk
 - The Scale selector under the picture picks the style or turns it off. The CLOSE indicator can be turned off in **Proximity…**.
 - It is best effort: no CLOSE doesn't mean nothing is near. It is shown on screen only and is not in saved files.
 
+### Use common sense
+
+Proximity and the mm scale are estimated. The main cue is focus: how sharp the picture is compared with the sharpest it has been in the last half minute. The others are the brightness trend (the picture brightens as the tip approaches a surface), movement in the view, and how steadily the scope is held, from its motion sensor. The scope has no distance sensor, and the estimate can be wrong either way. Always rely on common sense to handle the scope safely; the indicators never replace it.
+
 How it works, and its limits: [focus-detection.md](focus-detection.md).
 
 ## Settings menu
