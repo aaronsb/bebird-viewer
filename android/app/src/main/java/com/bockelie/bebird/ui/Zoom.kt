@@ -3,6 +3,7 @@ package com.bockelie.bebird.ui
 
 import android.graphics.Bitmap
 import android.util.Log
+import androidx.annotation.StringRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,8 +41,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -78,15 +82,31 @@ fun ZoomableCircle(
         val h = constraints.maxHeight.toFloat()
         val side = minOf(w, h)
         SideEffect { view.viewportW = w; view.viewportH = h }  // for the zoomed snapshot's crop
-        // How far the circle may move: only as far as it overhangs the viewport.
-        fun clamp(o: Offset, z: Float) = Offset(
-            o.x.coerceIn(-maxOf(0f, (side * z - w) / 2), maxOf(0f, (side * z - w) / 2)),
-            o.y.coerceIn(-maxOf(0f, (side * z - h) / 2), maxOf(0f, (side * z - h) / 2)),
-        )
+        fun clamp(o: Offset, z: Float) = clampOffset(o, z, w, h, side)
         // A resize (rotation, multi-window) keeps the view inside the new bounds.
         LaunchedEffect(w, h) { view.offset = clamp(view.offset, view.zoom) }
+        // For TalkBack: what the picture is, and the zoom that pinch and double-tap give (#40).
+        // Derived, so a pinch recomposes only when what TalkBack would say changes.
+        val zoomText by remember(view) { derivedStateOf { zoomLabel(view.zoom) } }
+        val actions by remember(view) { derivedStateOf { zoomActions(view.zoom, view.offset) } }
+        val description = zoomText?.let { stringResource(R.string.live_picture_zoom, it) } ?: stringResource(R.string.live_picture)
+        val actionLabels = ZoomAction.entries.associateWith { stringResource(it.label) }
         Box(
             Modifier.fillMaxSize()
+                .then(
+                    if (frame == null) Modifier
+                    else Modifier.semantics {
+                        contentDescription = description
+                        customActions = actions.map { a ->
+                            CustomAccessibilityAction(actionLabels.getValue(a)) {
+                                val (z, o) = zoomStep(a, view.zoom, view.offset, w, h, side)
+                                view.zoom = z
+                                view.offset = o
+                                true
+                            }
+                        }
+                    },
+                )
                 .pointerInput(Unit) { detectTapGestures(onDoubleTap = { view.zoom = 1f; view.offset = Offset.Zero }) }
                 .pointerInput(w, h) {
                     detectTransformGestures { centroid, pan, gestureZoom, _ ->
@@ -163,6 +183,64 @@ class ZoomView {
         ZoomCrop.visible(frameSize, viewportW, viewportH, minOf(viewportW, viewportH), zoom, offset.x, offset.y)
 }
 
+/** How far the circle may move at zoom [z] in a [w] × [h] viewport: only as far as it overhangs it. */
+internal fun clampOffset(o: Offset, z: Float, w: Float, h: Float, side: Float) = Offset(
+    o.x.coerceIn(-maxOf(0f, (side * z - w) / 2), maxOf(0f, (side * z - w) / 2)),
+    o.y.coerceIn(-maxOf(0f, (side * z - h) / 2), maxOf(0f, (side * z - h) / 2)),
+)
+
+/** The viewport's zoom actions for TalkBack, standing in for pinch and double-tap. */
+internal enum class ZoomAction(@StringRes val label: Int) {
+    IN(R.string.zoom_in), OUT(R.string.zoom_out), RESET(R.string.zoom_reset)
+}
+
+/** The zoom steps the actions go through, within the gestures' 1-6x. */
+internal val ZOOM_STOPS = listOf(1f, 1.5f, 2f, 3f, 4f, 6f)
+
+/** The actions that do something at [zoom] and [offset]: in below 6x, out above 1x, reset when not at rest. */
+internal fun zoomActions(zoom: Float, offset: Offset): List<ZoomAction> = buildList {
+    if (zoom < ZOOM_STOPS.last()) add(ZoomAction.IN)
+    if (zoom > ZOOM_STOPS.first()) add(ZoomAction.OUT)
+    if (zoom > ZOOM_STOPS.first() || offset != Offset.Zero) add(ZoomAction.RESET)
+}
+
+/**
+ * The zoom and offset after [action]: to the next stop up or down, about the viewport centre
+ * (the offset scales with the zoom), clamped as the gestures clamp it; reset goes to 1x, centred.
+ */
+internal fun zoomStep(action: ZoomAction, zoom: Float, offset: Offset, w: Float, h: Float, side: Float): Pair<Float, Offset> {
+    val z = when (action) {
+        ZoomAction.IN -> ZOOM_STOPS.firstOrNull { it > zoom + 0.01f } ?: ZOOM_STOPS.last()
+        ZoomAction.OUT -> ZOOM_STOPS.lastOrNull { it < zoom - 0.01f } ?: ZOOM_STOPS.first()
+        ZoomAction.RESET -> return ZOOM_STOPS.first() to Offset.Zero
+    }
+    return z to clampOffset(offset * (z / zoom), z, w, h, side)
+}
+
+/** [zoom] as TalkBack says it ("2", "1.5"), or null at 1x. */
+internal fun zoomLabel(zoom: Float): String? {
+    val tenths = Math.round(zoom * 10)
+    if (tenths <= 10) return null
+    return if (tenths % 10 == 0) "${tenths / 10}" else "${tenths / 10}.${tenths % 10}"
+}
+
+/** Which scale [shapes] draw, for TalkBack: its sentence, and whether it is locked. */
+internal enum class ScaleKind(@StringRes val text: Int) {
+    RING(R.string.scale_ring), BOWTIE(R.string.scale_bowtie), BAR(R.string.scale_bar)
+}
+
+/** The scale in [shapes] (CLOSE left out), and whether it is locked (lock colour); null if none. */
+internal fun scaleSpoken(shapes: List<OverlayShape>): Pair<ScaleKind, Boolean>? {
+    val kind = when {
+        shapes.any { it is OverlayShape.Arc && it.endDeg - it.startDeg >= 360.0 } -> ScaleKind.RING
+        shapes.any { it is OverlayShape.Arc } -> ScaleKind.BOWTIE
+        shapes.any { it is OverlayShape.Line && it.outlined } -> ScaleKind.BAR
+        else -> return null
+    }
+    val locked = shapes.any { ((it as? OverlayShape.Arc)?.color ?: (it as? OverlayShape.Line)?.color) == ScaleOverlay.LOCK }
+    return kind to locked
+}
+
 /** The scale drawn at the circle's on-screen size [side] px, so its rings stay one pixel thin. */
 @Composable
 private fun ScaleLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, side: Int, rotation: Float) {
@@ -170,9 +248,13 @@ private fun ScaleLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, si
     val image = rendered(shapes, side) {
         renderer.render(shapes, side, side, side.toDouble() / FrameGeometry.SIZE).toBitmap().asImageBitmap()
     } ?: return
+    // Said when TalkBack reaches it, not announced: it changes with every lock and unlock.
+    val description = scaleSpoken(shapes)?.let { (kind, locked) ->
+        stringResource(R.string.scale_description, stringResource(kind.text), stringResource(if (locked) R.string.scale_locked else R.string.scale_not_locked))
+    }
     Image(
         bitmap = image,
-        contentDescription = null,
+        contentDescription = description,
         contentScale = ContentScale.FillBounds,
         filterQuality = FilterQuality.None,
         modifier = Modifier.fillMaxSize().rotate(rotation),

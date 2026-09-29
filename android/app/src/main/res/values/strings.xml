@@ -128,6 +128,18 @@
     <string name="proximity_scale_bar">Bar</string>
     <string name="proximity_scale_off">Off</string>
     <string name="proximity_close">CLOSE indicator</string>
+    <!-- The live view for TalkBack (#40) -->
+    <string name="live_picture">Live picture</string>
+    <string name="live_picture_zoom">Live picture, zoom %1$s×</string>
+    <string name="zoom_in">Zoom in</string>
+    <string name="zoom_out">Zoom out</string>
+    <string name="zoom_reset">Reset zoom</string>
+    <string name="scale_ring">Ring scale, 2 to 10 millimetres</string>
+    <string name="scale_bowtie">Bowtie scale, 2 to 10 millimetres</string>
+    <string name="scale_bar">Bar scale, 0 to 10 millimetres</string>
+    <string name="scale_locked">locked</string>
+    <string name="scale_not_locked">not locked</string>
+    <string name="scale_description">%1$s, %2$s</string>
     <string name="proximity_close_description">CLOSE: something is probably at the tip end</string>
     <string name="proximity_stopped">Proximity estimation stopped after an error. The viewer is unaffected; restart the app to try again.</string>
     <string name="annotate">Annotate</string>
