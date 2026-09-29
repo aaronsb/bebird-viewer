@@ -103,6 +103,12 @@ class MediaStoreFiles(private val resolver: ContentResolver) {
         }
     }
 
+    /** The name [uri] was saved under (MediaStore renames a clash, e.g. "x (1).jpg"); [fallback] if it can't be read. */
+    fun displayName(uri: Uri, fallback: String): String = runCatching {
+        resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null }
+    }.getOrNull() ?: fallback
+
     private companion object {
         /** RELATIVE_PATH values of Pictures/Bebird/ and every folder in it. */
         const val UNDER_ROOT = "${CaptureNames.ROOT}/%"

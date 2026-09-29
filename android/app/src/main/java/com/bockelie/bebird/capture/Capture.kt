@@ -6,6 +6,11 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
+import com.bockelie.bebird.annotate.AnnotationRenderer
+import com.bockelie.bebird.annotate.Mark
+import com.bockelie.bebird.annotate.SaveOutcome
+import com.bockelie.bebird.annotate.annotatedStills
+import com.bockelie.bebird.annotate.drawFailureName
 import com.bockelie.bebird.band.BandData
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.band.PixelImage
@@ -34,6 +39,8 @@ class Capture(resolver: ContentResolver) {
     sealed interface Result {
         data class Saved(val uri: Uri, val name: String, val video: Boolean) : Result
         data class Failed(val what: String, val reason: String) : Result
+        /** Something else went wrong, not saving a file: [text] is shown as it is. */
+        data class Problem(val text: String) : Result
     }
 
     private val files = MediaStoreFiles(resolver)
@@ -61,23 +68,53 @@ class Capture(resolver: ContentResolver) {
         val rotated = Frames.rotated(shot.frame, shot.rotation)
         val time = shot.meta.taken.toLocalDateTime()
         val dir = CaptureNames.folder(time.toLocalDate())
-        save(CaptureNames.still(time), dir, Frames.composed(rotated.toPixelImage(), shot.renderer, shot.band, shot.overlay), shot.meta, done)
+        val still = CaptureNames.still(time)
+        val full = save(still, dir, Frames.composed(rotated.toPixelImage(), shot.renderer, shot.band, shot.overlay), shot.meta).also(done)
         shot.zoomRect?.let { rect ->
             val zoomed = Frames.zoomed(rotated, rect, shot.renderer, shot.band, shot.overlay)
-            save(CaptureNames.still(time, zoomed = true), dir, zoomed, shot.meta.copy(zoomed = true), done)
+            // named after the full frame as saved, so the pair stays together after a rename
+            done(save(CaptureNames.zoomed((full as? Result.Saved)?.name ?: still), dir, zoomed, shot.meta.copy(zoomed = true)))
         }
     }
 
-    private fun save(name: String, dir: String, image: PixelImage, meta: SnapshotMeta, done: (Result) -> Unit) {
-        try {
-            val jpeg = ByteArrayOutputStream().also { image.toBitmap().compress(Bitmap.CompressFormat.JPEG, 95, it) }.toByteArray()
-            val uri = files.write(MediaStoreFiles.Kind.STILL, name, dir, ExifWriter.insert(jpeg, meta))
-            Log.i(TAG, "saved $name (${image.width}x${image.height})")
-            done(Result.Saved(uri, name, video = false))
-        } catch (e: Exception) {
-            Log.e(TAG, "saving $name failed", e)
-            done(Result.Failed(name, e.message ?: e.javaClass.simpleName))
+    /**
+     * Save the paused [shot] (its frame already upright, never a zoomed crop) as a snapshot
+     * saves it, then the same picture with [marks] over the frame as <name>_annotated.jpg,
+     * named after the still as saved and marked annotated in its EXIF. With [savedOriginal]
+     * (a retry after the copy failed) only the copy is written. [done] gets each file's result,
+     * then [finished] how the save went as a whole.
+     */
+    fun snapshotAnnotated(
+        shot: Shot, marks: List<Mark>, annotations: AnnotationRenderer, savedOriginal: String?,
+        done: (Result) -> Unit, finished: (SaveOutcome) -> Unit,
+    ) = worker.execute {
+        val time = shot.meta.taken.toLocalDateTime()
+        val (plain, annotated) = try {
+            val upright = Frames.rotated(shot.frame, shot.rotation).toPixelImage()
+            annotatedStills(upright, shot.renderer, shot.band, shot.overlay, marks, annotations)
+        } catch (e: Throwable) {
+            Log.e(TAG, "drawing the annotations failed", e)
+            done(Result.Failed(drawFailureName(savedOriginal, CaptureNames.still(time)), e.message ?: e.javaClass.simpleName))
+            return@execute finished(SaveOutcome(savedOriginal, complete = false))
         }
+        val dir = CaptureNames.folder(time.toLocalDate())
+        val original = savedOriginal
+            ?: (save(CaptureNames.still(time), dir, plain, shot.meta).also(done) as? Result.Saved)?.name
+            ?: return@execute finished(SaveOutcome(null, complete = false))
+        val copy = save(CaptureNames.annotated(original), dir, annotated, shot.meta.copy(annotated = true)).also(done)
+        finished(SaveOutcome(original, complete = copy is Result.Saved))
+    }
+
+    /** Write [image] as the still [name] in [dir]; the result carries the name it was saved under. */
+    private fun save(name: String, dir: String, image: PixelImage, meta: SnapshotMeta): Result = try {
+        val jpeg = ByteArrayOutputStream().also { image.toBitmap().compress(Bitmap.CompressFormat.JPEG, 95, it) }.toByteArray()
+        val uri = files.write(MediaStoreFiles.Kind.STILL, name, dir, ExifWriter.insert(jpeg, meta))
+        val saved = files.displayName(uri, name)
+        Log.i(TAG, "saved $saved (${image.width}x${image.height})")
+        Result.Saved(uri, saved, video = false)
+    } catch (e: Throwable) {
+        Log.e(TAG, "saving $name failed", e)
+        Result.Failed(name, e.message ?: e.javaClass.simpleName)
     }
 
     /**

@@ -24,6 +24,7 @@ data class SnapshotMeta(
     val label: String?,
     val device: String?,  // nickname, or the SSID without "bebird-"
     val model: String?,   // from the scope's beacon, if heard
+    val annotated: Boolean = false,  // marks drawn over the picture (#16)
 ) {
     /** ImageDescription: a readable ASCII line, as the desktop writes (no degree signs). */
     fun description(): String = buildString {
@@ -34,6 +35,7 @@ data class SnapshotMeta(
         // ImageDescription is ASCII-only: the label goes here only when it is ASCII (it is
         // always in UserComment, escaped, and in the UTF-16 XP tags)
         label?.takeIf { l -> l.all { it.code in 0x20..0x7E } }?.let { append(", label $it") }
+        if (annotated) append(", annotated")
     }
 
     /** UserComment: the metadata as JSON, all ASCII (non-ASCII escaped as \uXXXX). */
@@ -56,6 +58,8 @@ data class SnapshotMeta(
             "device" to device,
             "scope" to linkedMapOf("brand" to "bebird", "model" to model).filterValues { it != null },
         )
+        // only on annotated copies, so other captures stay as the desktop writes them
+        if (annotated) fields["annotated"] = true
         return Json.write(fields)
     }
 }

@@ -70,6 +70,7 @@ fun CaptureSnackbar(vm: ViewerViewModel, host: SnackbarHostState) {
                     }
                 }
                 is Capture.Result.Failed -> host.showSnackbar(failed.format(result.what, result.reason))
+                is Capture.Result.Problem -> host.showSnackbar(result.text)
             }
         }
     }
