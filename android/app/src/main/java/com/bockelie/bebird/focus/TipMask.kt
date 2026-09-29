@@ -48,6 +48,7 @@ internal class TipMask(private val cfg: FocusConfig) {
     private val seen = BooleanArray(BLOCKS)
     private val queue = IntArray(BLOCKS)
     private val dist = IntArray(BLOCKS)
+    private val fresh = IntArray(BLOCKS)
 
     /**
      * One frame (not the first, which has no previous): [small] block means, [edge] block
@@ -144,9 +145,25 @@ internal class TipMask(private val cfg: FocusConfig) {
         rebuilt = true
         val ready = updates >= cfg.tipMinUpdates
         for (i in 0 until BLOCKS) work[i] = ready && on[i]
+        applyPrior()
+        growCap()
+        limitGrowth()
+        core.fill(false)
+        for (i in FrameGeometry.circleBlocks) core[i] = work[i]
+        // drop isolated blocks (3×3 median), then dilate one block (3×3 max); edges replicate
+        rank3x3(work, work2, 5)
+        rank3x3(work2, blocks, 1)
+        var count = 0
+        for (b in blocks) if (b) count++
+        fraction = count.toDouble() / FrameGeometry.circleBlocks.size
+        any = count > 0
+    }
 
-        // lower-right prior: keep a 4-connected component only if enough of it lies in the
-        // corner where the probe body sits, and only its part inside the tip region
+    /**
+     * Lower-right prior: keep a 4-connected component of [work] only if enough of it lies in the
+     * corner where the probe body sits, and only its part inside the tip region.
+     */
+    private fun applyPrior() {
         seen.fill(false)
         for (i0 in 0 until BLOCKS) {
             if (!work[i0] || seen[i0]) continue
@@ -158,12 +175,10 @@ internal class TipMask(private val cfg: FocusConfig) {
                 val i = stack[--sp]
                 comp[n++] = i
                 val x = i % GRID
-                for (j in intArrayOf(if (x > 0) i - 1 else -1, if (x < GRID - 1) i + 1 else -1, i - GRID, i + GRID)) {
-                    if (j in 0 until BLOCKS && work[j] && !seen[j]) {
-                        seen[j] = true
-                        stack[sp++] = j
-                    }
-                }
+                if (x > 0 && work[i - 1] && !seen[i - 1]) { seen[i - 1] = true; stack[sp++] = i - 1 }
+                if (x < GRID - 1 && work[i + 1] && !seen[i + 1]) { seen[i + 1] = true; stack[sp++] = i + 1 }
+                if (i >= GRID && work[i - GRID] && !seen[i - GRID]) { seen[i - GRID] = true; stack[sp++] = i - GRID }
+                if (i + GRID < BLOCKS && work[i + GRID] && !seen[i + GRID]) { seen[i + GRID] = true; stack[sp++] = i + GRID }
             }
             var inCorner = 0
             for (k in 0 until n) {
@@ -175,9 +190,13 @@ internal class TipMask(private val cfg: FocusConfig) {
                 if (inCorner < cfg.tipPriorMin || !inRegion(i)) work[i] = false
             }
         }
+    }
 
-        // grow into the adjoining bright, soft blob (the cap), at most blobReach steps from the
-        // static part, with hysteresis for blocks already in the mask
+    /**
+     * Grow into the adjoining bright, soft blob (the cap), at most blobReach steps from the
+     * static part, with hysteresis for blocks already in the mask.
+     */
+    private fun growCap() {
         isCand.fill(false)
         var qh = 0
         var qt = 0
@@ -193,30 +212,33 @@ internal class TipMask(private val cfg: FocusConfig) {
             val x = i % GRID
             val y = i / GRID
             if (x <= 0 || x >= GRID - 1 || y <= 0 || y >= GRID - 1) continue
-            for (j in intArrayOf(i - 1, i + 1, i - GRID, i + GRID)) {
+            for (k in 0 until 4) {
+                val j = when (k) { 0 -> i - 1; 1 -> i + 1; 2 -> i - GRID; else -> i + GRID }
                 if (isCand[j] && !work[j] && inRegion(j)) {
                     work[j] = true
                     queue[qt] = j; dist[qt] = d + 1; qt++
                 }
             }
         }
+    }
 
-        // growth cap: at most tipMaxGrow of the circle may join per rebuild; keep the most static
-        val fresh = FrameGeometry.circleBlocks.filter { work[it] && !core[it] }
+    /**
+     * At most tipMaxGrow of the circle may join per rebuild (a transient passing every test can't
+     * balloon the mask in one step); the most static (lowest variance, then lowest index) stay.
+     */
+    private fun limitGrowth() {
+        var n = 0
+        for (i in FrameGeometry.circleBlocks) if (work[i] && !core[i]) fresh[n++] = i
         val cap = (cfg.tipMaxGrow * FrameGeometry.circleBlocks.size).toInt()
-        if (fresh.size > cap) {
-            for (i in fresh.sortedBy { variance[it] }.drop(cap)) work[i] = false
+        if (n <= cap) return
+        // stable insertion sort by variance (fresh is in index order); rare and at most ~600
+        for (k in 1 until n) {
+            val i = fresh[k]
+            var j = k - 1
+            while (j >= 0 && variance[fresh[j]] > variance[i]) { fresh[j + 1] = fresh[j]; j-- }
+            fresh[j + 1] = i
         }
-        core.fill(false)
-        for (i in FrameGeometry.circleBlocks) core[i] = work[i]
-
-        // drop isolated blocks (3×3 median), then dilate one block (3×3 max); edges replicate
-        rank3x3(work, work2, 5)
-        rank3x3(work2, blocks, 1)
-        var count = 0
-        for (b in blocks) if (b) count++
-        fraction = count.toDouble() / FrameGeometry.circleBlocks.size
-        any = count > 0
+        for (k in cap until n) work[fresh[k]] = false
     }
 
     /** out = at least [need] of the 3×3 neighbourhood set, edges replicated (5: median, 1: max). */

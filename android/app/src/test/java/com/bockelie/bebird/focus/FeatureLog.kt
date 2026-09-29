@@ -34,14 +34,14 @@ class FeatureLog(val name: String, val rows: List<Row>) {
             return FeatureLog(name, rows)
         }
 
-        /** Percent (floored, as the prototype's summary does) of frames matching, per [step] s window. */
+        /** Percent (rounded, as in the table of docs/focus-detection.md) of frames matching, per [step] s window. */
         fun <T> perWindow(items: List<T>, time: (T) -> Double, step: Double = 5.0, hit: (T) -> Boolean): List<Int> {
             val out = ArrayList<Int>()
             val tmax = time(items.last())
             var s = 0.0
             while (s <= tmax) {
                 val w = items.filter { time(it) >= s && time(it) < s + step }
-                if (w.isNotEmpty()) out += 100 * w.count(hit) / w.size
+                if (w.isNotEmpty()) out += Math.round(100.0 * w.count(hit) / w.size).toInt()
                 s += step
             }
             return out

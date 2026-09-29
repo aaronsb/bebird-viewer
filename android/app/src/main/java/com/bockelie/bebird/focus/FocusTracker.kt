@@ -93,14 +93,21 @@ class FocusTracker(private val cfg: FocusConfig = FocusConfig()) {
         }
     }
 
+    /**
+     * One frame's features. [time] is in seconds from a monotonic clock (for example
+     * `SystemClock.elapsedRealtimeNanos() / 1e9`, never wall time); a time before the previous
+     * one is taken as the previous one, and a stuck clock can't grow the windows without bound.
+     */
     fun update(
-        t: Double,
+        time: Double,
         roll: Int,
         bright: Double,
         sharpRaw: Double,
         motion: Double,
         tipFraction: Double,
     ): FocusResult {
+        require(time.isFinite()) { "frame time must be finite, not $time" }
+        val t = if (tLast.isNaN()) time else max(time, tLast)
         val dt = if (tLast.isNaN()) 0.1 else max(1e-3, t - tLast)
         tLast = t
         sharp = if (sharp.isNaN()) sharpRaw else sharp + cfg.sharpAlpha * (sharpRaw - sharp)
@@ -188,7 +195,7 @@ class FocusTracker(private val cfg: FocusConfig = FocusConfig()) {
         )
     }
 
-    /** (time, value) samples in arrival order, oldest dropped by time. */
+    /** (time, value) samples in arrival order, oldest dropped by time or beyond [MAX]. */
     private class Window {
         private var ts = DoubleArray(64)
         private var vs = DoubleArray(64)
@@ -197,7 +204,16 @@ class FocusTracker(private val cfg: FocusConfig = FocusConfig()) {
 
         private fun at(k: Int) = (start + k) % ts.size
 
+        companion object {
+            /** Far above any window at ~10 fps (30 s: ~300); only a stuck clock reaches it. */
+            const val MAX = 4096
+        }
+
         fun add(t: Double, v: Double) {
+            if (size == MAX) {
+                start = (start + 1) % ts.size
+                size--
+            }
             if (size == ts.size) {
                 val nt = DoubleArray(ts.size * 2)
                 val nv = DoubleArray(ts.size * 2)

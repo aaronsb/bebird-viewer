@@ -22,14 +22,20 @@ class FocusEstimator(private val cfg: FocusConfig = FocusConfig()) : FrameEstima
     private val hist = IntArray(512)
     private var lumaBuf: ByteArray? = null
 
-    /** Tip mask blocks (60×60, row-major, 8×8 px each on the raw frame); true = masked out. */
+    /**
+     * A copy of the tip mask blocks (60×60, row-major, 8×8 px each on the raw frame; true =
+     * masked out). Call it on the thread that calls [update], between frames: the estimator
+     * isn't synchronised.
+     */
     fun tipBlocks(): BooleanArray = tip.blocks.copyOf()
 
     /**
      * One frame: [luma] is SIZE×SIZE, row-major, unsigned bytes (ITU-R 601 luma), [t] the
-     * arrival time in seconds, [roll] the packet's roll angle in degrees (0-359).
+     * arrival time in seconds from a monotonic clock (see [FocusTracker.update]), [roll] the
+     * packet's roll angle in degrees (0-359).
      */
     override fun update(luma: ByteArray, t: Double, roll: Int): FocusResult {
+        require(t.isFinite()) { "frame time must be finite, not $t" }
         prim.compute(luma)
         val small = prim.small
         var motion = 0.0

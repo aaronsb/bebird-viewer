@@ -33,9 +33,11 @@ object FrameGeometry {
     internal val circleCount = IntArray(BLOCKS)
     internal val halfCircleCount = IntArray(BLOCKS)
 
-    /** "Circle blocks": more than 200/255 covered by the disc (box-downsampled like the frame). */
-    val circleBlocks: IntArray
-    val isCircleBlock = BooleanArray(BLOCKS)
+    /**
+     * "Circle blocks": more than 200/255 covered by the disc (box-downsampled like the frame).
+     * Internal arrays are shared and must not be written.
+     */
+    internal val circleBlocks: IntArray
 
     init {
         for (y in 0 until SIZE) {
@@ -57,10 +59,7 @@ object FrameGeometry {
                 for (xx in 0 until BLOCK) if (inCircle(bx * BLOCK + xx, y)) n++
                 acc += (n * 255 + BLOCK / 2) / BLOCK
             }
-            if ((acc + BLOCK / 2) / BLOCK > 200) {
-                list.add(by * GRID + bx)
-                isCircleBlock[by * GRID + bx] = true
-            }
+            if ((acc + BLOCK / 2) / BLOCK > 200) list.add(by * GRID + bx)
         }
         circleBlocks = list.toIntArray()
     }

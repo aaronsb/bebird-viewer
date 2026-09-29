@@ -8,38 +8,40 @@ This is a **best-effort proximity hint**:
 - **The absence of the cue must not be read as clearance.** A smooth or featureless surface reads soft even when in focus, so misses are possible.
 - The wording stays "proximity" and "CLOSE", never anything medical.
 
-The algorithm was developed and tuned with a desktop prototype, first on recorded sessions and then live. The operator reported that in an ear the CLOSE cue coincided with feeling the tip make contact. The Kotlin port lives in `android/app/src/main/java/com/bockelie/bebird/focus/`:
+The algorithm was developed and tuned with a desktop prototype, first on recorded sessions and then live. The Kotlin port lives in `android/app/src/main/java/com/bockelie/bebird/focus/`:
 
 - `FocusEstimator` takes frames and returns a `FocusResult`.
 - `FocusTracker` is the time-series and state-machine stage, which can be driven directly with features.
 - `ScaleOverlay` produces the overlay geometry as drawing primitives.
-- `ProximityGate` and `ProximitySettings` are the master switch and the persisted settings (below).
+- `ProximityGate` is the master switch's per-frame gate (below).
 - `FocusConfig` holds every constant.
 
-The core uses no Android types. `BitmapLuma.kt` is the thin adapter from a decoded `Bitmap`.
+The core uses no Android types. `BitmapLuma.kt` is the thin adapter from a decoded `Bitmap`, which must be a software ARGB_8888 bitmap (BitmapFactory's default; a HARDWARE bitmap can't be read back) of the raw, unrotated frame.
+
+The estimator isn't synchronised: feed it, and read `tipBlocks()`, from one frame thread.
 
 ## Master switch and settings
 
 Proximity estimation has a master setting, **Proximity estimation**, which is on by default because it has been validated in use.
 
-When it is off, the estimator doesn't run at all. `ProximityGate` holds the estimator; its `onFrame(t, roll) { buf -> … }` is the per-frame hook:
+When it is off, the estimator doesn't run at all. `ProximityGate` holds the estimator and the per-frame buffers; its `onFrame(t, roll) { buffers -> bitmap.lumaInto(buffers) }` is the per-frame hook:
 
-- **Disabled:** there is no estimator and no luma buffer. `onFrame` returns null without calling its luma callback. So there is no luma extraction, no mask learning, no metrics and no allocation (it is inline, and a test checks this).
-- **Enabling** (`setEnabled(true)`) creates a fresh estimator. Enabling mid-stream starts over with the warm-up, an empty tip mask and no sharpness peak.
-- **Disabling** drops the estimator with everything it learned.
+- **Disabled:** there is no estimator and no buffers. `onFrame` returns null without calling its fill callback, so there is no luma extraction, no mask learning, no metrics and no allocation.
+- **Enabling** (`setEnabled(true)`) creates a fresh estimator and buffers. Enabling mid-stream starts over: warm-up, an empty tip mask, disarmed, no sharpness peak. A new object is fresh by construction, so there is no `reset()` that could forget a field.
+- **Disabling** releases the estimator, with everything it learned, and the buffers.
 
 With estimation off there is **no overlay**: no rings and no CLOSE (`ScaleOverlay.forFrame(null, …)` is empty). The scale is only drawn when the estimator can say whether it holds; it is never shown permanently "unverified".
 
-The sub-settings are the **scale style** (ring, the default; bowtie; bar; or none) and the **CLOSE indicator** (on by default). They only have an effect while estimation is on. `ProximitySettings` persists them, and the master switch, in the app's settings store (SharedPreferences, like the remembered device), each under its own key. Turning estimation off and on again keeps the previous style and CLOSE choice; only the estimator's learned state resets.
+**Settings (for the wiring):** the master switch (default on), the **scale style** (ring, the default; bowtie; bar; or none) and the **CLOSE indicator** (default on) are persisted in the app's existing settings store (SharedPreferences, like the remembered device), each under its own key and independent of the others. The master switch only gates whether the estimator runs: turning it off and on again keeps the previous style and CLOSE choice, and only the estimator's learned state (tip mask, peaks, arming) resets. The sub-settings only have an effect while estimation is on. They are app settings, not `FocusConfig` constants, and the wiring reads them once when they change, not per frame.
 
-Everything below runs **per frame, on the raw sensor frame, before any rotation**. The probe tip is fixed to the camera, so on the raw frame its pixels stay put while the scene moves, and the tip mask depends on this. Only the displayed image (and the overlay, if it should follow the screen) is rotated, after the estimator has run.
+**Time:** `t` must come from a monotonic clock, such as `SystemClock.elapsedRealtimeNanos() / 1e9`, never wall time. It must be finite. A frame time earlier than the previous one is taken as the previous one, and the windows are bounded even if the clock sticks.
 
 ## 1. Inputs
 
 | input | source | notes |
 |---|---|---|
 | frame | the reassembled, decoded JPEG | 480×480, unrotated. Luma: `L = (19595 R + 38470 G + 7471 B + 32768) >> 16`, the ITU-R 601 weights 0.299, 0.587 and 0.114, rounded the way Pillow's `convert("L")` does. |
-| t | arrival time of the frame, in seconds | Used for every window. Frames arrive at about 10 fps, but the intervals vary (stalls of up to 0.4 s have been seen). Real timestamps are used, never frame counts, except where a count is stated. |
+| t | arrival time of the frame, in seconds, from a monotonic clock | Used for every window. Frames arrive at about 10 fps, but the intervals vary (stalls of up to 0.4 s have been seen). Real timestamps are used, never frame counts, except where a count is stated. |
 | roll | the frame's last packet: `angle = d[3] + (d[1] == 2 ? 256 : 0)` | Degrees, 0–359. It is unwrapped to the nearest turn: `unw += ((raw − prev_raw + 180) mod 360) − 180`. |
 | light level | the tip-light setting (raw 22–50) | **Not used.** The thresholds were tuned at raw 42, the operator's usual level. If the level changes a lot, the brightness thresholds in §5 may need scaling. This hasn't been validated. |
 
@@ -260,10 +262,18 @@ The desktop prototype is the reference, and the port follows it where the origin
 - the rescale ratios `k_sharp` and `k_bright` on rebuild frames;
 - the prototype's `state`, `close` and `armed`.
 
-It also holds two synthetic runs, whose frames `SyntheticScope` regenerates bit for bit.
+It also holds four synthetic runs, whose frames `SyntheticScope` regenerates bit for bit:
 
-- `RegressionReplayTest` feeds the recorded features through `FocusTracker`. It checks the states frame by frame (they currently agree on every frame) and per 5 s window against the table below, within 3 percentage points.
-- `GoldenPipelineTest` runs the whole estimator on the synthetic frames against the prototype's output on the same frames.
+- `synthetic-tip` and `synthetic-notip`: coarse handling in dim light, an approach, careful movement lit, then set down, with and without a tip;
+- `synthetic-cap`: a bright, soft ring around the tip that isn't static, so only the cap evidence can add it. It dims briefly (hysteresis keeps it) and then for good (it leaves);
+- `synthetic-removal`: the tip taken off mid-run (its blocks leave only after sustained change).
+
+`android/app/src/test/tools/focus_golden.py` regenerates all of these logs from the prototype, which is kept outside the repository with the recordings. It contains the synthetic scripts, the same as `SyntheticScope`'s.
+
+- `RegressionReplayTest` feeds the recorded features through `FocusTracker`. States, CLOSE and arming must agree with the prototype on every frame, and the per-5 s percentages must equal the table below.
+- `GoldenPipelineTest` runs the whole estimator on the synthetic frames against the prototype's output on the same frames. Motion, the tip fraction, states, CLOSE and arming agree exactly; brightness and sharpness agree closely (see Port notes).
+
+The live-180731 run was recorded with the tip in an ear. There the operator reported that the CLOSE cue coincided with feeling the tip make contact. That is one observation of the cue working as intended, not a guarantee.
 
 | recording | scenario | in-zone % per 5 s | CLOSE % per 5 s | tip mask (max) |
 |---|---|---|---|---|
@@ -272,7 +282,7 @@ It also holds two synthetic runs, whose frames `SyntheticScope` regenerates bit 
 | live-173059 | no tip, ruler: far 0–15 s, on ruler 20–40 s and 55–85 s, too close/soft 85–102 s | 0 0 0 8 79 100 100 83 2 0 2 73 69 94 83 44 56 0 0 0 7 18 0 | 0 0 0 8 73 100 33 15 2 0 2 73 60 41 56 37 46 0 0 0 7 18 0 | 0.00 |
 | live-174920 | no tip, ruler, LED dips ignored: on ruler 10–50 s, set down 60 s+ | 0 0 29 56 61 0 22 35 17 28 0 0 0 0 0 | 0 0 27 49 61 0 22 35 15 26 0 0 0 0 0 | 0.00 |
 | live-175352 | no tip on ruler 10–25 s; tip fitted ~31–33 s; tip on ruler 40–50 s; set down 55 s+ | 0 2 67 88 65 0 0 0 56 30 0 0 0 0 0 | 0 2 65 88 65 0 0 0 56 30 0 0 0 0 0 | 0.20 |
-| live-180731 | tip on, ear (operator-validated): entry ~40 s, careful in-ear 60–90 s, out/set down 90 s+ | 0 0 8 34 18 0 0 18 0 0 0 0 29 43 69 100 69 71 0 0 0 0 0 0 0 0 0 | 0 0 8 32 11 0 0 18 0 0 0 0 29 43 69 100 67 71 0 0 0 0 0 0 0 0 0 | 0.27 |
+| live-180731 | tip on, ear (operator-observed): entry ~40 s, careful in-ear 60–90 s, out/set down 90 s+ | 0 0 8 34 18 0 0 18 0 0 0 0 29 43 69 100 69 71 0 0 0 0 0 0 0 0 0 | 0 0 8 32 11 0 0 18 0 0 0 0 29 43 69 100 67 71 0 0 0 0 0 0 0 0 0 | 0.27 |
 
 What the table shows:
 
