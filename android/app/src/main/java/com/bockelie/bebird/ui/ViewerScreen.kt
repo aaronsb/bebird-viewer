@@ -203,6 +203,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                         modifier = Modifier.fillMaxWidth().weight(1f),
                         proximity = ScaleOverlay.forFrame(proximityResult, proximityState.style, proximityState.close),
                         overlayRenderer = overlayRenderer,
+                        status = CircleStatus.of(wifi, stats.frame != null),
                     )
                 }
                 // While paused, the band as it was at that moment (and as it is saved).

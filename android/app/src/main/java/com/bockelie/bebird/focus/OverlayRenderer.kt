@@ -19,7 +19,7 @@ import kotlin.math.sqrt
  * are in raw-frame pixels; the output maps raw (x, y) to ((x − originX) · [f], (y − originY) · [f])
  * so rings stay one device pixel (times [k]) thin at any display size. Pure.
  */
-class OverlayRenderer(private val font: GlyphSource) {
+class OverlayRenderer(val font: GlyphSource) {
     /**
      * Render [shapes] into a [width] × [height] image at [f] output pixels per raw pixel, with
      * the raw point ([originX], [originY]) at the output's top left.

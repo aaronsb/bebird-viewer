@@ -2,6 +2,7 @@
 package com.bockelie.bebird.ui
 
 import android.graphics.Bitmap
+import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,23 +44,28 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import com.bockelie.bebird.R
 import com.bockelie.bebird.band.BandRenderer
+import com.bockelie.bebird.band.CircleText
+import com.bockelie.bebird.band.GlyphSource
 import com.bockelie.bebird.band.toBitmap
 import com.bockelie.bebird.capture.ZoomCrop
 import com.bockelie.bebird.focus.FrameGeometry
 import com.bockelie.bebird.focus.OverlayRenderer
 import com.bockelie.bebird.focus.OverlayShape
 import com.bockelie.bebird.focus.ScaleOverlay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
  * The image circle inside a rectangular viewport. Pinch zooms (1-6x) and drag pans, clipped
  * to the viewport; double-tap resets. Display only: nothing here changes what is received.
+ * While there is no [frame], the circle says [status] (#32).
  */
 @Composable
 fun ZoomableCircle(
     frame: Bitmap?, rotation: Int, outline: Boolean, view: ZoomView, modifier: Modifier,
     proximity: List<OverlayShape> = emptyList(), overlayRenderer: OverlayRenderer? = null,
+    status: CircleStatus? = null,
 ) {
     // Outside the image circle the viewport is the band's black, not the theme's surface, so
     // image and band read as one panel (as in saved stills with the overlay).
@@ -118,6 +124,10 @@ fun ZoomableCircle(
                 if (frame != null && overlayRenderer != null) {
                     ScaleLayer(proximity.filterNot(::isClose), overlayRenderer, side.toInt(), scaleLayerRotation(rotation))
                 }
+                // Display only, like the scale: captures take the frame, never this layer.
+                if (frame == null && status != null && overlayRenderer != null) {
+                    StatusLayer(status, overlayRenderer.font, side.toInt(), Modifier.align(Alignment.Center))
+                }
             }
             // CLOSE stays upright at the viewport's upper left, whatever the roll or zoom.
             if (frame != null && overlayRenderer != null) {
@@ -157,6 +167,41 @@ private fun ScaleLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, si
         filterQuality = FilterQuality.None,
         modifier = Modifier.fillMaxSize().rotate(rotation),
     )
+}
+
+/**
+ * [status] in the empty circle, in the band's font at the same whole scale as CLOSE: drawn at
+ * 1/k of the circle's [side], off the main thread, and scaled up k times without smoothing.
+ */
+@Composable
+private fun StatusLayer(status: CircleStatus, font: GlyphSource, side: Int, modifier: Modifier) {
+    val k = maxOf(1, side / FrameGeometry.SIZE)
+    val small = side / k
+    val title = stringResource(status.title)
+    val hint = stringResource(status.hint)
+    val text = remember(font) { CircleText(font) }
+    var image by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(text, title, hint, small) {
+        image = try {
+            if (small <= 0) null
+            else withContext(Dispatchers.Default) { text.render(listOf(title, hint), small).toBitmap().asImageBitmap() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Log.e("BebirdSpike", "circle status not drawn", e)
+            null
+        }
+    }
+    val shown = image ?: return
+    with(LocalDensity.current) {
+        Image(
+            bitmap = shown,
+            contentDescription = "$title. $hint",
+            contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.None,
+            modifier = modifier.size((shown.width * k).toDp(), (shown.height * k).toDp()),
+        )
+    }
 }
 
 /** The CLOSE indicator's raw-frame window: the triangle and its label, upper left. */

@@ -99,6 +99,21 @@ class PixelImage(val width: Int, val height: Int, val pixels: IntArray) {
 }
 
 /**
+ * [g]'s set pixels with the top left of its cell at ([x0], [y0]) in a [width] × [height] ARGB
+ * buffer, each as an [s] × [s] block of [color]; what falls outside the buffer is dropped.
+ */
+internal fun drawGlyph(px: IntArray, width: Int, height: Int, g: PixelFont.Glyph, x0: Int, y0: Int, s: Int, color: Int) {
+    for (gy in 0 until PixelFont.HEIGHT) for (gx in 0 until g.cells * PixelFont.CELL) {
+        if (!g.pixel(gx, gy)) continue
+        for (dy in 0 until s) for (dx in 0 until s) {
+            val x = x0 + gx * s + dx
+            val y = y0 + gy * s + dy
+            if (x in 0 until width && y in 0 until height) px[y * width + x] = color
+        }
+    }
+}
+
+/**
  * Draws the band and composes saved output. Pure: works on ARGB int arrays, so the screen
  * (via a Bitmap of the same pixels) and saved files look identical.
  *
@@ -123,16 +138,7 @@ class BandRenderer(private val font: GlyphSource) {
         for (p in BandLayout.place(d, font)) {
             val g = font.glyph(p.codepoint) ?: continue
             val color = if (p.bright) VALUE else TAG
-            val x0 = left + p.col * PixelFont.CELL * s
-            val y0 = (PAD + p.row * PixelFont.HEIGHT) * s
-            for (gy in 0 until PixelFont.HEIGHT) for (gx in 0 until g.cells * PixelFont.CELL) {
-                if (!g.pixel(gx, gy)) continue
-                for (dy in 0 until s) for (dx in 0 until s) {
-                    val x = x0 + gx * s + dx
-                    val y = y0 + gy * s + dy
-                    if (x in 0 until width && y in 0 until h) px[y * width + x] = color
-                }
-            }
+            drawGlyph(px, width, h, g, left + p.col * PixelFont.CELL * s, (PAD + p.row * PixelFont.HEIGHT) * s, s, color)
         }
         return PixelImage(width, h, px)
     }
