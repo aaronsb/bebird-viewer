@@ -44,7 +44,9 @@ data class HoldPattern(val fill: List<HoldPulse>, val done: List<HoldPulse>) {
          */
         fun light(durationMs: Long): HoldPattern {
             val last = durationMs - END_GUARD_MS - TICK_MS  // the last tick's start
-            if (last <= 0) return HoldPattern(listOf(HoldPulse(0, TICK_MS, TICK_AMP_END)), listOf(HoldPulse(0, FIRM_MS, MAX_AMP)))
+            val done = listOf(HoldPulse(0, FIRM_MS, MAX_AMP))
+            // Too short to speed up: one tick on the press if it fits, or none.
+            if (last < TICK_MS + TICK_GAP_END_MS) return HoldPattern(if (last >= 0) listOf(tick(0, durationMs)) else emptyList(), done)
             // As many gaps as fit when they run from TICK_GAP_START_MS down to TICK_GAP_END_MS;
             // the first then shrinks a little so that together they end at `last`.
             val n = maxOf(1, ceil(2.0 * last / (TICK_GAP_START_MS + TICK_GAP_END_MS)).toInt())
@@ -59,7 +61,7 @@ data class HoldPattern(val fill: List<HoldPulse>, val done: List<HoldPulse>) {
                 t += g
                 ticks += tick(t, durationMs)
             }
-            return HoldPattern(ticks, listOf(HoldPulse(0, FIRM_MS, MAX_AMP)))
+            return HoldPattern(ticks, done)
         }
 
         private fun tick(at: Long, durationMs: Long) =
@@ -138,31 +140,34 @@ class HoldWaveform(val timings: LongArray, val amplitudes: IntArray) {
 }
 
 /**
- * Whose hold it is: one at a time across the app, so a second finger on the other hold button
- * can neither start a hold nor silence or replace the first one's vibration (#44). The first
- * hold keeps its turn until it ends. Main thread only.
+ * Whose hold it is, among the hold buttons of one screen: one at a time, so a second finger on
+ * another hold button can neither start a hold nor silence or replace the first one's vibration
+ * (#44). The first hold keeps its turn until it ends. A holder that is no longer holding loses
+ * it to the next one that asks, so a turn never given back can't lock the buttons. Main thread.
  */
 class HoldTurn {
-    private var holder: Any? = null
+    /** One of the buttons sharing a turn. */
+    interface Holder {
+        /** A hold is in progress on it. */
+        val isHolding: Boolean
+    }
 
-    /** [who] takes the turn; false if another hold has it. Taking it again is fine. */
-    fun take(who: Any): Boolean {
-        if (holder != null && holder !== who) return false
+    private var holder: Holder? = null
+
+    /** [who] takes the turn; false if another holder has it and is holding. Taking it again is fine. */
+    fun take(who: Holder): Boolean {
+        val h = holder
+        if (h != null && h !== who && h.isHolding) return false
         holder = who
         return true
     }
 
     /** [who] is done; nothing if it didn't have the turn. */
-    fun give(who: Any) {
+    fun give(who: Holder) {
         if (holder === who) holder = null
     }
 
-    fun isHeldBy(who: Any): Boolean = holder === who
-
-    companion object {
-        /** The app's one turn, shared by every hold button. */
-        val shared = HoldTurn()
-    }
+    fun isHeldBy(who: Holder): Boolean = holder === who
 }
 
 /**

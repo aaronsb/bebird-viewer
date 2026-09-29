@@ -116,18 +116,56 @@ class HoldHapticsTest {
         }
     }
 
+    private class Button : HoldTurn.Holder {
+        override var isHolding = false
+    }
+
     @Test fun oneHoldAtATime() {
         // two fingers on the top row: the second hold button can't start, stop or replace anything
         val turn = HoldTurn()
-        val quitButton = Any()
-        val disconnectButton = Any()
+        val quitButton = Button()
+        val disconnectButton = Button()
         assertTrue(turn.take(quitButton))
+        quitButton.isHolding = true
         assertFalse(turn.take(disconnectButton))
         turn.give(disconnectButton)  // its release: not its turn to give
         assertTrue(turn.isHeldBy(quitButton))
         assertTrue(turn.take(quitButton))  // a key press on the same button: still its turn
         turn.give(quitButton)
+        quitButton.isHolding = false
         assertTrue(turn.take(disconnectButton))
+    }
+
+    @Test fun aTurnNeverGivenBackIsReclaimed() {
+        // a holder that stopped holding without giving the turn back can't lock the other buttons
+        val turn = HoldTurn()
+        val stuck = Button().apply { isHolding = true }
+        val quitButton = Button()
+        assertTrue(turn.take(stuck))
+        assertFalse(turn.take(quitButton))
+        stuck.isHolding = false  // its hold ended, but give() never came
+        assertTrue(turn.take(quitButton))
+        assertTrue(turn.isHeldBy(quitButton))
+        turn.give(stuck)  // late: changes nothing
+        assertTrue(turn.isHeldBy(quitButton))
+    }
+
+    @Test fun everyLengthOfHoldGivesAValidPattern() {
+        for (feel in HoldFeel.entries) for (ms in 1L..10_000L) {
+            val p = HoldPattern.of(feel, ms)
+            for (pulses in listOf(p.fill, p.done, HoldPattern.onOff(p.fill), HoldPattern.onOff(p.done))) {
+                val w = HoldWaveform.of(pulses)  // throws on overlap or disorder
+                assertEquals("$feel $ms ms", w.timings.size, w.amplitudes.size)
+                assertTrue("$feel $ms ms", w.timings.all { it >= 0 } && w.amplitudes.all { it in 0..255 })
+            }
+            if (p.fill.isNotEmpty()) assertTrue("$feel $ms ms: fill ends at ${p.fill.end()}", p.fill.end() <= ms)
+            assertEquals("$feel $ms ms", 1, p.done.size)
+        }
+    }
+
+    @Test fun aVeryShortLightHoldTicksOnceOrNotAtAll() {
+        assertEquals(listOf(0L), HoldPattern.light(140).fill.map { it.atMs })
+        assertTrue(HoldPattern.light(40).fill.isEmpty())
     }
 
     @Test fun overlappingPulsesAreRefused() {

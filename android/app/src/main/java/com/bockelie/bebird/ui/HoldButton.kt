@@ -123,7 +123,7 @@ class Hold(val durationMs: Long, private val tapMs: Long = TAP_MS) {
  * A button that acts only once held for [durationMs] (#38): while held it fills from left to
  * right in its content colour, and let go early the fill drains back. It vibrates as it fills
  * and again on completion, as [feel] says ([HoldPattern], #44); let go early, the vibration
- * stops at once. One hold at a time across the app ([HoldTurn]): a press on another hold button
+ * stops at once. One hold at a time among the buttons sharing [turn]: a press on another of them
  * meanwhile does nothing. [onHeld] runs on completion, without waiting for the release; holding
  * on doesn't repeat it. A tap runs [onTap], for a hint. It holds the same way with Enter, Space
  * or the D-pad centre key once focused. A screen reader gets [onHeld] as the click action, with
@@ -137,6 +137,7 @@ fun HoldButton(
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
     feel: HoldFeel = HoldFeel.LIGHT,
+    turn: HoldTurn = remember { HoldTurn() },
     enabled: Boolean = true,
     description: String? = null,
     colors: ButtonColors = ButtonDefaults.buttonColors(),
@@ -145,7 +146,7 @@ fun HoldButton(
 ) {
     val fill = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
-    val driver = remember(durationMs, feel) { HoldDriver(Hold(durationMs), HoldPattern.of(feel, durationMs), fill, scope) }
+    val driver = remember(durationMs, feel, turn) { HoldDriver(Hold(durationMs), HoldPattern.of(feel, durationMs), fill, scope, turn) }
     val context = LocalContext.current
     val vibrator = remember(context) { HoldVibrator(context) }
     SideEffect {
@@ -225,8 +226,10 @@ private class HoldDriver(
     private val pattern: HoldPattern,
     private val fill: Animatable<Float, AnimationVector1D>,
     private val scope: CoroutineScope,
-    private val turn: HoldTurn = HoldTurn.shared,
-) {
+    private val turn: HoldTurn,
+) : HoldTurn.Holder {
+    override val isHolding: Boolean get() = hold.isHeld
+
     var vibrator: HoldVibrator? = null
     var onHeld: () -> Unit = {}
     var onTap: () -> Unit = {}
