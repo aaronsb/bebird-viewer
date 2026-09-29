@@ -17,48 +17,54 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import com.bockelie.bebird.R
 import com.bockelie.bebird.annotate.AnnotationRenderer
 import com.bockelie.bebird.annotate.Drag
 import com.bockelie.bebird.annotate.ImageFit
 import com.bockelie.bebird.annotate.Mark
 import com.bockelie.bebird.annotate.Palette
+import com.bockelie.bebird.annotate.Picker
 import com.bockelie.bebird.annotate.Pt
 import com.bockelie.bebird.annotate.Tool
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.band.toBitmap
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
 
 /**
  * The annotate tool and colour in use, and where a text label is being placed (its dialog
@@ -89,7 +95,8 @@ class AnnotateTools {
 /**
  * The paused, upright [image] fitted whole in the viewport (no zoom), with [marks] over it.
  * Dragging draws with the current tool, from where the finger went down, following that
- * finger only; with Text, a tap chooses where the label goes. No input while not [enabled]
+ * finger only; with Text, a tap chooses where the label goes; with Move, a drag on a mark
+ * moves it and holding still on it deletes it. No input while not [enabled]
  * (a save is running). Marks are kept in image coordinates ([ImageFit]). The marks
  * layer is drawn by the same [AnnotationRenderer] at the frame's own size, then scaled like
  * the frame, so the screen shows the saved file's pixels.
@@ -97,10 +104,15 @@ class AnnotateTools {
 @Composable
 fun AnnotateCanvas(
     image: Bitmap, marks: List<Mark>, renderer: AnnotationRenderer, tools: AnnotateTools, outline: Boolean,
-    enabled: Boolean, onMark: (Mark) -> Unit, modifier: Modifier,
+    enabled: Boolean, onMark: (Mark) -> Unit, onMove: (Int, Mark) -> Unit, onDelete: (Int) -> Unit, modifier: Modifier,
 ) {
     val description = stringResource(R.string.annotate_canvas_description)
     val addMark by rememberUpdatedState(onMark)
+    val moveMark by rememberUpdatedState(onMove)
+    val deleteMark by rememberUpdatedState(onDelete)
+    val current by rememberUpdatedState(marks)
+    val haptic = LocalHapticFeedback.current
+    val picker = remember(renderer, image.width, image.height) { Picker(renderer, image.width, image.height) }
     BoxWithConstraints(modifier.clipToBounds().background(Color(BandRenderer.BACKGROUND))) {
         val vw = constraints.maxWidth.toFloat()
         val vh = constraints.maxHeight.toFloat()
@@ -108,7 +120,11 @@ fun AnnotateCanvas(
         val w = fit.width.roundToInt()
         val h = fit.height.roundToInt()
         var stroke by remember { mutableStateOf(emptyList<Pt>()) }  // the drag in progress
-        val layer = rememberLayer(marks, image.width, image.height, renderer)
+        // Move: the mark under the finger (highlighted), and where it is being moved to
+        var picked by remember { mutableStateOf<Int?>(null) }
+        var moving by remember { mutableStateOf<Mark?>(null) }
+        val shown = moving?.let { m -> picked?.let { i -> marks.mapIndexed { j, o -> if (j == i) m else o } } } ?: marks
+        val layer = rememberLayer(shown, image.width, image.height, renderer)
         with(LocalDensity.current) {
             Box(Modifier.offset { IntOffset(fit.left.roundToInt(), fit.top.roundToInt()) }.size(w.toDp(), h.toDp())) {
                 // As the live view shows it: the image circle, and the hair-thin ring with the overlay.
@@ -131,11 +147,81 @@ fun AnnotateCanvas(
             }
         }
         Canvas(
-            Modifier.fillMaxSize().semantics { contentDescription = description }.pointerInput(tools.tool, tools.color, fit, enabled) {
+            Modifier.fillMaxSize().semantics { contentDescription = description }.pointerInput(tools.tool, tools.color, fit, enabled, picker) {
                 if (!enabled) return@pointerInput
                 val tool = tools.tool
                 val color = tools.color
-                if (tool == Tool.TEXT) {
+                if (tool == Tool.MOVE) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        val start = fit.toImage(down.position.x, down.position.y)
+                        val tolerance = Picker.tolerance(density, fit.width, image.width)
+                        val index = picker.pick(current, start, tolerance) ?: return@awaitEachGesture  // empty space
+                        val mark = current[index]
+                        try {
+                            picked = index
+                            // Within the long-press timeout, moving past the touch slop starts a
+                            // move; holding still until it runs out deletes. Only the first finger counts.
+                            var at = down.position
+                            val press = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                var result: Press? = null
+                                while (result == null) {
+                                    val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
+                                    result = when {
+                                        change == null || change.isConsumed -> Press.GONE
+                                        !change.pressed -> Press.LIFTED
+                                        (change.position - down.position).getDistance() > viewConfiguration.touchSlop -> {
+                                            change.consume()
+                                            at = change.position
+                                            Press.DRAG
+                                        }
+                                        else -> null
+                                    }
+                                }
+                                result
+                            }
+                            // The marks may have changed meanwhile (Undo with another finger): then leave them be.
+                            fun still() = current.getOrNull(index) === mark
+                            when (press) {
+                                null -> {
+                                    if (still()) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        deleteMark(index)
+                                    }
+                                    picked = null
+                                    // the rest of this touch does nothing
+                                    while (true) {
+                                        val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                                        change.consume()
+                                        if (!change.pressed) break
+                                    }
+                                }
+                                Press.DRAG -> {
+                                    fun follow(p: Offset) {
+                                        val to = fit.toImage(p.x, p.y)
+                                        moving = picker.moved(mark, to.x - start.x, to.y - start.y)
+                                    }
+                                    follow(at)
+                                    while (true) {
+                                        val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                                        if (!change.pressed) {
+                                            // one history entry for the whole drag
+                                            moving?.let { if (still()) moveMark(index, it) }
+                                            break
+                                        }
+                                        if (change.isConsumed) break  // taken by something else: the mark stays
+                                        change.consume()
+                                        follow(change.position)
+                                    }
+                                }
+                                Press.LIFTED, Press.GONE -> Unit
+                            }
+                        } finally {
+                            picked = null
+                            moving = null
+                        }
+                    }
+                } else if (tool == Tool.TEXT) {
                     detectTapGestures { tools.textAt = fit.toImage(it.x, it.y) }
                 } else {
                     awaitEachGesture {
@@ -173,6 +259,8 @@ fun AnnotateCanvas(
             }
             for (m in pending) strokes(m, fit, image.width, image.height)
             Drag.mark(tools.tool, stroke, tools.color)?.let { strokes(it, fit, image.width, image.height) }
+            // The mark a Move press has picked: what will move, or be deleted on a long press.
+            picked?.let { i -> (moving ?: marks.getOrNull(i))?.let { highlight(picker.bounds(it), fit) } }
         }
     }
 }
@@ -197,6 +285,18 @@ private fun DrawScope.strokes(m: Mark, fit: ImageFit, iw: Int, ih: Int) {
             )
         }
     }
+}
+
+/** How a Move press went before the long-press timeout ran out (null from the timeout: a long press). */
+private enum class Press { DRAG, LIFTED, GONE }
+
+/** A translucent box around [b] (image coordinates), a little larger, for the picked mark. */
+private fun DrawScope.highlight(b: Picker.Bounds, fit: ImageFit) {
+    val pad = 6.dp.toPx()
+    val topLeft = Offset(fit.toViewX(Pt(b.left, b.top)) - pad, fit.toViewY(Pt(b.left, b.top)) - pad)
+    val size = Size(fit.toViewX(Pt(b.right, b.bottom)) - topLeft.x + pad, fit.toViewY(Pt(b.right, b.bottom)) - topLeft.y + pad)
+    drawRect(Color.White.copy(alpha = 0.2f), topLeft, size)
+    drawRect(Color.White, topLeft, size, style = Stroke(width = 2.dp.toPx()))
 }
 
 /** The marks drawn at the frame's size, and which marks they are. */

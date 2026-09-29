@@ -111,13 +111,16 @@
     <string name="annotate_hint_draw">Paused on this frame. Drag on the picture to draw; Resume goes back to the live view.</string>
     <string name="annotate_hint_text">Paused on this frame. Tap where the text should start; Resume goes back to the live view.</string>
     <string name="annotate_saving">Saving…</string>
-    <string name="annotate_canvas_description">Paused picture. Drag to draw, or tap to place text, with the selected tool.</string>
+    <string name="annotate_canvas_description">Paused picture. Drag to draw, tap to place text, or move and delete marks, with the selected tool.</string>
     <string name="annotate_ellipse">Ellipse</string>
     <string name="annotate_ellipse_short">Oval</string>
     <string name="annotate_box">Box</string>
     <string name="annotate_arrow">Arrow</string>
     <string name="annotate_pen">Pen</string>
     <string name="annotate_text">Text</string>
+    <string name="annotate_move">Move</string>
+    <string name="annotate_move_description">Move or delete</string>
+    <string name="annotate_hint_move">Drag a mark to move it; hold to delete.</string>
     <string name="annotate_color">Color</string>
     <string name="color_red">Red</string>
     <string name="color_yellow">Yellow</string>

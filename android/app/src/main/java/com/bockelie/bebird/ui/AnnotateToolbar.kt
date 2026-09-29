@@ -63,7 +63,11 @@ fun AnnotateControls(
     val leave = { if (sketch.marks.isEmpty()) onResume() else confirmingDiscard = true }
     BackHandler(enabled = !saving, onBack = leave)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        val hint = if (tools.tool == Tool.TEXT) R.string.annotate_hint_text else R.string.annotate_hint_draw
+        val hint = when (tools.tool) {
+            Tool.TEXT -> R.string.annotate_hint_text
+            Tool.MOVE -> R.string.annotate_hint_move
+            else -> R.string.annotate_hint_draw
+        }
         Text(stringResource(if (saving) R.string.annotate_saving else hint), style = MaterialTheme.typography.bodySmall)
         ToolRow(tools.tool) { tools.tool = it }
         ColorRow(tools.color) { tools.color = it }
@@ -103,7 +107,7 @@ fun AnnotateControls(
     }
 }
 
-/** The tools as one segmented control; short labels so five fit a phone's width, full names for TalkBack. */
+/** The tools as one segmented control; short labels, a size smaller, so six fit a phone's width; full names for TalkBack. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ToolRow(tool: Tool, onTool: (Tool) -> Unit) {
@@ -113,6 +117,7 @@ private fun ToolRow(tool: Tool, onTool: (Tool) -> Unit) {
         Triple(Tool.ARROW, R.string.annotate_arrow, R.string.annotate_arrow),
         Triple(Tool.PEN, R.string.annotate_pen, R.string.annotate_pen),
         Triple(Tool.TEXT, R.string.annotate_text, R.string.annotate_text),
+        Triple(Tool.MOVE, R.string.annotate_move, R.string.annotate_move_description),
     )
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
         options.forEachIndexed { i, (t, label, name) ->
@@ -123,7 +128,7 @@ private fun ToolRow(tool: Tool, onTool: (Tool) -> Unit) {
                 shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
                 icon = {},  // no check mark: the labels keep their width
                 modifier = Modifier.semantics { contentDescription = description },
-            ) { Text(stringResource(label), maxLines = 1) }
+            ) { Text(stringResource(label), maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium) }
         }
     }
 }

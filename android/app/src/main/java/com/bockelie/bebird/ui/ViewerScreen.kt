@@ -192,6 +192,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
                         image = paused.shot.frame, marks = paused.sketch.marks, renderer = annotations, tools = annotateTools,
                         outline = paused.shot.overlay, enabled = !paused.progress.saving,
                         onMark = { m -> vm.editAnnotations { it.add(m) } },
+                        onMove = { i, m -> vm.editAnnotations { it.replace(i, m) } },
+                        onDelete = { i -> vm.editAnnotations { it.remove(i) } },
                         modifier = Modifier.fillMaxWidth().weight(1f),
                     )
                 } else {
