@@ -86,7 +86,7 @@ class ProximityWiringTest {
                 FocusTracker().update(t, 100, 30.0, 1.0, 0.0, 0.0)
             }
         }.apply { setEnabled(true) }
-        val errors = mutableListOf<Exception>()
+        val errors = mutableListOf<Throwable>()
         val hook = ProximityFrames(gate, { it.run() }, onError = { errors += it }) { results += it }
         hook.offer(0.0, 0) {}
         hook.offer(0.1, 0) {}  // throws inside the estimator
