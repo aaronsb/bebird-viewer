@@ -106,6 +106,39 @@ class ScaleStampTest {
         }
     }
 
+    @Test fun theNoteIsInTheCornerOutsideTheCircle() {
+        val note = stamp.withNote(PixelImage(480, 480, IntArray(480 * 480)))
+        val c = BandRenderer.Circle.inscribed(480, 480)
+        var drawnPixels = 0
+        for (y in 0 until 480) for (x in 0 until 480) {
+            if (note.at(x, y) == 0) continue
+            drawnPixels++
+            assertTrue("($x, $y) inside the circle", hypot(x - c.cx, y - c.cy) - c.r >= 0.5)
+        }
+        assertTrue(drawnPixels > 100)
+        // so with the overlay on, the hair-thin ring is exactly as without the scale
+        val plain = Frames.composed(upright, band, data, true)
+        val still = stamp.still(upright, band, data, true, locked)
+        for (i in 0 until 480 * 480) if (plain.pixels[i] == BandRenderer.CIRCLE) assertEquals(BandRenderer.CIRCLE, still.pixels[i])
+    }
+
+    @Test fun aNonSquareFrameHasTheScaleAtItsCentre() {
+        val layer = stamp.scaleOnly(locked, 600, 480)
+        assertTrue(layer.near(300, 240 - 40, ScaleOverlay.LOCK))
+        assertTrue(layer.near(300, 240 + 80, ScaleOverlay.LOCK))
+        assertTrue(layer.near(300 - 120, 240, ScaleOverlay.LOCK))
+    }
+
+    @Test fun drawingTheScaleCanFailWithoutStoppingAnything() {
+        var told: Throwable? = null
+        assertEquals(null, ScaleStamp.drawnOrNone<String>(null, { told = it }) { "x" })
+        assertEquals(locked to "x", ScaleStamp.drawnOrNone(locked, { told = it }) { "x" })
+        assertEquals(null, ScaleStamp.drawnOrNone<String>(locked, { told = it }) { null })
+        assertEquals(null, told)
+        assertEquals(null, ScaleStamp.drawnOrNone<String>(locked, { told = it }) { throw OutOfMemoryError("no room") })
+        assertTrue(told is OutOfMemoryError)
+    }
+
     @Test fun theNoteSitsAtTheUpperRight() {
         val still = stamp.still(upright, band, data, false, locked)
         fun tagIn(x0: Int, x1: Int, y0: Int, y1: Int) = (y0 until y1).any { y -> (x0 until x1).any { x -> still.at(x, y) == BandRenderer.TAG } }
@@ -113,6 +146,16 @@ class ScaleStampTest {
         assertFalse(tagIn(0, 240, 0, 60))
         // and not on the raw frame without a scale
         assertFalse(BandRenderer.TAG in stamp.still(upright, band, data, false, null).pixels)
+    }
+
+    @Test fun aZoomedCropsRingsStayThin() {
+        // a 3x crop of the middle 160 px: 1 mm is 120 px, but a locked ring is still 2 px thick
+        val rect = ZoomCrop.Rect(160, 160, 320, 320)
+        assertEquals(3, ZoomCrop.upscale(rect.width))
+        val zoomed = stamp.zoomed(upright, rect, band, data, false, locked)
+        val centre = (240 - 160) * 3 + 1  // frame pixel 240's centre in the crop
+        val thick = (centre - 120 - 8..centre - 120 + 8).count { y -> zoomed.at(centre, y) == ScaleOverlay.LOCK }
+        assertTrue("ring $thick px thick", thick in 1..3)
     }
 
     @Test fun aZoomedCropHasTheScaleCroppedAndEnlarged() {

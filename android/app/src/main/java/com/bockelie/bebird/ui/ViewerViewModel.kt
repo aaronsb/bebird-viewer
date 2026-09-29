@@ -260,12 +260,15 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         val s = shot(zoom = zoom) ?: return
         pausing = viewModelScope.launch {
             try {
-                val (upright, scaleLayer) = withContext(Dispatchers.Default) {
+                val (upright, drawnScale) = withContext(Dispatchers.Default) {
                     val upright = Frames.rotated(s.frame, s.rotation)
-                    upright to s.scale?.let { sc -> s.stamp?.layer(sc, upright.width, upright.height)?.toBitmap() }
+                    // If the scale can't be drawn, pause without it (and save none) rather than not at all.
+                    upright to ScaleStamp.drawnOrNone(s.scale, { Log.e("BebirdSpike", "scale not drawn on the paused frame", it) }) { sc ->
+                        s.stamp?.layer(sc, upright.width, upright.height)?.toBitmap()
+                    }
                 }
-                val paused = Capture.Shot(upright, 0, s.overlay, s.renderer, s.band, s.meta, null, s.scale, s.stamp)
-                _annotating.value = Annotating(paused, Sketch(), scaleLayer = scaleLayer)
+                val paused = Capture.Shot(upright, 0, s.overlay, s.renderer, s.band, s.meta, null, drawnScale?.first, s.stamp)
+                _annotating.value = Annotating(paused, Sketch(), scaleLayer = drawnScale?.second)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
