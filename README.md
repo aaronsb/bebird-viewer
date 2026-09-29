@@ -76,4 +76,4 @@ Tested with one scope, the Bebird ES. Other Bebird Wi-Fi models may work; report
 
 Copyright (C) 2026 Aaron Bockelie. Licensed under the [GNU General Public License v3.0 or later](LICENSE) (`GPL-3.0-or-later`). Versions up to and including commit `398f346` were released under the MIT License, and copies obtained under those terms stay MIT.
 
-The Android app's Move icon uses the path of the `open_with` icon, and its Quit icon is the `power_settings_new` icon, both from Google's [Material Design icons](https://github.com/google/material-design-icons), licensed under the [Apache License 2.0](LICENSES/Apache-2.0.txt).
+The Android app's Move icon uses the path of the `open_with` icon, its Quit icon is the `power_settings_new` icon, and its Snapshot icon is the `photo_camera` icon, all from Google's [Material Design icons](https://github.com/google/material-design-icons), licensed under the [Apache License 2.0](LICENSES/Apache-2.0.txt).

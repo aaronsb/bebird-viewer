@@ -171,7 +171,8 @@ class HoldTurn {
 }
 
 /**
- * Plays hold vibrations on the device vibrator: the thin Android side of #44. Nothing if the
+ * Plays hold vibrations on the device vibrator: the thin Android side of #44, and the capture
+ * buttons' clicks (#54). Nothing if the
  * phone has no vibrator, or touch feedback is off in the system settings. On API 33+ it counts
  * as touch feedback, so the system's touch-vibration strength applies. A vibrator without
  * amplitude control gets the pattern as lengths instead ([HoldPattern.onOff]). Errors are
@@ -187,16 +188,33 @@ class HoldVibrator(context: Context) {
         }
 
     fun play(pulses: List<HoldPulse>) {
+        if (pulses.isEmpty()) return
+        vibrate { v ->
+            val w = HoldWaveform.of(if (v.hasAmplitudeControl()) pulses else HoldPattern.onOff(pulses))
+            VibrationEffect.createWaveform(w.timings, w.amplitudes, -1)
+        }
+    }
+
+    /**
+     * One short, crisp click (#54): the platform's own, tuned for each device, and unlike any
+     * hold pattern, which starts with a light tick and goes on.
+     */
+    fun click() = vibrate { VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK) }
+
+    /** Two quick clicks (#54), for Record: it feels unlike Snapshot's single one. */
+    fun doubleClick() = vibrate { VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK) }
+
+    /** Play [effect], unless there is no vibrator or touch feedback is off. */
+    private fun vibrate(effect: (Vibrator) -> VibrationEffect) {
         try {
             val v = vibrator?.takeIf { it.hasVibrator() } ?: return
-            if (pulses.isEmpty() || !touchFeedbackOn()) return
-            val w = HoldWaveform.of(if (v.hasAmplitudeControl()) pulses else HoldPattern.onOff(pulses))
-            val effect = VibrationEffect.createWaveform(w.timings, w.amplitudes, -1)
+            if (!touchFeedbackOn()) return
+            val e = effect(v)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                v.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_TOUCH))
+                v.vibrate(e, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_TOUCH))
             } else {
                 @Suppress("DEPRECATION")  // the AudioAttributes overload: VibrationAttributes is API 33+
-                v.vibrate(effect, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION).build())
+                v.vibrate(e, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION).build())
             }
         } catch (e: RuntimeException) {  // a bad pattern, or the service refused
             Log.w(TAG, "vibration failed", e)

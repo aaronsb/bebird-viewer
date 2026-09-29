@@ -6,9 +6,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
@@ -31,14 +33,20 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -69,6 +77,7 @@ fun LiveControls(
     val recordingSince by vm.recordingSince.collectAsStateWithLifecycle()
     val annotationRenderer by vm.annotationRenderer.collectAsStateWithLifecycle()
     val online = conn.wifiState.collectAsStateWithLifecycle().value is ScopeWifi.State.Available
+    val quitting by vm.quitting.collectAsStateWithLifecycle()  // nothing starts once Quit has begun
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // The scale style lives here, above Light; greyed out (keeping its value, and the
         // row's height) while proximity estimation is off.
@@ -97,27 +106,48 @@ fun LiveControls(
             }
         }
         LabelRow(label, onEdit = onEditLabel, onClear = { vm.setLabel("") })
-        // Wraps onto a second line on a narrow screen rather than squeezing the buttons.
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(
+        // Snapshot and Record at the left, as tall as the rest together (#54); Annotate and Files
+        // wrap onto another line on a narrow screen rather than squeeze, and Reconnect sits
+        // below them at the right, as its icon alone if its word doesn't fit.
+        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SnapshotButton(
+                enabled = streaming && !quitting,
                 onClick = { vm.snapshot(zoomView.zoom, frame?.let { zoomView.crop(it.width) }) },
-                enabled = streaming,
-            ) { Text(stringResource(R.string.snapshot)) }
-            RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording)
-            // Not while recording: the file would carry on behind the paused view.
-            FilledTonalButton(
-                onClick = onAnnotate,
-                enabled = streaming && recordingSince == null && annotationRenderer != null,
-            ) { Text(stringResource(R.string.annotate)) }
-            FilesButton(vm, snackbar)
-            Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = conn::reconnect, enabled = online) {
-                Icon(Icons.Default.Refresh, contentDescription = null)
-                Text(stringResource(R.string.reconnect), Modifier.padding(start = 4.dp))
+                modifier = Modifier.fillMaxHeight(),
+            )
+            RecordButton(recordingSince, enabled = streaming && !quitting, onClick = vm::toggleRecording, modifier = Modifier.fillMaxHeight())
+            var width by remember { mutableIntStateOf(Int.MAX_VALUE) }
+            Column(Modifier.weight(1f).onSizeChanged { width = it.width }) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Not while recording: the file would carry on behind the paused view.
+                    FilledTonalButton(
+                        onClick = onAnnotate,
+                        enabled = streaming && recordingSince == null && annotationRenderer != null && !quitting,
+                        contentPadding = CompactPadding,
+                    ) { Text(stringResource(R.string.annotate)) }
+                    FilesButton(vm, snackbar, enabled = !quitting)
+                }
+                val reconnect = stringResource(R.string.reconnect)
+                val labelWidth = rememberTextMeasurer().measure(reconnect, MaterialTheme.typography.labelLarge).size.width
+                val extras = with(LocalDensity.current) { RECONNECT_EXTRAS.roundToPx() }
+                val withLabel = reconnectShowsLabel(width, labelWidth, extras)
+                OutlinedButton(
+                    onClick = conn::reconnect, enabled = online && !quitting, contentPadding = CompactPadding,
+                    modifier = Modifier.align(Alignment.End).semantics { if (!withLabel) contentDescription = reconnect },
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    if (withLabel) Text(reconnect, Modifier.padding(start = 4.dp), maxLines = 1)
+                }
             }
         }
     }
 }
+
+/** Reconnect's icon, gap and padding beside its word: 24 + 4 + 2 × 12 dp, and the outline. */
+private val RECONNECT_EXTRAS = 54.dp
+
+/** Whether Reconnect's word fits beside its icon in [available] px, or only the icon does (#54). */
+internal fun reconnectShowsLabel(available: Int, label: Int, extras: Int): Boolean = label + extras <= available
 
 private fun signed(n: Int, width: Int) = (if (n > 0) "+$n" else "$n").padStart(width, '\u2007')
 
