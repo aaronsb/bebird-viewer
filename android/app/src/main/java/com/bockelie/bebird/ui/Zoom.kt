@@ -112,10 +112,11 @@ fun ZoomableCircle(
                         modifier = Modifier.fillMaxSize().rotate(rotation.toFloat()),
                     )
                 }
-                // The proximity scale is centred on the optical axis, in raw-frame pixels: it
-                // turns and zooms with the picture. Display only; saved files don't include it.
+                // The proximity scale is centred on the image centre and zooms and pans with the
+                // picture (so mm stay true on screen), but stays upright: see scaleLayerRotation.
+                // Display only; saved files don't include it.
                 if (frame != null && overlayRenderer != null) {
-                    ScaleLayer(proximity.filterNot(::isClose), overlayRenderer, side.toInt(), rotation)
+                    ScaleLayer(proximity.filterNot(::isClose), overlayRenderer, side.toInt(), scaleLayerRotation(rotation))
                 }
             }
             // CLOSE stays upright at the viewport's upper left, whatever the roll or zoom.
@@ -144,7 +145,7 @@ private fun isClose(s: OverlayShape) =
 
 /** The scale drawn at the circle's on-screen size [side] px, so its rings stay one pixel thin. */
 @Composable
-private fun ScaleLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, side: Int, rotation: Int) {
+private fun ScaleLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, side: Int, rotation: Float) {
     if (shapes.isEmpty() || side <= 0) return
     val image = rendered(shapes, side) {
         renderer.render(shapes, side, side, side.toDouble() / FrameGeometry.SIZE).toBitmap().asImageBitmap()
@@ -154,7 +155,7 @@ private fun ScaleLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, si
         contentDescription = null,
         contentScale = ContentScale.FillBounds,
         filterQuality = FilterQuality.None,
-        modifier = Modifier.fillMaxSize().rotate(rotation.toFloat()),
+        modifier = Modifier.fillMaxSize().rotate(rotation),
     )
 }
 
@@ -201,3 +202,10 @@ private fun rendered(shapes: List<OverlayShape>, size: Int, draw: () -> ImageBit
     }
     return image
 }
+
+/**
+ * The proximity scale's rotation on screen for an image turned by [imageRotation] degrees:
+ * none. The rings are round and centred on the image centre, so turning them adds nothing but
+ * jerkiness; labels, the bar and the bowtie stay horizontal. (Zoom and pan still apply.)
+ */
+fun scaleLayerRotation(@Suppress("UNUSED_PARAMETER") imageRotation: Int): Float = 0f

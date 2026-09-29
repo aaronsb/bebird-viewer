@@ -81,7 +81,8 @@ class OverlayRendererTest {
         assertTrue(OverlayRenderer.diameter(7, 4))  // top of the slash
         // and a label with it renders in the scale's colour
         val img = ring(locked = true)
-        val labelRow = (240 - 40 - 14 until 240 - 40).flatMap { y -> (243 until 243 + 24).map { x -> img.at(x, y) } }
+        // "⌀2" sits on the horizontal axis, just right of the 1 mm ring: baseline 237, from x 283
+        val labelRow = (237 - 12 until 237 + 4).flatMap { y -> (283 until 283 + 24).map { x -> img.at(x, y) } }
         assertTrue(labelRow.any { it == ScaleOverlay.LOCK })
         assertTrue(labelRow.any { it == OverlayRenderer.BLACK })  // outlined
     }
