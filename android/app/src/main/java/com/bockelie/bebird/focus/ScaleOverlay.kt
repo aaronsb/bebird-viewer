@@ -69,13 +69,19 @@ object ScaleOverlay {
         if (result == null) emptyList()
         else shapes(style, result.locked, showClose && result.close)
 
-    fun shapes(
-        style: ScaleStyle,
-        locked: Boolean,
-        close: Boolean,
-        center: Double = FrameGeometry.CENTER.toDouble(),
-        pxPerMm: Double = PX_PER_MM,
-    ): List<OverlayShape> {
+    // the default geometry has only 4 × 2 × 2 variants: built once each, not per frame
+    private val cache = arrayOfNulls<List<OverlayShape>>(ScaleStyle.entries.size * 4)
+
+    fun shapes(style: ScaleStyle, locked: Boolean, close: Boolean): List<OverlayShape> {
+        val k = style.ordinal * 4 + (if (locked) 2 else 0) + (if (close) 1 else 0)
+        return cache[k] ?: build(style, locked, close, FrameGeometry.CENTER.toDouble(), PX_PER_MM).also { cache[k] = it }
+    }
+
+    /** The shapes for another centre or scale (e.g. drawn at display resolution). */
+    fun shapes(style: ScaleStyle, locked: Boolean, close: Boolean, center: Double, pxPerMm: Double): List<OverlayShape> =
+        build(style, locked, close, center, pxPerMm)
+
+    private fun build(style: ScaleStyle, locked: Boolean, close: Boolean, center: Double, pxPerMm: Double): List<OverlayShape> {
         val out = ArrayList<OverlayShape>()
         val col = if (locked) LOCK else GREY
         val w = if (locked) 2 else 1
@@ -146,6 +152,6 @@ object ScaleOverlay {
             out += OverlayShape.Warning(x, y, s, WARNING)
             out += OverlayShape.Label(x + s + 8, y + s * 0.45, CLOSE_LABEL, TextAnchor.LEFT_MIDDLE, WARNING)
         }
-        return out
+        return java.util.Collections.unmodifiableList(out)
     }
 }

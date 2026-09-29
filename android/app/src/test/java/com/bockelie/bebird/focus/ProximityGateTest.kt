@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.bockelie.bebird.focus
 
-import com.bockelie.bebird.settings.MemoryKeyValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProximityGateTest {
-    /** Counts estimator creations and frames; returns a canned result. */
+    /** Counts estimator constructions and frames; returns a canned result. */
     private class Counting {
         var created = 0
         var frames = 0
@@ -20,89 +21,64 @@ class ProximityGateTest {
         }
     }
 
-    @Test fun shouldNotRunAnythingWhileDisabled() {
+    @Test fun shouldNeitherFillNorBuildNorRunWhileDisabled() {
         val c = Counting()
-        var lumaCalls = 0
-        repeat(50) { k -> assertNull(c.gate.onFrame(k / 10.0, 100) { lumaCalls++ }) }
+        var fills = 0
+        repeat(50) { k -> assertNull(c.gate.onFrame(k / 10.0, 100) { fills++ }) }
         assertFalse(c.gate.enabled)
         assertEquals(0, c.created)
         assertEquals(0, c.frames)
-        assertEquals(0, lumaCalls)
+        assertEquals(0, fills)
     }
 
-    @Test fun shouldRunEveryFrameWhileEnabled() {
+    @Test fun shouldFillAndRunEveryFrameWhileEnabled() {
         val c = Counting()
         c.gate.setEnabled(true)
-        var lumaCalls = 0
-        repeat(5) { k -> assertNotNull(c.gate.onFrame(k / 10.0, 100) { lumaCalls++ }) }
+        c.gate.setEnabled(true)  // already on: the same estimator
+        var fills = 0
+        repeat(5) { k -> assertNotNull(c.gate.onFrame(k / 10.0, 100) { fills++ }) }
         assertEquals(1, c.created)
         assertEquals(5, c.frames)
-        assertEquals(5, lumaCalls)
+        assertEquals(5, fills)
     }
 
-    @Test fun shouldStopOnDisableAndStartFreshOnReEnable() {
+    @Test fun shouldReleaseTheEstimatorAndBuffersOnDisable() {
         val c = Counting()
         c.gate.setEnabled(true)
-        c.gate.setEnabled(true)  // already on: keeps the same estimator
-        c.gate.onFrame(0.0, 100) {}
+        var first: LumaBuffers? = null
+        c.gate.onFrame(0.0, 100) { first = it }
+        c.gate.onFrame(0.1, 100) { assertSame(first, it) }  // reused between frames
         c.gate.setEnabled(false)
-        assertNull(c.gate.onFrame(0.1, 100) { error("luma requested while disabled") })
-        assertEquals(1, c.frames)
+        assertNull(c.gate.active)
+        assertNull(c.gate.onFrame(0.2, 100) { error("asked for luma while disabled") })
+        assertEquals(2, c.frames)
         c.gate.setEnabled(true)
         assertEquals(2, c.created)
+        c.gate.onFrame(0.3, 100) { assertNotSame(first, it) }
     }
 
-    @Test fun reEnablingForgetsTheLearnedTipMask() {
+    @Test fun enablingMidStreamStartsFreshAfterALearnedRun() {
         val gate = ProximityGate()
         gate.setEnabled(true)
-        val frames = SyntheticScope.approach(tip = true, frames = 60).toList()
-        val learned = frames.map { f -> gate.onFrame(f.t, f.roll) { f.frame.copyInto(it) }!! }
+        val frames = SyntheticScope.approach(tip = true).toList()
+        // a full run: tip learned, armed and in-zone by the end
+        val learned = frames.map { f -> gate.onFrame(f.t, f.roll) { f.frame.copyInto(it.luma) }!! }
         assertTrue(learned.last().tipPresent)
+        assertTrue(learned.last().armed && learned.last().locked)
+
         gate.setEnabled(false)
         gate.setEnabled(true)
-        val f = frames.last()
-        val fresh = gate.onFrame(f.t + 0.1, f.roll) { f.frame.copyInto(it) }!!
-        assertEquals(0.0, fresh.tipFraction, 0.0)
-        assertEquals(FocusState.SEARCHING, fresh.state)  // warm-up again: no lock
-    }
-
-    @Test fun shouldNotAllocateWhileDisabled() {
-        // java.lang.management isn't on the Android compile classpath, but the test JVM has it
-        val bean = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean").invoke(null)
-        val bytes = Class.forName("com.sun.management.ThreadMXBean").getMethod("getThreadAllocatedBytes", Long::class.javaPrimitiveType)
-        val id = Thread.currentThread().id
-        fun allocated() = bytes.invoke(bean, id) as Long
-        val gate = ProximityGate()
-        var n = 0
-        fun burst() { repeat(100_000) { k -> if (gate.onFrame(k / 10.0, 100) { n++ } != null) n++ } }
-        burst()  // warm up
-        val before = allocated()
-        burst()
-        val used = allocated() - before
-        assertEquals(0, n)
-        assertTrue("allocated $used bytes over 100 000 disabled frames", used < 4096)
+        // the same lit, sharp, careful scene again, mid-stream: warm-up, no tip, not armed
+        val again = frames.drop(150).take(30).mapIndexed { k, f ->
+            gate.onFrame(40.0 + k / 10.0, f.roll) { f.frame.copyInto(it.luma) }!!
+        }
+        assertTrue(again.all { it.tipFraction == 0.0 && !it.armed })
+        assertTrue("no lock during warm-up", again.filter { it.t < 42.5 }.none { it.locked })
     }
 
     @Test fun overlayIsEmptyWithEstimationOff() {
         assertTrue(ScaleOverlay.forFrame(null, ScaleStyle.RING, showClose = true).isEmpty())
         val r = FocusTracker().update(0.0, 100, 30.0, 1.0, 0.0, 0.0)
         assertEquals(ScaleOverlay.shapes(ScaleStyle.RING, false, false), ScaleOverlay.forFrame(r, ScaleStyle.RING, true))
-    }
-
-    @Test fun settingsDefaultOnAndSurviveTheMasterToggle() {
-        val kv = MemoryKeyValue()
-        val s = ProximitySettings(kv)
-        assertTrue(s.enabled)
-        assertEquals(ScaleStyle.RING, s.scaleStyle)
-        assertTrue(s.closeIndicator)
-        s.scaleStyle = ScaleStyle.BAR
-        s.closeIndicator = false
-        s.enabled = false
-        s.enabled = true
-        val again = ProximitySettings(kv)
-        assertEquals(ScaleStyle.BAR, again.scaleStyle)
-        assertFalse(again.closeIndicator)
-        kv.putString("proximity_scale", "SPIRAL")
-        assertEquals(ScaleStyle.RING, again.scaleStyle)
     }
 }

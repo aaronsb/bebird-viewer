@@ -164,4 +164,26 @@ class FocusTrackerTest {
         down.frames(20, bright = { 60.0 - it })
         assertEquals(FocusState.RECEDING, down.last.state)
     }
+
+    @Test fun shouldRejectANonFiniteTime() {
+        for (bad in listOf(Double.NaN, Double.POSITIVE_INFINITY)) {
+            val thrown = runCatching { FocusTracker().update(bad, 100, 30.0, 1.0, 0.0, 0.0) }.exceptionOrNull()
+            assertTrue("$bad", thrown is IllegalArgumentException)
+        }
+    }
+
+    @Test fun shouldHoldATimeThatStepsBack() {
+        val tr = FocusTracker()
+        tr.update(5.0, 100, 30.0, 1.0, 0.0, 0.0)
+        assertEquals(5.0, tr.update(4.0, 100, 30.0, 1.0, 0.0, 0.0).t, 0.0)
+    }
+
+    @Test fun shouldSurviveAStuckClock() {
+        val f = Feed()
+        f.seconds(3.0)
+        val tr = f.tracker
+        var last: FocusResult? = null
+        repeat(20_000) { k -> last = tr.update(3.0, 100 + k % 2, 30.0, 100.0, 0.0, 0.0) }
+        assertEquals(FocusState.SHARP_UNARMED, last!!.state)
+    }
 }
