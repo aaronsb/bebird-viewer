@@ -6,9 +6,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
@@ -97,23 +99,30 @@ fun LiveControls(
             }
         }
         LabelRow(label, onEdit = onEditLabel, onClear = { vm.setLabel("") })
-        // Wraps onto a second line on a narrow screen rather than squeezing the buttons.
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(
-                onClick = { vm.snapshot(zoomView.zoom, frame?.let { zoomView.crop(it.width) }) },
+        // Snapshot at the left, as tall as the rest together (#54); Record, Annotate and Files
+        // wrap onto another line on a narrow screen rather than squeeze, and Reconnect sits
+        // below them at the right.
+        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SnapshotButton(
                 enabled = streaming,
-            ) { Text(stringResource(R.string.snapshot)) }
-            RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording)
-            // Not while recording: the file would carry on behind the paused view.
-            FilledTonalButton(
-                onClick = onAnnotate,
-                enabled = streaming && recordingSince == null && annotationRenderer != null,
-            ) { Text(stringResource(R.string.annotate)) }
-            FilesButton(vm, snackbar)
-            Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = conn::reconnect, enabled = online) {
-                Icon(Icons.Default.Refresh, contentDescription = null)
-                Text(stringResource(R.string.reconnect), Modifier.padding(start = 4.dp))
+                onClick = { vm.snapshot(zoomView.zoom, frame?.let { zoomView.crop(it.width) }) },
+                modifier = Modifier.fillMaxHeight(),
+            )
+            Column(Modifier.weight(1f)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording)
+                    // Not while recording: the file would carry on behind the paused view.
+                    FilledTonalButton(
+                        onClick = onAnnotate,
+                        enabled = streaming && recordingSince == null && annotationRenderer != null,
+                        contentPadding = CompactPadding,
+                    ) { Text(stringResource(R.string.annotate)) }
+                    FilesButton(vm, snackbar)
+                }
+                OutlinedButton(onClick = conn::reconnect, enabled = online, modifier = Modifier.align(Alignment.End), contentPadding = CompactPadding) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Text(stringResource(R.string.reconnect), Modifier.padding(start = 4.dp))
+                }
             }
         }
     }

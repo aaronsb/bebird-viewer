@@ -8,8 +8,13 @@ import android.os.SystemClock
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -22,14 +27,48 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import com.bockelie.bebird.R
 import com.bockelie.bebird.capture.Capture
 import com.bockelie.bebird.capture.CaptureFolder
 import com.bockelie.bebird.capture.CaptureNames
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * Snapshot, the most-used button (#54): filled and primary, a camera over the word, as tall as
+ * [modifier] makes it. A short, crisp click on the press, before the release takes the picture.
+ * TalkBack reads "Snapshot".
+ */
+@Composable
+fun SnapshotButton(enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val vibrator = remember(context) { HoldVibrator(context) }
+    val interaction = remember { MutableInteractionSource() }
+    LaunchedEffect(interaction) {
+        interaction.interactions.collect { if (it is PressInteraction.Press) vibrator.click() }
+    }
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        interactionSource = interaction,
+        contentPadding = CompactPadding,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(painterResource(R.drawable.ic_camera), contentDescription = null)
+            Text(stringResource(R.string.snapshot), maxLines = 1)
+        }
+    }
+}
+
+/** Narrower than a button's own padding, so the capture rows fit a 360 dp screen. */
+val CompactPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
 
 /** Record, or Stop with the elapsed time (fixed-width digits) while recording. */
 @Composable
@@ -40,7 +79,7 @@ fun RecordButton(since: Long?, enabled: Boolean, onClick: () -> Unit) {
             delay(250)
         }
     }
-    FilledTonalButton(onClick = onClick, enabled = enabled || since != null) {
+    FilledTonalButton(onClick = onClick, enabled = enabled || since != null, contentPadding = CompactPadding) {
         if (since == null) {
             Text(stringResource(R.string.record))
         } else {
@@ -114,7 +153,7 @@ fun FilesButton(vm: ViewerViewModel, host: SnackbarHostState) {
                 }
             }
         }
-    }) {
+    }, contentPadding = CompactPadding) {
         Text(stringResource(R.string.files))
     }
 }
