@@ -106,7 +106,7 @@ Light level, trim, auto-rotate, the Wi-Fi interface and network, and Auto-join a
 
 ### Snapshot metadata
 
-Each snapshot records how it was taken, which makes a series of images (for example a daily healing log) self-describing:
+Each snapshot records how it was taken, which makes a series of images self-describing:
 
 - **Standard EXIF:** date and time taken with timezone offset, Make/Model (`Bebird` / `ES`), Software (`bebird-viewer`), and Orientation "normal", since the rotation is already applied to the pixels.
 - **ImageDescription:** a readable line, e.g. `roll 47 deg, rotated 47 deg (auto) + trim 0 deg, light 100% (scope 50), battery 100% (battery)`.

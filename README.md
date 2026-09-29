@@ -18,7 +18,7 @@ Android 10 or later. What you can do:
 - **Annotate** a paused picture with ovals, boxes, arrows, freehand lines and text, in five colours. Marks can be moved or deleted. Save keeps the picture and an annotated copy.
 - **Show an approximate mm scale** over the picture: ring, bowtie or bar. It is a best-effort estimate that holds only when the picture is in focus; the scope has no distance sensor.
 - **Use more than one scope.** The app remembers each one, with an optional nickname.
-- **Disconnect** by holding the button for 2 seconds. **Quit** by holding the power button for 5 seconds; once video has started, this also switches the scope off.
+- **Disconnect** by holding the button for 2 seconds. **Quit** by holding the power icon (⏻) in the top row for 5 seconds; once video has started, this also switches the scope off.
 - **Switch apps briefly.** The connection is kept for a while (1 minute by default) so the video carries on when you come back.
 
 | Ring | Bowtie | Bar |
@@ -30,7 +30,7 @@ Android 10 or later. What you can do:
 1. Turn the scope on.
 2. Open the app and tap **Connect**. The first time, allow the permission it asks for (nearby devices, or location on Android 10 to 12).
 3. If Android shows a list of networks, pick the scope (`bebird-ES-…`).
-4. The picture appears in the circle. If it doesn't, tap **Reconnect**.
+4. The picture appears in the circle. Until it does, the circle says what is happening and what to do next.
 
 The app uses the scope's Wi-Fi for itself only, so the rest of your phone's networking is untouched.
 
@@ -70,4 +70,4 @@ Tested with one scope, the Bebird ES. Other Bebird Wi-Fi models may work; report
 
 Copyright (C) 2026 Aaron Bockelie. Licensed under the [GNU General Public License v3.0 or later](LICENSE) (`GPL-3.0-or-later`). Versions up to and including commit `398f346` were released under the MIT License, and copies obtained under those terms stay MIT.
 
-The Android app's Move icon uses the path of the `open_with` icon from Google's [Material Design icons](https://github.com/google/material-design-icons), licensed under the [Apache License 2.0](LICENSES/Apache-2.0.txt).
+The Android app's Move icon uses the path of the `open_with` icon, and its Quit icon is the `power_settings_new` icon, both from Google's [Material Design icons](https://github.com/google/material-design-icons), licensed under the [Apache License 2.0](LICENSES/Apache-2.0.txt).
