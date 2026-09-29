@@ -1,230 +1,73 @@
 # bebird-viewer
 
-A small Linux viewer for **Bebird "ES" Wi-Fi otoscope / ear cameras** that doesn't need the vendor app, an account, or an internet connection. It talks only to the scope, over the scope's own Wi-Fi.
+A viewer for **Bebird "ES" Wi-Fi otoscope / ear cameras** that works without the vendor app, an account, or an internet connection. It talks only to the scope, over the scope's own Wi-Fi. There is an Android app and a Linux desktop app.
 
-- Live video (MJPEG, ~10 fps at 480×480)
-- Tip-light dimmer mapped onto the LED's visible range, applied after a short debounce and read back to confirm
-- Auto-rotate from the scope's built-in motion sensor, with a manual trim
-- Snapshots (as displayed, with date, roll, light and battery in the EXIF metadata) and recordings (raw stream, `.mkv`)
-- Battery level and charging state
-- Wi-Fi handling: finds the scope's network, joins it without taking over your normal networking, and rejoins and restarts video when the scope comes back after a power cycle
+<p>
+<img src="docs/media/android-ring.webp" alt="The Android app streaming a close-up of a ruler. Cyan rings of an approximate mm scale, labelled ⌀2 to ⌀10, surround a small crosshair in the centre. Above the picture are the scope selector, Disconnect, a power button and a settings gear; below it the status band, the Scale selector set to Ring, Light at 100%, Auto-rotate with trim, a Label field reading ESP32, and Snapshot, Record, Annotate and Files buttons." width="270">
+<img src="docs/media/android-annotate.webp" alt="The Android app in annotate mode on the same ruler picture: a yellow oval around one gap between the ruler's marks, a red arrow pointing at it, and the red text 1 mm. Below are the tools Oval, Box, Arrow, Pen and Text, five colours, Undo, Clear, a move tool, Resume and Save." width="270">
+</p>
 
-> Not affiliated with or endorsed by Bebird. The protocol below was worked out for interoperability by observing the device on the network and by studying how the official Android app talks to it. No vendor code or firmware is included in this repository.
-
-## Screenshots
-
-| | |
-|---|---|
-| ![The viewer showing a toy Unimog truck from a few centimetres away](docs/media/qt-app.png) | ![A close-up of the same truck's wheel, filling the view](docs/media/focused.png) |
-| The viewer, pointed at a Hot Wheels Unimog for scale. | One wheel of the same truck at the lens's focus distance, which shows the field of view and sharpness you get in use. |
-
-## Status
-
-Tested with one device: model `ES`, firmware `4.0.24.997`, SoC Beken BK7231U. Other Bebird Wi-Fi models from the same family probably speak the same protocol, but the light ranges and some commands may differ. Reports welcome.
-
-## Requirements
-
-- Linux (the tools use a Linux ioctl to find the Wi-Fi interface address)
-- Python 3.10+ with **PyQt6** and **Pillow** (`pip install PyQt6 Pillow` or your distro's packages)
-- **ffmpeg** for recording (optional); `ffplay` for `grab.py --live` (optional)
-- **NetworkManager** (`nmcli`) for the built-in Wi-Fi controls. Without it, join the scope's network yourself.
-- A Wi-Fi interface you can dedicate to the scope while viewing. If your only internet connection is Wi-Fi on the same card, you'll be offline while connected to the scope.
-
-## Setup
-
-The scope is an **open access point** named `bebird-ES-XXXXXX` that gives out addresses in `192.168.5.0/24`; the camera is `192.168.5.1`.
-
-The viewer handles joining it. Any network whose name starts with `bebird` counts as a scope. The Wi-Fi row defaults to **Any Bebird scope**, which prefers the scope you used last (remembered in `~/.config/bebird/last-device.json`; **Forget** clears it) and otherwise takes the strongest one in range. You can also pick a specific network. Press **Connect**. The first time, it creates a NetworkManager connection for that network that
-- never becomes the default route,
-- has IPv6 turned off,
-- doesn't autoconnect on its own,
-
-so a wired link or another network keeps carrying your normal traffic. With **Auto-join** on (the default), the viewer rejoins the scope's network whenever it reappears, for example after the scope switches itself off and you power it back on, and restarts the video.
-
-The Wi-Fi interface is picked automatically: the one you last used, else the first Wi-Fi device NetworkManager knows. To force one, set `BEBIRD_IFACE`, which also applies to the command-line tools:
-
-```sh
-export BEBIRD_IFACE=wlp10s0
-```
-
-To join by hand instead, for example without NetworkManager's GUI rights, use the equivalent command:
-
-```sh
-nmcli con add type wifi ifname wlan0 con-name bebird-ES-XXXXXX ssid bebird-ES-XXXXXX \
-    ipv4.never-default yes ipv6.method disabled connection.autoconnect no
-nmcli con up bebird-ES-XXXXXX
-```
-
-If you run a host firewall that drops inbound UDP (for example ufw's default), allow the scope's subnet on that interface:
-
-```sh
-sudo ufw allow in on wlan0 from 192.168.5.0/24   # your Wi-Fi interface
-```
-
-Every socket binds to the Wi-Fi interface's address, so nothing meant for the scope can leak onto another network that happens to also use `192.168.5.1`.
-
-## Building
-
-Both builds run in Docker containers, never directly on your machine, so you need **Docker with BuildKit** (the `buildx` plugin; on Arch, install `docker-buildx`) and `make`; nothing else. The containers run as your user, so everything they produce is owned by you, and they mount only the directory the build needs. The build images are defined in [`docker/`](docker/).
-
-| Target | Does |
-|---|---|
-| `make app` | build the desktop binary `dist/bebird-viewer` |
-| `make android-test` | run the Android unit tests (JVM, no device needed) |
-| `make android-apk` | build the Android debug APK |
-| `make android-shell` | open a shell in the Android build container |
-| `make clean` | remove build output (desktop and Android) |
-| `make distclean` | also remove `.venv`, the Gradle cache volume and the build images |
-
-`make app-image` and `make android-image` (re)build the images; the other targets do that for you, and it's quick once Docker has the layers cached. The desktop image installs its Python packages from [`docker/desktop-requirements.lock`](docker/desktop-requirements.lock), pinned by version and hash; `make app-lock` re-resolves it from `docker/desktop-requirements.in`.
-
-Caches stay in Docker rather than in your home directory: Gradle's (dependencies, the Gradle distribution, and the Android debug signing key) in the named volume `bebird-gradle`, and pip's in Docker's build cache while the desktop image is built. `make distclean` removes the volume and the images. The pip cache goes when Docker prunes its build cache; note that `docker builder prune` clears the build cache of every project on the machine, not just this one. Removing the volume also replaces the debug signing key, so a debug APK built afterwards won't install over an earlier one without uninstalling it first.
-
-## Standalone app
-
-`make app` builds `dist/bebird-viewer`, a single self-contained executable (about 55 MB: Python, Qt and Pillow included). The machine running it needs no Python install. It's built on Ubuntu 22.04, the oldest base the current PyQt6 wheels install on, so it runs on distributions with **glibc 2.35 or newer** (Ubuntu 22.04, Debian 12, Fedora 36 and later). The build container has no network access and sees only the source files, read-only; only `dist/` is writable.
-
-```sh
-make app                                         # builds the image on first use, then the binary
-make app && make install                         # binary to ~/.local/bin, plus a launcher entry and icon
-make app && sudo make install PREFIX=/usr/local  # system-wide
-make uninstall
-make run                                         # or run from source (no build involved)
-```
-
-`make run` is the one target that installs anything on your machine: `make venv` creates `.venv` with PyQt6 and Pillow from pip, for running from source only.
-
-`make install` only copies an existing build, so the build never runs as root. The binary bundles Python, Qt and the X11 libraries Qt needs, but uses the host's OpenGL (`libGL`/`libEGL`) and Wayland client libraries, which any desktop system has. It still calls host programs: install **ffmpeg** for recording and **NetworkManager** (`nmcli`) for the Wi-Fi controls.
-
-The single-file binary unpacks itself to a temporary directory on each launch, so it takes a few seconds to start.
+> Not affiliated with or endorsed by Bebird. No vendor code or firmware is included in this repository.
 
 ## Android app
 
-<img src="docs/media/android-app.png" alt="The Android app streaming a close-up of an ESP32 board, with the status band and Label below the image" width="320" align="right">
+Android 10 or later. What you can do:
 
-A native Android port (Kotlin, Jetpack Compose, Android 10+) lives in [`android/`](android/), app ID `com.bockelie.bebird`. **Work in progress:** so far it joins the scope's Wi-Fi (as an app-only network, so the phone's normal networking is untouched) and shows live video, rotated upright, with fps and battery. It remembers the scopes you've used (with an optional nickname; choose, rename or forget them from the device menu) and reconnects to the last one by its exact network name and BSSID (on a Pixel 8 Pro with Android 17, reconnecting this way joined without a dialog right after the first join through the picker); **Pick a different device** shows Android's list of every `bebird*` network. It has the desktop's light slider (sent once you stop moving it, then read back), auto-rotate with trim, and Reconnect, plus pinch-zoom on the image and a light/dark theme setting. An optional overlay adds a fixed-layout status band (bitmap font) and a hairline circle, and a free-text **Label** shown in the band. **Power off scope** in the settings menu (enabled once video has started, after a confirmation) switches the scope off: the app sends STOP, then `66 3E`, then lets go of the network; the scope stays off until you press its power button, and stays in the device list. At launch it connects to the last device on its own, when that device can be joined without Android's picker (a setting, on by default); if the scope is off it just stays idle. When you leave the app it keeps the connection for a grace period (**Connection…** in the settings menu: immediately, 30 s, or 1, 2, 5 or 10 minutes; 1 minute by default), with video paused and a notification counting down, offering Disconnect and Power off; come back within it and video carries on at once. When the period ends, or when you close the app, it powers the scope off (**Power off the scope when the app lets go of it**, on by default; only once video has started) or otherwise disconnects. Back counts as closing on Android 10 and 11, but on Android 12 and later it only sends the app to the background, like Home, so the grace period applies; swiping the app away from the recent apps closes it on all versions. If Android kills the app during the grace period, the scope stops streaming within a second or so but stays on. It saves snapshots (JPEG with the same metadata as the desktop's, plus a crop of the zoomed view) and records MP4 video, with the overlay burned in when it is on, all under Pictures/Bebird in a folder per day (`Pictures/Bebird/YYYY-MM-DD/`); **Files** opens the system file picker there (today's folder when it has captures) and shows the picked file in its default app. Leaving the app stops and saves a recording; opening Files, or a capture from the snackbar, keeps the connection for at least two minutes, whatever the grace period below. **Proximity estimation** (on by default; settings menu → Proximity…) estimates from image sharpness whether something is at the tip end and then draws an upright mm scale (ring, bowtie or bar, "mm ±10%") that zooms with the picture, plus a CLOSE indicator. It is best effort, shown on screen only, and not in saved files; see [docs/focus-detection.md](docs/focus-detection.md). `adb logcat -s BebirdSpike` shows the session's progress. Progress is tracked in [#8](https://github.com/aaronsb/bebird-viewer/issues/8).
+- **Watch live video**, kept upright by the scope's motion sensor. Pinch to zoom. Set the tip light.
+- **Take snapshots and record video.** **Files** opens the folder they're saved in.
+- **Annotate** a paused picture with ovals, boxes, arrows, freehand lines and text, in five colours. Marks can be moved or deleted. Save keeps the picture and an annotated copy.
+- **Show an approximate mm scale** over the picture: ring, bowtie or bar. It is a best-effort estimate that holds only when the picture is in focus; the scope has no distance sensor.
+- **Use more than one scope.** The app remembers each one, with an optional nickname.
+- **Disconnect** by holding the button for 2 seconds. **Quit** by holding the power button for 5 seconds; once video has started, this also switches the scope off.
+- **Switch apps briefly.** The connection is kept for a while (1 minute by default) so the video carries on when you come back.
+
+| Ring | Bowtie | Bar |
+|---|---|---|
+| <img src="docs/media/scale-ring.webp" alt="Five cyan rings, labelled ⌀2 to ⌀10 mm, around a centre crosshair, over a ruler" width="200"> | <img src="docs/media/scale-bowtie.webp" alt="A cyan bowtie with arcs at ⌀2 to ⌀10 mm across a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="docs/media/scale-bar.webp" alt="A cyan bar marked 0 to 10 whose ticks line up with the ruler's mm marks, and a yellow CLOSE warning top left" width="200"> |
+
+### Getting started
+
+1. Turn the scope on.
+2. Open the app and tap **Connect**. The first time, allow the permission it asks for (nearby devices, or location on Android 10 to 12).
+3. If Android shows a list of networks, pick the scope (`bebird-ES-…`).
+4. The picture appears in the circle. If it doesn't, tap **Reconnect**.
+
+The app uses the scope's Wi-Fi for itself only, so the rest of your phone's networking is untouched.
+
+### Install
+
+There is no published release yet. APKs will be on [GitHub Releases](https://github.com/aaronsb/bebird-viewer/releases). Until then, [build the APK from source](docs/building.md).
+
+[More about the Android app](docs/android.md)
+
+## Desktop app (Linux)
+
+The desktop app shows the same live video, with light control, auto-rotate, snapshots and recording. It joins the scope's Wi-Fi for you through NetworkManager, without taking over your normal networking.
+
+![The desktop viewer showing a toy Unimog truck from a few centimetres away](docs/media/qt-app.png)
+
+To run it from source (needs Python 3.10+):
 
 ```sh
-make android-test   # JVM unit tests
-make android-apk    # debug APK
+make run
 ```
 
-The build image carries JDK 17 and the Android SDK (platform 35), so neither is needed on your machine. The debug APK lands in `android/app/build/outputs/apk/debug/`. CI runs the same make targets in an image built from the same Dockerfile for every change under `android/` and uploads the APK.
+[More about the desktop app](docs/desktop.md): requirements, the standalone binary, controls and command-line tools.
 
-## Usage
+## More
 
-```sh
-./live.sh                          # the viewer
-./grab.py 10 --out frames          # save 10 s of JPEG frames
-./grab.py --live | ffplay -f mjpeg -i -
-./light.sh 30                      # raw light level 0-100 (0 = off); no argument reads it
-./send.py 66 39 01 01              # raw command, prints the reply (here: board-info JSON)
-```
+- [Android app](docs/android.md): every control and setting, saved files and their metadata
+- [Desktop app](docs/desktop.md): setup, controls, command-line tools
+- [Building](docs/building.md): containerized builds and CI
+- [Protocol](docs/protocol.md): how the scope talks over Wi-Fi, and the tested device
+- [Security notes](docs/security.md)
+- [Focus and proximity estimation](docs/focus-detection.md): how the mm scale works and its limits
+- [What the official app does on the network](docs/app-analysis.md)
 
-### Viewer controls
-
-| Control | Key | Does |
-|---|---|---|
-| Light button | `L` | tip light off / back to the previous level |
-| Light slider | `↑` `↓` ±1, `PgUp` `PgDn` ±10 | brightness; sent 300 ms after you stop adjusting, then read back |
-| Auto-rotate | `A` | keep the picture upright using the motion sensor |
-| Roll | — | live roll angle from the sensor |
-| Trim | `[` `]` | manual rotation added on top, 15° steps |
-| Snapshot | `S` | saves the displayed image to `~/Pictures/bebird/`, with metadata (below) |
-| Record | `R` | records the raw stream to `~/Pictures/bebird/*.mkv` |
-| Reconnect | — | restart the video session |
-| Wi-Fi row | — | interface, scope network (default: any), Scan, Connect/Disconnect, Auto-join, Forget |
-| | `F` / `Esc` / `Q` | fullscreen / leave fullscreen / quit |
-
-Light level, trim, auto-rotate, the Wi-Fi interface and network, and Auto-join are remembered in `~/.config/bebird/state.json`. On connect, the viewer waits for video, then re-applies the saved light level so the scope's state matches the UI.
-
-`BEBIRD_DEBUG=1 ./live.sh` prints per-second packet and frame counts, and the JPEG decoder's warnings. About 1 frame in 100 from the scope's encoder has a stray byte before its end marker; it decodes fine, so that warning is hidden otherwise.
-
-### Snapshot metadata
-
-Each snapshot records how it was taken, which makes a series of images (for example a daily healing log) self-describing:
-
-- **Standard EXIF:** date and time taken with timezone offset, Make/Model (`Bebird` / `ES`), Software (`bebird-viewer`), and Orientation "normal", since the rotation is already applied to the pixels.
-- **ImageDescription:** a readable line, e.g. `roll 47 deg, rotated 47 deg (auto) + trim 0 deg, light 100% (scope 50), battery 100% (battery)`.
-- **UserComment:** the same data as JSON, plus the scope's model, hardware and firmware.
-
-The scope's serial number and unique ID are deliberately left out, because these pictures tend to get shared. The scope seems to answer the board-info request only soon after power-on, so the viewer caches the last answer in `~/.config/bebird/state.json`.
-
-```sh
-exiftool -ImageDescription -UserComment ~/Pictures/bebird/*.jpg
-```
-
-## Protocol
-
-All traffic is UDP between your machine and `192.168.5.1`. Multi-byte integers are big-endian unless noted.
-
-| Port | Direction | Purpose |
-|---|---|---|
-| 58080 | ⇄ | video control and MJPEG data |
-| 58090 | ⇄ | commands and replies |
-| 58098 | ⇄ | motion sensor channel (not needed by the viewer) |
-| 58099 | ← broadcast | status beacon, JSON, ~10×/s |
-
-### Video (58080)
-
-- **Start:** `20 36`. **Stop:** `20 37`. The scope streams back to the source address and port of the START.
-- **Send START once.** A second START while streaming re-initialises the camera; repeated STARTs eventually wedge video until a power cycle.
-- **Keepalive:** after a single START, video stops within about a second unless the client keeps talking. The official app, and this viewer, poll the battery (`66 3A` on 58090) once a second, which keeps the stream alive.
-- **Stop when you're done, from the same port.** The scope keeps streaming to every client that ever sent START until that client sends STOP, even if the port is dead. Kill a few clients without STOP and the bandwidth is split between ghosts; each live client gets only a few fps. The tools use a fixed client port (58081), send STOP before START, and send STOP on exit. A power cycle clears everything.
-
-Each video datagram carries part of a JPEG:
-
-| Byte | Meaning |
-|---|---|
-| 0 | frame id (all packets of one frame share it) |
-| 1 | 0 = more packets follow; non-zero = last packet of the frame |
-| 2 | packet index, starting at 1 |
-| 3 | on the last packet: roll angle, low 8 bits |
-| 4… | JPEG data |
-
-Concatenate the payloads in index order. Drop the frame if any index is missing. On the last packet the roll angle is `b[3] + 256` when `b[1] == 2`, otherwise `b[3]`, giving 0–359°. To keep the picture upright, draw the frame rotated clockwise by that angle; the official app ignores changes under 3° to avoid jitter.
-
-### Commands (58090)
-
-| Command | Reply | Meaning |
-|---|---|---|
-| `66 39 01 01` | JSON, may span several datagrams | board info: model, firmware, SoC, battery details, light level, `rotate_angle`, `float_angle`, … |
-| `66 3A` | 4 bytes | battery: high 16 bits state (0/1 on battery, 2 charging, 3 charged, 4 disconnecting), low 16 bits percent |
-| `66 3C nn` | — | tip light level `nn` = 0–100; **takes effect only after** `66 3C FF` |
-| `66 3C FF` | — | commit the light level |
-| `66 3C FE` | 1 byte | query the light level |
-| `66 3F 00 00` / `66 3F 00 01` | — | tip light off / on at the saved level (what the app sends when leaving / entering its camera screen) |
-| `66 3F 02 01` / `66 3F 02 00` | — | blue status LED on / off (the charging logic overrides it quickly) |
-| `66 3F 01 00` | — | **avoid:** on the ES this switches the camera off, light and video together, and it stays off until a power cycle |
-| `66 3E` | — | named "reboot" in the app; in practice it switches the scope off until its power button is pressed. Only the Android app's **Power off scope** sends it, after STOP |
-
-The light is very non-linear. On the tested unit it's invisible below about 20 and stops getting brighter around 48, so the viewer maps its 1–100 % slider onto raw 22–50 and uses 0 for off.
-
-### Beacon (58099)
-
-The scope broadcasts a JSON status beacon about ten times a second, for example:
-
-```json
-{"brand":"bebird","model":"ES","mac":"…","ssid":"bebird-ES-XXXXXX","password":"MTIzNDU2Nzg=",
- "wifi_encrypt":false,"ipaddr":"192.168.5.1","button":1,"video_on":0,"battery":65636}
-```
-
-`battery` uses the same state/percent packing as `66 3A`. `mac` is the Wi-Fi chip's station MAC, not the access point's BSSID: on the tested ES the BSSID is that address plus one (the 48-bit value + 1, e.g. `…9E` → `…9F`), a common convention for these chips' soft-AP. The Android app uses this to reconnect to a known scope by BSSID when Android won't reveal the BSSID itself. The `password` field is base64 (`12345678`) and is broadcast in the clear even though the access point is open.
-
-## Security notes
-
-- The access point is open by default, and anyone in range can join it and view the camera the same way this tool does.
-- The protocol has no authentication. Anyone on the scope's network can stream, change settings, or switch it off.
-- The scope reports no HTTP server of its own (`has_http: false`) and has no route to the internet unless someone configures it to join another network. This viewer never contacts anything but the scope.
-
-See [docs/app-analysis.md](docs/app-analysis.md) for what the official app does on the network.
+Tested with one scope, the Bebird ES. Other Bebird Wi-Fi models may work; reports are welcome.
 
 ## License
 
-Copyright (C) 2026 Aaron Bockelie. Licensed under the [GNU General Public License v3.0 or later](LICENSE) (`GPL-3.0-or-later`).
+Copyright (C) 2026 Aaron Bockelie. Licensed under the [GNU General Public License v3.0 or later](LICENSE) (`GPL-3.0-or-later`). Versions up to and including commit `398f346` were released under the MIT License, and copies obtained under those terms stay MIT.
 
-Versions up to and including commit `398f346` were released under the MIT License, and copies obtained under those terms stay MIT.
-
-### Third-party material
-
-- The Android app's Move icon (annotate mode) uses the path of the `open_with` icon from Google's [Material Design icons](https://github.com/google/material-design-icons), licensed under the [Apache License 2.0](LICENSES/Apache-2.0.txt).
+The Android app's Move icon uses the path of the `open_with` icon from Google's [Material Design icons](https://github.com/google/material-design-icons), licensed under the [Apache License 2.0](LICENSES/Apache-2.0.txt).
