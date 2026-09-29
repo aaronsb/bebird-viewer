@@ -35,6 +35,9 @@ class Capture(resolver: ContentResolver) {
         val band: BandData,
         val meta: SnapshotMeta,
         val zoomRect: ZoomCrop.Rect?,
+        /** The proximity scale as shown, drawn into stills by [stamp] (#43); video never has it. */
+        val scale: SavedScale? = null,
+        val stamp: ScaleStamp? = null,
     )
 
     sealed interface Result {
@@ -70,11 +73,25 @@ class Capture(resolver: ContentResolver) {
         val time = shot.meta.taken.toLocalDateTime()
         val dir = CaptureNames.folder(time.toLocalDate())
         val still = CaptureNames.still(time)
-        val full = save(still, dir, Frames.composed(rotated.toPixelImage(), shot.renderer, shot.band, shot.overlay), shot.meta).also(done)
+        val scale = shot.scale?.takeIf { shot.stamp != null }
+        if (scale == null) {
+            // no scale shown: exactly as before
+            val full = save(still, dir, Frames.composed(rotated.toPixelImage(), shot.renderer, shot.band, shot.overlay), shot.meta).also(done)
+            shot.zoomRect?.let { rect ->
+                val zoomed = Frames.zoomed(rotated, rect, shot.renderer, shot.band, shot.overlay)
+                // named after the full frame as saved, so the pair stays together after a rename
+                done(save(CaptureNames.zoomed((full as? Result.Saved)?.name ?: still), dir, zoomed, shot.meta.copy(zoomed = true)))
+            }
+            return@execute
+        }
+        val stamp = shot.stamp!!
+        val upright = rotated.toPixelImage()
+        val meta = shot.meta.copy(scale = scale.meta(upright.width))
+        val full = save(still, dir, stamp.still(upright, shot.renderer, shot.band, shot.overlay, scale), meta).also(done)
         shot.zoomRect?.let { rect ->
-            val zoomed = Frames.zoomed(rotated, rect, shot.renderer, shot.band, shot.overlay)
-            // named after the full frame as saved, so the pair stays together after a rename
-            done(save(CaptureNames.zoomed((full as? Result.Saved)?.name ?: still), dir, zoomed, shot.meta.copy(zoomed = true)))
+            val zoomed = stamp.zoomed(upright, rect, shot.renderer, shot.band, shot.overlay, scale)
+            val zoomedMeta = shot.meta.copy(zoomed = true, scale = scale.meta(upright.width, ZoomCrop.upscale(rect.width)))
+            done(save(CaptureNames.zoomed((full as? Result.Saved)?.name ?: still), dir, zoomed, zoomedMeta))
         }
     }
 
@@ -92,7 +109,9 @@ class Capture(resolver: ContentResolver) {
         val time = shot.meta.taken.toLocalDateTime()
         val (plain, annotated) = try {
             val upright = Frames.rotated(shot.frame, shot.rotation).toPixelImage()
-            annotatedStills(upright, shot.renderer, shot.band, shot.overlay, marks, annotations)
+            // the scale (as shown at the pause) goes on the annotated copy only, never the original
+            val scaleLayer = shot.scale?.let { s -> shot.stamp?.layer(s, upright.width, upright.height) }
+            annotatedStills(upright, shot.renderer, shot.band, shot.overlay, marks, annotations, scaleLayer)
         } catch (e: Throwable) {
             Log.e(TAG, "drawing the annotations failed", e)
             done(Result.Failed(drawFailureName(savedOriginal, CaptureNames.still(time)), e.message ?: e.javaClass.simpleName))
@@ -102,7 +121,8 @@ class Capture(resolver: ContentResolver) {
         val original = savedOriginal
             ?: (save(CaptureNames.still(time), dir, plain, shot.meta).also(done) as? Result.Saved)?.name
             ?: return@execute finished(SaveOutcome(null, complete = false))
-        val copy = save(CaptureNames.annotated(original), dir, annotated, shot.meta.copy(annotated = true)).also(done)
+        val scaleMeta = shot.scale?.takeIf { shot.stamp != null }?.meta(shot.frame.width)
+        val copy = save(CaptureNames.annotated(original), dir, annotated, shot.meta.copy(annotated = true, scale = scaleMeta)).also(done)
         finished(SaveOutcome(original, complete = copy is Result.Saved))
     }
 
