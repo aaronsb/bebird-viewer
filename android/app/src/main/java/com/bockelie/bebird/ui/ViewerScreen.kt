@@ -3,27 +3,6 @@ package com.bockelie.bebird.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.foundation.selection.toggleable
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.style.TextOverflow
-import com.bockelie.bebird.control.LightControl
-import com.bockelie.bebird.control.RollFilter
-import kotlin.math.roundToInt
-import androidx.compose.runtime.produceState
-import kotlinx.coroutines.delay
-import java.time.LocalDateTime
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import android.os.Build
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -32,22 +11,28 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,29 +43,48 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bockelie.bebird.R
-import com.bockelie.bebird.focus.ScaleOverlay
 import com.bockelie.bebird.connection.ScopeConnection
+import com.bockelie.bebird.control.LightControl
+import com.bockelie.bebird.control.RollFilter
 import com.bockelie.bebird.devices.DeviceBook
 import com.bockelie.bebird.devices.KnownDevice
+import com.bockelie.bebird.focus.ScaleOverlay
+import com.bockelie.bebird.focus.ScaleStyle
 import com.bockelie.bebird.scope.ScopeSession
 import com.bockelie.bebird.wifi.ScopeWifi
+import java.time.LocalDateTime
+import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 /** Joining a network by specifier needs this permission: nearby devices on 13+, location before. */
 internal val wifiPermission =
@@ -151,7 +155,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
     if (editingProximity) {
         val options = vm.proximity.options
         ProximityDialog(
-            proximityState, onEnabled = options::setEnabled, onStyle = options::setStyle, onClose = options::setClose,
+            proximityState, onEnabled = options::setEnabled, onClose = options::setClose,
             onDismiss = { editingProximity = false },
         )
     }
@@ -204,6 +208,9 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     data = bandDataOf(stats, light, shownRoll, trim, book.last, online, label, now, showScopeId),
                 ) { Readouts(stats, shownRoll) }
             }
+            // The scale style lives here, above Light; greyed out (keeping its value, and the
+            // row's height) while proximity estimation is off.
+            ScaleRow(proximityState.style, enabled = proximityState.enabled, onStyle = vm.proximity.options::setStyle)
             LightRow(light, onToggle = conn::toggleLight, onLevel = conn::setLight)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The switch and its label are one control, so TalkBack names it.
@@ -476,5 +483,28 @@ private fun LabelRow(label: String, onEdit: () -> Unit, onClear: () -> Unit) {
     }
 }
 
-
-
+/** The proximity scale's style: Ring / Bowtie / Bar / Off, as one segmented control. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ScaleRow(style: ScaleStyle, enabled: Boolean, onStyle: (ScaleStyle) -> Unit) {
+    val options = listOf(
+        ScaleStyle.RING to R.string.proximity_scale_ring,
+        ScaleStyle.BOWTIE to R.string.proximity_scale_bowtie,
+        ScaleStyle.BAR to R.string.proximity_scale_bar,
+        ScaleStyle.NONE to R.string.proximity_scale_off,
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.proximity_scale), Modifier.padding(end = 8.dp))
+        SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
+            options.forEachIndexed { i, (s, name) ->
+                SegmentedButton(
+                    selected = style == s,
+                    onClick = { onStyle(s) },
+                    enabled = enabled,
+                    shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
+                    icon = {},  // no check mark: the labels keep their width
+                ) { Text(stringResource(name), maxLines = 1) }
+            }
+        }
+    }
+}
