@@ -343,15 +343,25 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         return capture.stopRecording { _captureResults.tryEmit(it) }
     }
 
-    private val quitting = QuitSequence(viewModelScope, Dispatchers.IO, ::stopRecording, grace::quit, connection::awaitRelease)
+    private val quitSequence = QuitSequence(viewModelScope, Dispatchers.IO, ::stopRecording, grace::quit, connection::awaitRelease)
+    private val _quitting = MutableStateFlow(false)
+    /** Quit is under way: the controls that would start something else are off. */
+    val quitting: StateFlow<Boolean> = _quitting.asStateFlow()
+    private val _quitDone = MutableStateFlow(false)
+    /**
+     * Quit has finished: whichever activity is current closes the app. A flow, not a callback,
+     * so an activity recreated mid-sequence still does.
+     */
+    val quitDone: StateFlow<Boolean> = _quitDone.asStateFlow()
 
     /**
      * The Quit button (#38): finish any recording, then end the connection now, switching the
-     * scope off if video had started (no grace period), then [exit] once the network is released.
-     * Once only.
+     * scope off if video had started (no grace period), then [quitDone] once the network is
+     * released. Once only. Leaving with Back or a swipe mid-sequence clears this ViewModel and
+     * cancels the rest; the activity's onClose then ends the connection per the settings.
      */
-    fun quit(exit: () -> Unit) {
-        quitting.start(exit)
+    fun quit() {
+        if (quitSequence.start { _quitDone.value = true }) _quitting.value = true
     }
 
     override fun onCleared() {

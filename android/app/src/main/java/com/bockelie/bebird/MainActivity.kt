@@ -37,6 +37,10 @@ class MainActivity : ComponentActivity() {
         val permitted = ContextCompat.checkSelfPermission(this, wifiPermission) == PackageManager.PERMISSION_GRANTED
         if (savedInstanceState == null && permitted) vm.connection.connectOnLaunch()
         askForNotificationsOnFirstVideo()
+        lifecycleScope.launch {
+            vm.quitDone.first { it }  // Quit (#38) has powered off and released
+            finishAndRemoveTask()
+        }
         setContent {
             val theme by vm.theme.collectAsStateWithLifecycle()
             val dark = isDark(theme)

@@ -25,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -43,8 +44,10 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -122,7 +125,8 @@ class Hold(val durationMs: Long, private val tapMs: Long = TAP_MS) {
  * press, a stronger one on completion, and [onHeld] runs then, without waiting for the release;
  * holding on doesn't repeat it. A tap runs [onTap], for a hint. It holds the same way with
  * Enter, Space or the D-pad centre key once focused. A screen reader gets [onHeld] as the click
- * action, with no hold, labelled [description] (or the visible content if null).
+ * action, with no hold, labelled [description] (or the visible content if null). Not [enabled]:
+ * greyed out, and no press starts.
  */
 @Composable
 fun HoldButton(
@@ -130,6 +134,7 @@ fun HoldButton(
     onHeld: () -> Unit,
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     description: String? = null,
     colors: ButtonColors = ButtonDefaults.buttonColors(),
     contentPadding: PaddingValues = ButtonDefaults.ContentPadding,
@@ -143,20 +148,24 @@ fun HoldButton(
         driver.haptics = haptics
         driver.onHeld = onHeld
         driver.onTap = onTap
+        driver.enabled = enabled
     }
     // Leaving the screen mid-hold (Disconnect turning into Connect) is no release
     DisposableEffect(driver) { onDispose { driver.end(released = false) } }
+    // Nor is the window losing focus (a dialog, the shade): the KeyUp would go elsewhere
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(driver, windowFocused, enabled) { if (!windowFocused || !enabled) driver.end(released = false) }
     val interaction = remember { MutableInteractionSource() }
     val fillColor = colors.contentColor.copy(alpha = FILL_ALPHA)
     Surface(
         shape = ButtonDefaults.shape,
-        color = colors.containerColor,
-        contentColor = colors.contentColor,
+        color = if (enabled) colors.containerColor else colors.disabledContainerColor,
+        contentColor = if (enabled) colors.contentColor else colors.disabledContentColor,
         modifier = modifier
             .semantics(mergeDescendants = true) {
                 role = Role.Button
                 description?.let { contentDescription = it }
-                onClick { driver.onHeld(); true }
+                if (enabled) onClick { driver.onHeld(); true } else disabled()
             }
             .pointerInput(driver) {
                 awaitEachGesture {
@@ -182,7 +191,7 @@ fun HoldButton(
                 true
             }
             .onFocusChanged { if (!it.isFocused) driver.end(released = false) }
-            .focusable(interactionSource = interaction),
+            .focusable(enabled, interaction),
     ) {
         ProvideTextStyle(MaterialTheme.typography.labelLarge) {
             Box(
@@ -212,11 +221,12 @@ private class HoldDriver(
     var haptics: HapticFeedback? = null
     var onHeld: () -> Unit = {}
     var onTap: () -> Unit = {}
+    var enabled = true
     private var ticker: Job? = null
 
-    /** A press began; false if one is already held. */
+    /** A press began; false if one is already held, or the button is disabled. */
     fun press(): Boolean {
-        if (!hold.press(uptimeMs())) return false
+        if (!enabled || !hold.press(uptimeMs())) return false
         haptics?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         ticker = scope.launch {
             while (isActive) {

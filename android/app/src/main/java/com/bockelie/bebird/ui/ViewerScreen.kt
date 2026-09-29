@@ -2,7 +2,6 @@
 package com.bockelie.bebird.ui
 
 import android.Manifest
-import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import android.text.format.DateUtils
@@ -167,7 +166,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // The device selector: what Connect goes to, and where devices are managed.
-                OutlinedButton(onClick = { choosing = true }, modifier = Modifier.weight(1f), contentPadding = TopRowPadding) {
+                val quitting by vm.quitting.collectAsStateWithLifecycle()  // nothing else starts meanwhile
+                OutlinedButton(onClick = { choosing = true }, modifier = Modifier.weight(1f), enabled = !quitting, contentPadding = TopRowPadding) {
                     Text(book.last?.label ?: stringResource(R.string.no_device), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Icon(Icons.Default.ArrowDropDown, contentDescription = stringResource(R.string.choose_device))
                 }
@@ -178,12 +178,15 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     snackbar.showSnackbar(text)
                 }
                 if (idle) {
-                    Button(onClick = { withPermission(conn::connect) }, contentPadding = TopRowPadding) {
+                    Button(onClick = { withPermission(conn::connect) }, enabled = !quitting, contentPadding = TopRowPadding) {
                         Text(stringResource(R.string.connect))
                     }
                 } else {
                     val holdToDisconnect = stringResource(R.string.hold_to_disconnect)
-                    HoldButton(Hold.DISCONNECT_MS, onHeld = conn::disconnect, onTap = { hint(holdToDisconnect) }, contentPadding = TopRowPadding) {
+                    HoldButton(
+                        Hold.DISCONNECT_MS, onHeld = conn::disconnect, onTap = { hint(holdToDisconnect) },
+                        enabled = !quitting, contentPadding = TopRowPadding,
+                    ) {
                         Text(stringResource(R.string.disconnect))
                     }
                 }
@@ -191,7 +194,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 val holdToQuit = stringResource(if (canPowerOff) R.string.hold_to_quit_power_off else R.string.hold_to_quit)
                 HoldButton(
                     Hold.QUIT_MS,
-                    onHeld = { vm.quit { (context as? Activity)?.finishAndRemoveTask() } },
+                    onHeld = vm::quit,  // MainActivity closes the app once it's done
+                    enabled = !quitting,
                     onTap = { hint(holdToQuit) },
                     description = stringResource(if (canPowerOff) R.string.quit_power_off else R.string.quit),
                     colors = ButtonDefaults.filledTonalButtonColors(),

@@ -2,6 +2,7 @@
 package com.bockelie.bebird.ui
 
 import android.util.Log
+import com.bockelie.bebird.capture.VideoRecorder
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -60,7 +61,9 @@ class QuitSequence(
 
     private companion object {
         const val TAG = "BebirdSpike"
-        const val RECORDING_WAIT_MS = 2000L
+        // Finishing a recording drains the encoder for up to its deadline, then stops the muxer
+        // and publishes the file: allow that, and a second for the rest.
+        const val RECORDING_WAIT_MS = VideoRecorder.DRAIN_DEADLINE_MS + 1000L
         // Past the release's own 1 s limit on waiting for STOP (see NetworkGate).
         const val RELEASE_WAIT_MS = 1500L
     }
