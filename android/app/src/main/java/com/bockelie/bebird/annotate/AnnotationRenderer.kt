@@ -82,8 +82,8 @@ class AnnotationRenderer(private val font: GlyphSource) {
     private fun text(px: IntArray, stride: Int, w: Int, h: Int, t: Mark.Text) {
         val k = textScale(w)
         val cps = t.text.codePoints().toArray()
-        val left = floor(t.at.x * w.toDouble()).toInt()
-        val top = floor(t.at.y * h.toDouble()).toInt() - PixelFont.HEIGHT * k / 2
+        val left = textLeft(t, w)
+        val top = textTop(t, w, h)
         for ((ddx, ddy) in NEIGHBOURS) glyphs(px, stride, w, h, cps, left + ddx * k, top + ddy * k, k, BLACK)
         glyphs(px, stride, w, h, cps, left, top, k, t.color)
     }
@@ -103,6 +103,25 @@ class AnnotationRenderer(private val font: GlyphSource) {
             x0 += (g?.cells ?: 1) * PixelFont.CELL * k
         }
     }
+
+    /**
+     * Where [t] is drawn in a [w] × [h] area, outline included, in pixels ([PixelRect.right]
+     * and [PixelRect.bottom] exclusive). Not clipped to the area.
+     */
+    fun textBounds(t: Mark.Text, w: Int, h: Int): PixelRect {
+        val k = textScale(w)
+        val cells = t.text.codePoints().toArray().sumOf { font.glyph(it)?.cells ?: 1 }
+        val left = textLeft(t, w)
+        val top = textTop(t, w, h)
+        return PixelRect(left - k, top - k, left + cells * PixelFont.CELL * k + k, top + PixelFont.HEIGHT * k + k)
+    }
+
+    private fun textLeft(t: Mark.Text, w: Int) = floor(t.at.x * w.toDouble()).toInt()
+
+    private fun textTop(t: Mark.Text, w: Int, h: Int) = floor(t.at.y * h.toDouble()).toInt() - PixelFont.HEIGHT * textScale(w) / 2
+
+    /** A rectangle of pixels, [left, right) × [top, bottom). */
+    data class PixelRect(val left: Int, val top: Int, val right: Int, val bottom: Int)
 
     /** A straight piece of a stroke, in pixels of the drawing area. */
     data class Seg(val x0: Double, val y0: Double, val x1: Double, val y1: Double)
