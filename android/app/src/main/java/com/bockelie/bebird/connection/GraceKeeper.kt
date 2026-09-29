@@ -88,6 +88,18 @@ class GraceKeeper(
         if (_kept.value == null) leave(0) else expire()
     }
 
+    /**
+     * Quit (#38): end the connection now, whatever the grace period and the power-off setting:
+     * switch the scope off if video had started (as the menu's Power off does), and otherwise
+     * disconnect. Anything kept (the service, the timer, the wake lock) ends with it. Doesn't
+     * wait for the release: the caller does ([ScopeConnection.awaitRelease]), off the main
+     * thread, then closes the app, and [onClose] finds nothing to end.
+     */
+    fun quit() {
+        Log.i(TAG, "quit")
+        end(powerOff = true, await = false)
+    }
+
     /** The screen is back: the kept session carries on, and the service stops. */
     fun onReturn() {
         cover.returned()
@@ -186,7 +198,7 @@ class GraceKeeper(
         end(_kept.value?.endsWithPowerOff ?: settings.powerOffAfterGrace)
     }
 
-    private fun end(powerOff: Boolean) {
+    private fun end(powerOff: Boolean, await: Boolean = true) {
         stopTimer()
         sleep()
         expired = false
@@ -194,6 +206,7 @@ class GraceKeeper(
         if (!(powerOff && connection.powerOff())) connection.disconnect()
         connection.decoding = true
         _kept.value = null
+        if (!await) return
         // The process may go right after this (the app closed with no service running), so see
         // the sends and the release through; the release itself gives up on STOP after 1 s.
         val released = connection.awaitRelease(RELEASE_WAIT_MS)

@@ -85,7 +85,7 @@ class VideoRecorder private constructor(
     }
 
     private fun drain(untilEnd: Boolean) {
-        val deadline = System.nanoTime() + 2_000_000_000L
+        val deadline = System.nanoTime() + DRAIN_DEADLINE_MS * 1_000_000
         while (true) {
             val out = codec.dequeueOutputBuffer(info, if (untilEnd) 10_000 else 0)
             when {
@@ -125,6 +125,8 @@ class VideoRecorder private constructor(
         private const val TAG = "BebirdSpike"
         /** Plenty for 480 px at about 10 fps. */
         const val BIT_RATE = 2_000_000
+        /** How long finishing a recording waits at most for the encoder's last output. */
+        const val DRAIN_DEADLINE_MS = 2000L
 
         /**
          * A new recording named [name] in [dir], [width] × [height]. Everything it opens is closed again

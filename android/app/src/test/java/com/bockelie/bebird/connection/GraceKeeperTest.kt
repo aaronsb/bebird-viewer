@@ -284,6 +284,75 @@ class GraceKeeperTest {
         assertTrue(links.sends().none { it.bytes == POWER_OFF })
     }
 
+    @Test fun quitWhileStreamingPowersOffWhateverTheSettings() {
+        // Quit (#38): power off and release, even with a grace period set and power-off at its
+        // end turned off; then the app closes and finds nothing left to end
+        grace(600, powerOff = false)
+        poweringOff = true
+        join()
+        stream()
+        onMain { keeper.quit() }
+        assertTrue(conn.awaitRelease(2000))  // the caller's wait, off the main thread
+        assertReleasedAfter(STOP, POWER_OFF)
+        assertEquals(0, services)
+        assertNull(keeper.kept.value)
+        assertFalse(conn.isWanted)
+
+        val requests = wifi.starts.size
+        onMain { keeper.onClose() }
+        Thread.sleep(150)
+        assertEquals(POWER_OFF, links.sends().last().bytes)  // nothing after 66 3E
+        assertEquals(requests, wifi.starts.size)
+    }
+
+    @Test fun quitDoesNotWaitForTheReleaseOnTheMainThread() {
+        grace(0, powerOff = false)
+        poweringOff = true  // Quit switches the scope off whatever the setting
+        join()
+        stream()
+        wifi.releaseMs = 500  // a slow release
+        val t0 = System.nanoTime()
+        onMain { keeper.quit() }
+        val tookMs = (System.nanoTime() - t0) / 1_000_000
+        assertTrue("quit() took $tookMs ms", tookMs < 300)
+        assertTrue(conn.awaitRelease(2000))
+        assertReleasedAfter(STOP, POWER_OFF)
+    }
+
+    @Test fun quitBeforeVideoOnlyDisconnects() {
+        grace(600, powerOff = true)
+        join()  // START sent, no frame yet: the scope isn't known to be listening
+        onMain { keeper.quit() }
+        assertTrue(conn.awaitRelease(2000))
+        assertReleasedAfter(STOP)
+        assertTrue(links.sends().none { it.bytes == POWER_OFF })
+    }
+
+    @Test fun quitWhileKeptEndsTheKeepToo() {
+        grace(600, powerOff = false)
+        poweringOff = true
+        join()
+        stream()
+        onMain { keeper.onLeave() }
+        assertEquals(1, awake)
+        onMain { keeper.quit() }
+        assertReleasedAfter(STOP, POWER_OFF)
+        assertNull(keeper.kept.value)
+        assertEquals(0, awake)
+        assertTrue(conn.decoding)
+        timer.advance(600_000)  // the old deadline: nothing more happens
+        Thread.sleep(100)
+        assertEquals(1, wifi.releases.size)
+    }
+
+    @Test fun quitWhenNotConnectedSendsNothing() {
+        onMain { keeper.quit() }
+        Thread.sleep(100)
+        assertTrue(links.sends().isEmpty())
+        assertTrue(wifi.starts.isEmpty())
+        assertNull(keeper.kept.value)
+    }
+
     @Test fun leavingWithNoGracePeriodReleasesBeforeReturning() {
         // swiped away from the foreground: no service, so nothing may be left to finish
         grace(0, powerOff = true)
