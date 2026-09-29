@@ -7,8 +7,10 @@ Both builds run in Docker containers, never directly on your machine, so you nee
 | `make app` | build the desktop binary `dist/bebird-viewer` |
 | `make android-test` | run the Android unit tests (JVM, no device needed) |
 | `make android-apk` | build the Android debug APK |
-| `make android-release` | build the Android release APK, signed when a key is configured (see [Release builds](#release-builds)) |
+| `make android-release` | build the unsigned Android release APK (see [Release builds](#release-builds)) |
+| `make android-release-sign` | sign it offline with the release key |
 | `make android-release-verify APK=…` | check an APK's signature and print its certificate and SHA-256 |
+| `make android-lock` | re-record the Gradle dependency checksums (see [Dependency verification](#dependency-verification)) |
 | `make release-sign VERSION=…` | GPG-sign a published release's checksum (on your machine; see [Cutting a release](#cutting-a-release)) |
 | `make android-shell` | open a shell in the Android build container |
 | `make clean` | remove build output (desktop and Android) |
@@ -31,22 +33,39 @@ make android-apk    # debug APK
 
 The build image carries JDK 17 and the Android SDK (platform 35), so neither is needed on your machine. The debug APK lands in `android/app/build/outputs/apk/debug/`. Install it with `adb install` or by opening it on the phone.
 
+## Dependency verification
+
+Gradle checks every dependency and plugin it downloads against the SHA-256 checksums in [`android/gradle/verification-metadata.xml`](../android/gradle/verification-metadata.xml) and fails the build on a mismatch or an unlisted artifact. After adding or upgrading a dependency or plugin, run
+
+```sh
+make android-lock
+```
+
+which resolves everything afresh for the tasks CI runs (tests, debug and release APKs) and records the new checksums. It records whatever it downloads, so review the diff: it should add or change only the artifacts you meant to.
+
 ## Release builds
 
-`make android-release` builds the release APK into `android/app/build/outputs/apk/release/`. It is shrunk and obfuscated by R8 (rules in [`android/app/proguard-rules.pro`](../android/app/proguard-rules.pro)), and the build checks that it still carries every asset in `android/app/required-assets.txt`, as it does for the debug APK.
+Building and signing are separate steps, so the Gradle build, which runs plugins and dependencies with network access, never sees the signing key:
 
-Without a signing key it builds `app-release-unsigned.apk`, which Android won't install; the debug key is never used for a release. To sign, set these in the environment (or pass them to Gradle as `-P` properties):
+```sh
+make android-release        # unsigned release APK
+make android-release-sign   # sign it offline
+```
+
+`make android-release` builds `app-release-unsigned.apk` into `android/app/build/outputs/apk/release/`. It is shrunk and obfuscated by R8 (rules in [`android/app/proguard-rules.pro`](../android/app/proguard-rules.pro)), and the build checks that it still carries every asset in `android/app/required-assets.txt`, as it does for the debug APK. Android won't install an unsigned APK, and the release is never signed with the debug key.
+
+`make android-release-sign` signs it into `app-release.apk` in a container with no network that sees only that directory and the keystore (read-only). It checks the APK is zip-aligned, signs with `apksigner` (v2 and v3 signatures; v3 allows rotating to a new key later; no v1, which only Android 6 and older need), then prints the verification, the signing certificate and the APK's SHA-256. It reads the key from these environment variables:
 
 | Variable | Value |
 |---|---|
-| `BEBIRD_KEYSTORE` | path to the keystore file; `make` mounts it read-only into the container |
+| `BEBIRD_KEYSTORE` | path to the keystore file |
 | `BEBIRD_KEYSTORE_PASSWORD` | the keystore's password |
 | `BEBIRD_KEY_ALIAS` | the key's alias in the keystore |
 | `BEBIRD_KEY_PASSWORD` | the key's password (for a PKCS12 keystore, the same as the keystore's) |
 
-Signed, it builds `app-release.apk` with v2 and v3 signatures (v3 allows rotating to a new key later) and prints `apksigner`'s verification, the signing certificate and the APK's SHA-256. `make android-release-verify APK=path/to/app.apk` does the same check for any APK.
+The passwords go into the container by name only, so they don't appear on a command line or in `make`'s output. `make android-release-verify APK=path/to/app.apk` runs the same check on any APK.
 
-Keystores and signing properties never go in git; `.gitignore` excludes `*.jks`, `*.keystore` and `release-signing.properties`.
+Keystores and signing properties never go in git; `.gitignore` excludes `*.jks`, `*.keystore`, `*.p12`, `*.pfx` and `release-signing.properties`.
 
 ### Creating the release key
 
@@ -72,21 +91,35 @@ docker run --rm -it --user "$(id -u):$(id -g)" --network none -v ~/bebird-signin
 
 ### Developer verification
 
-Android now requires apps on certified devices to come from a verified developer, including apps installed from outside Google Play. Enforcement starts in Brazil, Indonesia, Singapore and Thailand on 2026-09-30 and extends worldwide from 2027. Before then, register the package name `com.bockelie.bebird` and the release certificate's SHA-256 fingerprint in the Android Developer Console. Source: [developer.android.com/developer-verification](https://developer.android.com/developer-verification).
+Android now requires apps on certified devices to come from a verified developer, including apps installed from outside Google Play. Enforcement starts in Brazil, Indonesia, Singapore and Thailand on 2026-09-30 and extends worldwide from 2027. Register the package name `com.bockelie.bebird` and the release certificate's SHA-256 fingerprint in the Android Developer Console. Source: [developer.android.com/developer-verification](https://developer.android.com/developer-verification).
 
-### GitHub secrets
+### GitHub environment and secrets
 
-The [release workflow](../.github/workflows/release.yml) reads the key from repository secrets. Set them with `gh`; the keystore goes in from its file, and for the passwords `gh` prompts, so no value lands in your shell history:
+The [release workflow](../.github/workflows/release.yml) reads the key from the secrets of a GitHub environment named `release`, and only its sign job uses that environment. Restrict the environment to release tags, so no other workflow, branch or manual run on a branch can read the key:
 
 ```sh
-base64 -w0 ~/bebird-signing/bebird-release.keystore | gh secret set BEBIRD_KEYSTORE_BASE64
-gh secret set BEBIRD_KEYSTORE_PASSWORD
-gh secret set BEBIRD_KEY_PASSWORD
-gh secret set BEBIRD_KEY_ALIAS --body bebird
-gh variable set BEBIRD_CERT_SHA256 --body "<the SHA-256 fingerprint>"
+repo=aaronsb/bebird-viewer
+gh api -X PUT repos/$repo/environments/release \
+    -F 'deployment_branch_policy[protected_branches]=false' \
+    -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X POST repos/$repo/environments/release/deployment-branch-policies -f name='v*.*.*' -f type=tag
 ```
 
-With `BEBIRD_CERT_SHA256` set, the workflow refuses to publish an APK signed with any other certificate. It isn't secret, so it is a variable (a secret of that name works too).
+(In the web UI: Settings → Environments → New environment `release` → Deployment branches and tags → Selected branches and tags → add a tag rule `v*.*.*`.) You can also add yourself as a required reviewer there, so every signing run waits for your approval.
+
+Then set the secrets and the variable in that environment. The keystore goes in from its file, and for the passwords `gh` prompts, so no value lands in your shell history:
+
+```sh
+base64 -w0 ~/bebird-signing/bebird-release.keystore | gh secret set BEBIRD_KEYSTORE_BASE64 --env release
+gh secret set BEBIRD_KEYSTORE_PASSWORD --env release
+gh secret set BEBIRD_KEY_PASSWORD --env release
+gh secret set BEBIRD_KEY_ALIAS --env release --body bebird
+gh variable set BEBIRD_CERT_SHA256 --env release --body "<the SHA-256 fingerprint>"
+```
+
+If any of them were set at repository level earlier, remove those copies (`gh secret delete NAME`, `gh variable delete BEBIRD_CERT_SHA256`), since every workflow can read repository secrets.
+
+`BEBIRD_CERT_SHA256` is required for publishing: the workflow refuses to publish an APK signed with any other certificate, or when the variable is missing. It isn't secret, so it is a variable (a secret of that name works too).
 
 ### Cutting a release
 
@@ -105,11 +138,13 @@ With `BEBIRD_CERT_SHA256` set, the workflow refuses to publish an APK signed wit
    make release-sign VERSION=X.Y.Z        # GPG_KEY=<key id> to use a key other than the default
    ```
 
-The workflow checks that the tag matches `versionName`, runs the unit tests, builds and signs the APK, verifies the signature and certificate, and creates the GitHub Release with `bebird-X.Y.Z.apk`, its `.sha256`, `LICENSE` and `LICENSES/Apache-2.0.txt`. The release notes are the version's `CHANGELOG.md` section, or GitHub's generated notes if there is none, followed by how to verify the download. R8's `mapping.txt`, which turns obfuscated stack traces back into source names, is kept as a workflow artifact; download it if you want it beyond GitHub's artifact retention.
+The workflow checks that the tag matches `versionName`, runs the unit tests and builds the unsigned APK in one job, signs it offline and verifies the signature and certificate in a second job (the only one with the key), and creates the GitHub Release with `bebird-X.Y.Z.apk`, its `.sha256`, `LICENSE` and `LICENSES/Apache-2.0.txt`. The release notes are the version's `CHANGELOG.md` section, or GitHub's generated notes if there is none, followed by how to verify the download. R8's `mapping.txt`, which turns obfuscated stack traces back into source names, is kept as a workflow artifact; download it if you want it beyond GitHub's artifact retention.
 
 The workflow doesn't require the tag to be signed, since it has no public key to check it against, but a signed tag lets anyone check that the release was cut from a commit you vouched for (`git tag -v vX.Y.Z`).
 
 GPG never runs in CI; the private key stays on your machine. `make release-sign` runs on the host, not in Docker, because it uses your `gpg-agent` and your `gh` login. It downloads the APK and its `.sha256` from the release, checks one against the other, makes a detached ASCII-armoured signature of the `.sha256` (`gpg --armor --detach-sign`) and uploads it as `bebird-X.Y.Z.apk.sha256.asc`.
+
+To try the workflow without publishing, run it by hand (Actions → Release → Run workflow, or `gh workflow run release.yml --ref <ref>`). It uploads the APK as a workflow artifact only: signed when run on a `v*.*.*` tag, which the `release` environment allows, and unsigned on any other ref.
 
 ### Verifying a release
 
@@ -123,8 +158,6 @@ apksigner verify --print-certs bebird-X.Y.Z.apk               # Android signing 
 
 The certificate's SHA-256 digest must be the one given in the release notes; it is the same for every release. `make android-release-verify APK=bebird-X.Y.Z.apk` runs `apksigner` in the build container.
 
-To try the workflow without publishing, run it by hand (Actions → Release → Run workflow, or `gh workflow run release.yml`). It builds, signs if the secrets are set, and uploads the APK as a workflow artifact only.
-
 ## CI
 
-CI runs the same make targets in an image built from the same Dockerfile for every change under `android/`: the unit tests, the debug APK (uploaded as an artifact) and an unsigned release APK, which checks that R8 and the required-assets check pass. The workflow is [`.github/workflows/android.yml`](../.github/workflows/android.yml).
+CI runs the same make targets in an image built from the same Dockerfile for every change under `android/`: the unit tests, the debug APK (uploaded as an artifact) and the unsigned release APK, which checks that R8 and the required-assets check pass. Dependency verification applies there too. The workflow is [`.github/workflows/android.yml`](../.github/workflows/android.yml).

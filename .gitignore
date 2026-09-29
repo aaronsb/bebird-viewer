@@ -18,4 +18,6 @@ dist/
 # release signing: keystores and their passwords never go in git (docs/building.md)
 *.jks
 *.keystore
+*.p12
+*.pfx
 release-signing.properties
