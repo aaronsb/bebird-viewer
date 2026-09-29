@@ -98,7 +98,7 @@ class ScopeSessionTest {
         assertTrue(synchronized(opened) { opened.all { it.isClosed } })
         Thread.sleep(150)  // past several keepalive ticks
         assertEquals(sent, synchronized(log) { log.size })
-        assertEquals("stopped", s.stats.value.status)
+        assertEquals("connection lost", s.stats.value.status)
         assertEquals(s.drop(), s.stop())  // idempotent, and a later stop() sends nothing either
         assertEquals(sent, synchronized(log) { log.size })
     }

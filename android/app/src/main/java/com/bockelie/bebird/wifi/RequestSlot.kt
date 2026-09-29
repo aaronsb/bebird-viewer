@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 internal class RequestSlot<C : Any> {
     private val lock = Any()
     private var current: C? = null  // guarded by lock
+    private var ending = false      // guarded by lock; see [markEnding]
     private val _state = MutableStateFlow<ScopeWifi.State>(ScopeWifi.State.Idle)
     val state: StateFlow<ScopeWifi.State> = _state.asStateFlow()
     // Separate from state, so learning the identity never restarts the session.
@@ -29,6 +30,7 @@ internal class RequestSlot<C : Any> {
         if (current != null) return false
         request()
         current = cb
+        ending = false
         _identity.value = null
         _state.value = ScopeWifi.State.Requesting
         true
@@ -39,10 +41,19 @@ internal class RequestSlot<C : Any> {
         if (current == null) _state.value = ScopeWifi.State.Failed(reason)
     }
 
+    /**
+     * The current request is about to be released on purpose (Disconnect, power off, a new
+     * request): a loss before the [release] reads as Idle, not Lost. Cleared by [file] and [release].
+     */
+    fun markEnding() = synchronized(lock) {
+        if (current != null) ending = true
+    }
+
     /** Let go of the request: Idle. Returns its callback, to unregister, or null if none was filed. */
     fun release(): C? = synchronized(lock) {
         current.also {
             current = null
+            ending = false
             _state.value = ScopeWifi.State.Idle
             _identity.value = null
         }
@@ -64,14 +75,16 @@ internal class RequestSlot<C : Any> {
 
     /**
      * [cb]'s network was lost: the request is let go of, and the state is [ScopeWifi.State.Lost]
-     * until the next [file] or [release]. True if it was the current request, once: the caller
-     * then unregisters [cb]. A late loss after [release] changes nothing.
+     * until the next [file] or [release], or Idle if it was ending anyway ([markEnding]). True if
+     * it was the current request, once: the caller then unregisters [cb]. A late loss after
+     * [release] changes nothing.
      */
     fun lost(cb: C): Boolean = synchronized(lock) {
         if (current !== cb) return false
         current = null
         _identity.value = null
-        _state.value = ScopeWifi.State.Lost
+        _state.value = if (ending) ScopeWifi.State.Idle else ScopeWifi.State.Lost
+        ending = false
         true
     }
 
@@ -79,6 +92,7 @@ internal class RequestSlot<C : Any> {
     fun unavailable(cb: C, target: ScopeWifi.Target) = synchronized(lock) {
         if (current !== cb) return@synchronized
         current = null
+        ending = false
         _state.value = ScopeWifi.State.Unavailable(target)
     }
 }

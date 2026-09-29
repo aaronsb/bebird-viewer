@@ -12,12 +12,12 @@ import com.bockelie.bebird.scope.FakeLinks.Companion.frame
 import com.bockelie.bebird.scope.ScopeSession
 import com.bockelie.bebird.wifi.ScopeWifi
 import com.bockelie.bebird.wifi.ScopeWifi.Target
+import com.bockelie.bebird.wifi.RequestSlot
 import com.bockelie.bebird.wifi.WifiControl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.junit.After
@@ -31,29 +31,40 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * A lost network (#37), with real sessions over fake links: ScopeWifi has released the request
- * itself, so the connection ends the session without STOP, doesn't release again, wants nothing
- * more, and one Connect files the remembered exact request afresh.
+ * A lost network (#37), with real sessions over fake links and ScopeWifi's own bookkeeping
+ * ([RequestSlot]): the request is released on the loss, so the connection ends the session
+ * without STOP, doesn't release again, wants nothing more, and one Connect files the remembered
+ * exact request afresh. A loss during a deliberate ending reads as Idle.
  */
 class ScopeConnectionLostTest {
     private val links = FakeLinks()
 
+    /** ScopeWifi without Android: the same [RequestSlot], with Android's callbacks played by the test. */
     private inner class FakeWifi : WifiControl {
-        override val state = MutableStateFlow<ScopeWifi.State>(ScopeWifi.State.Idle)
-        override val identity = MutableStateFlow<ScopeWifi.Identity?>(null)
+        private val slot = RequestSlot<Any>()
+        override val state = slot.state
+        override val identity = slot.identity
         val starts = CopyOnWriteArrayList<Target>()
         val stops = AtomicInteger()
         @Volatile var releaseMs = 0L  // how long the network takes to go
+        @Volatile private var cb: Any? = null  // the latest request's callback
         override fun start(target: Target, why: String?) {
-            state.value = ScopeWifi.State.Requesting  // before the test sees the request and makes it Available
+            val c = Any()
+            if (!slot.file(c) {}) return
+            cb = c
             starts += target
         }
+        override fun markEnding() = slot.markEnding()
         override fun stop() {
             Thread.sleep(releaseMs)
             stops.incrementAndGet()
-            state.value = ScopeWifi.State.Idle
+            slot.release()
         }
         override fun scopesInRange(): List<ScopeWifi.Identity>? = null
+
+        fun available(target: Target) = slot.update(cb!!, ScopeWifi.State.Available(blank<Network>(), target))
+        /** Android's onLost for the latest request; true if it was current (ScopeWifi then unregisters). */
+        fun lose(): Boolean = slot.lost(cb!!)
     }
 
     /** An instance of a framework class without running its (stubbed) constructor. */
@@ -82,6 +93,7 @@ class ScopeConnectionLostTest {
         }
     }
     private val letGo = AtomicInteger()
+    private var poweringOff = false  // the only test that may send 66 3E
 
     init {
         onMain { conn.onLetGo = { letGo.incrementAndGet() } }
@@ -93,7 +105,7 @@ class ScopeConnectionLostTest {
         scope.cancel()
         mainThread.shutdownNow()
         videoOps.shutdownNow()
-        links.sends().forEach { assertTrue("sent ${it.bytes}", FakeLinks.allowed(it.bytes)) }
+        links.sends().forEach { assertTrue("sent ${it.bytes}", FakeLinks.allowed(it.bytes) || poweringOff && it.bytes == listOf<Byte>(0x66, 0x3E)) }
     }
 
     private fun <T> onMain(block: () -> T): T = runBlocking { withContext(main) { block() } }
@@ -102,7 +114,7 @@ class ScopeConnectionLostTest {
         val before = wifi.starts.size
         onMain { conn.connect() }
         await("the request") { wifi.starts.size > before }  // after connect()'s own release
-        onMain { wifi.state.value = ScopeWifi.State.Available(blank<Network>(), exact) }
+        wifi.available(exact)
         await("START") { links.starts() > before }
     }
 
@@ -112,8 +124,7 @@ class ScopeConnectionLostTest {
         await("a picture") { conn.stats.value.frame != null }
     }
 
-    /** What ScopeWifi reports once it has released the request after onLost. */
-    private fun lose() = onMain { wifi.state.value = ScopeWifi.State.Lost }
+    private fun lose() = assertTrue(wifi.lose())
 
     private fun videoSendsSince(mark: Int) = links.sends().drop(mark).filter { it.remotePort == Protocol.DATA_PORT }
 
@@ -130,7 +141,7 @@ class ScopeConnectionLostTest {
         assertEquals(stops, wifi.stops.get())         // ScopeWifi released it already
         assertEquals(ScopeWifi.State.Lost, wifi.state.value)  // the marker stays for the circle
         assertNull(conn.stats.value.frame)  // what ends a recording in progress
-        assertEquals("stopped", conn.stats.value.status)
+        assertEquals("connection lost", conn.stats.value.status)
         assertFalse(conn.isWanted)
         assertEquals(1, letGo.get())
         assertEquals("bebird-ES-1", conn.book.value.last?.ssid)  // still remembered
@@ -169,11 +180,14 @@ class ScopeConnectionLostTest {
         join()
         stream()
         wifi.releaseMs = 300  // the network goes before the release does
+        val stops = wifi.stops.get()
         onMain { conn.disconnect() }
         lose()
-        await("the release", 3000) { wifi.state.value == ScopeWifi.State.Idle }
+        assertEquals(ScopeWifi.State.Idle, wifi.state.value)  // at once: no CONNECTION LOST flash
+        assertEquals(stops, wifi.stops.get())                // before the gate's release
+        await("the release", 3000) { wifi.stops.get() == stops + 1 }
         Thread.sleep(100)
-        assertEquals(ScopeWifi.State.Idle, wifi.state.value)  // NOT CONNECTED, not CONNECTION LOST
+        assertEquals(ScopeWifi.State.Idle, wifi.state.value)  // NOT CONNECTED
         assertEquals(0, letGo.get())
         assertEquals(Protocol.STOP.toList(), links.videoSends().last().bytes)  // disconnect's STOP
     }
@@ -187,18 +201,57 @@ class ScopeConnectionLostTest {
         val requests = wifi.starts.size
         onMain { conn.connect() }
         lose()
+        assertEquals(ScopeWifi.State.Idle, wifi.state.value)  // the old request was ending
         await("the new request", 3000) { wifi.starts.size > requests }
         assertTrue(conn.isWanted)
         assertEquals(0, letGo.get())
-        onMain { wifi.state.value = ScopeWifi.State.Available(blank<Network>(), exact) }
+        wifi.available(exact)
         await("START") { links.starts() == 2 }
     }
 
-    @Test fun aLossBeforeAnySessionChangesNothing() {
-        lose()
-        Thread.sleep(100)
+    @Test fun aLossJustBeforeConnectDoesNotCancelIt() {
+        // Lost is published, and Connect runs before the connection has seen it: that loss is
+        // the old request's, and the new one waiting on the gate goes ahead.
+        join()
+        stream()
+        wifi.releaseMs = 300
+        val requests = wifi.starts.size
+        onMain {
+            lose()
+            conn.connect()
+        }
+        await("the new request", 3000) { wifi.starts.size > requests }
+        assertTrue(conn.isWanted)
         assertEquals(0, letGo.get())
-        assertEquals(0, wifi.stops.get())
+        wifi.available(exact)
+        await("START") { links.starts() == 2 }
+    }
+
+    @Test fun aLossBeforeThePictureStillCounts() {
+        // Requesting straight to Lost, Available never seen (the state flow is conflated): no
+        // session to end, but the connection still lets go and the circle says so.
+        onMain { conn.connect() }
+        await("the request") { wifi.starts.isNotEmpty() }
+        lose()
+        await("let go") { letGo.get() == 1 }
+        assertFalse(conn.isWanted)
+        assertEquals(ScopeWifi.State.Lost, wifi.state.value)
+        assertEquals(1, wifi.stops.get())  // connect()'s own release only
         assertTrue(links.sends().isEmpty())
+    }
+
+    @Test fun aLossAfterPowerOffEndsAsNotConnected() {
+        // After 66 3E the scope drops its network, maybe before the release
+        poweringOff = true
+        join()
+        stream()
+        wifi.releaseMs = 300
+        val stops = wifi.stops.get()
+        assertTrue(onMain { conn.powerOff() })
+        lose()
+        assertEquals(ScopeWifi.State.Idle, wifi.state.value)
+        await("the release", 3000) { wifi.stops.get() == stops + 1 }
+        assertEquals(ScopeWifi.State.Idle, wifi.state.value)
+        assertEquals(0, letGo.get())
     }
 }

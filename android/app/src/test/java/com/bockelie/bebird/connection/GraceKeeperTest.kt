@@ -52,6 +52,7 @@ class GraceKeeperTest {
         val starts = CopyOnWriteArrayList<Target>()
         override fun start(target: Target, why: String?) { starts += target }
         @Volatile var releaseMs = 0L  // how long the network takes to go
+        override fun markEnding() {}
         override fun stop() {
             Thread.sleep(releaseMs)
             releases += links.sends()

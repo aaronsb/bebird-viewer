@@ -119,6 +119,8 @@ class ScopeWifi(context: Context) : WifiControl {
         Log.i(TAG, "request: $kind")
     }
 
+    override fun markEnding() = slot.markEnding()
+
     /** Release the request, which drops the phone off the scope's network. */
     override fun stop() {
         val cb = slot.release() ?: return

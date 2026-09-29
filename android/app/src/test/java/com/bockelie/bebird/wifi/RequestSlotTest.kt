@@ -81,6 +81,30 @@ class RequestSlotTest {
         assertTrue(slot.isCurrent(new))
     }
 
+    @Test fun aLossWhileEndingOnPurposeReadsAsIdle() {
+        // Disconnect or power off marks the request ending; the network may go before the release
+        val cb = joined()
+        slot.markEnding()
+        assertTrue(slot.lost(cb))  // still released here, once
+        assertEquals(State.Idle, slot.state.value)
+        assertNull(slot.release())
+        assertEquals(State.Idle, slot.state.value)
+    }
+
+    @Test fun theEndingMarkDoesNotOutliveItsRequest() {
+        slot.markEnding()  // nothing filed: nothing to mark
+        slot.lost(joined())
+        assertEquals(State.Lost, slot.state.value)
+
+        slot.release()
+        joined(Cb("second"))
+        slot.markEnding()
+        slot.release()
+        val third = joined(Cb("third"))  // a new request starts unmarked
+        assertTrue(slot.lost(third))
+        assertEquals(State.Lost, slot.state.value)
+    }
+
     @Test fun oneRequestAtATime() {
         joined()
         var filed = false

@@ -47,6 +47,9 @@ class NetworkGate(
     private var releasing: Thread? = null     // guarded by lock
     private var connecting: Job? = null       // guarded by lock
 
+    /** A [connect] is still waiting to file its request. */
+    val isConnecting: Boolean get() = synchronized(lock) { connecting?.isActive == true }
+
     /** Run [request] (file the network request) once any pending release is done. */
     fun connect(request: () -> Unit) = synchronized(lock) {
         connecting?.cancel()

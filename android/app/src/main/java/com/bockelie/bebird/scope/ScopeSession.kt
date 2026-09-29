@@ -135,7 +135,7 @@ class ScopeSession(
      * Close the links without a word, instead of [stop]: for when the network has already gone
      * (#37), so there is nothing to send STOP over. Never blocks, idempotent, like [stop].
      */
-    fun drop(): Future<*> = end("stopped", powerOff = false, farewell = false)
+    fun drop(): Future<*> = end("connection lost", powerOff = false, farewell = false)
 
     @Synchronized
     private fun end(status: String, powerOff: Boolean, farewell: Boolean = true): Future<*> {

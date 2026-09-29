@@ -199,6 +199,7 @@ class ScopeConnection(
     /** Stop the session, then release the network once its STOP has gone out. */
     fun disconnect() {
         wanted = null
+        wifi.markEnding()
         gate.disconnect(stopSession())
     }
 
@@ -216,6 +217,7 @@ class ScopeConnection(
         if (session == null || !streaming) return false
         Log.i(TAG, "power off")
         wanted = null
+        wifi.markEnding()  // the scope drops its network after 66 3E, maybe before the release
         gate.disconnect(stopSession(ScopeSession::powerOff, "powered off"))
         settings.poweredOffAt = clock()
         return true
@@ -254,14 +256,16 @@ class ScopeConnection(
     }
 
     /**
-     * The network went in the middle of a session (scope off, battery, out of range) and
-     * [ScopeWifi] has released its request: end the session without a STOP, which has no network
-     * to go over, and want nothing more, so Connect starts afresh. The device stays remembered.
-     * Without a session the loss is the tail of a request already ended or replaced (by
-     * [disconnect], or a new request waiting on the gate), whose release the gate goes on with.
+     * The network went (scope off, battery, out of range) and [ScopeWifi] has released its
+     * request: end any session without a STOP, which has no network to go over, and want
+     * nothing more, so Connect starts afresh. The device stays remembered. A loss can come with
+     * no session, since the state flow may skip Available. Ignored with nothing wanted (already
+     * handled, or after [disconnect]) or with a new request waiting on the gate: a loss published
+     * just before [request], which marks its old request ending ([WifiControl.markEnding]).
      */
     private fun lost() {
-        stopSession(ScopeSession::drop) ?: return
+        val dropped = stopSession(ScopeSession::drop, "connection lost")
+        if (dropped == null && (wanted == null || gate.isConnecting)) return
         Log.i(TAG, "connection lost; the request is released")
         wanted = null
         quiet = null
