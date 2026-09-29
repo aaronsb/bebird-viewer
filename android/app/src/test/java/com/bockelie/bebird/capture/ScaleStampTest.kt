@@ -139,6 +139,33 @@ class ScaleStampTest {
         assertTrue(told is OutOfMemoryError)
     }
 
+    @Test fun aScaleThatFailsToDrawLeavesThePlainSnapshot() {
+        val meta = SnapshotMeta(
+            taken = ZonedDateTime.of(2026, 9, 29, 10, 0, 0, 0, ZoneOffset.UTC), roll = 1, rotationApplied = 0, autoRotate = true,
+            trim = 0, lightPercent = 50, lightRaw = 25, batteryPercent = 80, batteryState = "battery", fps = 10, zoom = 1.0,
+            zoomed = false, label = null, device = "ES", model = "ES",
+        )
+        val plain = { Frames.composed(upright, band, data, true) }
+        var told: Throwable? = null
+        val (image, saved) = ScaleStamp.withScaleOrPlain(locked, meta, { it.meta(480) }, { told = it }, plain) {
+            throw IllegalStateException("renderer broke")
+        }
+        assertTrue(told is IllegalStateException)
+        assertArrayEquals(plain().pixels, image.pixels)
+        assertEquals(meta, saved)
+        assertFalse("proximity_scale" in saved.json())
+        // and when it draws: the scaled image and the scale in the metadata
+        val (drawn, withScale) = ScaleStamp.withScaleOrPlain(locked, meta, { it.meta(480) }, { told = it }, plain) {
+            stamp.still(upright, band, data, true, it)
+        }
+        assertTrue(ScaleOverlay.LOCK in drawn.pixels)
+        assertEquals(locked.meta(480), withScale.scale)
+        // no scale: the plain still and the metadata untouched
+        val (none, noneMeta) = ScaleStamp.withScaleOrPlain(null, meta, { it.meta(480) }, { told = it }, plain) { error("not called") }
+        assertArrayEquals(plain().pixels, none.pixels)
+        assertEquals(meta, noneMeta)
+    }
+
     @Test fun theNoteSitsAtTheUpperRight() {
         val still = stamp.still(upright, band, data, false, locked)
         fun tagIn(x0: Int, x1: Int, y0: Int, y1: Int) = (y0 until y1).any { y -> (x0 until x1).any { x -> still.at(x, y) == BandRenderer.TAG } }

@@ -69,29 +69,35 @@ class Capture(resolver: ContentResolver) {
 
     /** Save [shot] as a JPEG (and a _zoomed one when zoomed in); [done] gets each result. */
     fun snapshot(shot: Shot, done: (Result) -> Unit) = worker.execute {
-        val rotated = Frames.rotated(shot.frame, shot.rotation)
         val time = shot.meta.taken.toLocalDateTime()
         val dir = CaptureNames.folder(time.toLocalDate())
         val still = CaptureNames.still(time)
-        val scale = shot.scale?.takeIf { shot.stamp != null }
-        if (scale == null) {
-            // no scale shown: exactly as before
-            val full = save(still, dir, Frames.composed(rotated.toPixelImage(), shot.renderer, shot.band, shot.overlay), shot.meta).also(done)
+        var what = still  // what a failure is reported against
+        // Nothing thrown here may escape the worker: it would take the app down.
+        try {
+            val rotated = Frames.rotated(shot.frame, shot.rotation)
+            val upright = rotated.toPixelImage()
+            val stamp = shot.stamp
+            val scale = shot.scale?.takeIf { stamp != null }
+            val failed: (Throwable) -> Unit = { Log.e(TAG, "scale not drawn: saving without it", it) }
+            // with no scale shown, or one that fails to draw, the still is exactly as before
+            val (image, meta) = ScaleStamp.withScaleOrPlain(
+                scale, shot.meta, { it.meta(upright.width) }, failed,
+                plain = { Frames.composed(upright, shot.renderer, shot.band, shot.overlay) },
+            ) { stamp!!.still(upright, shot.renderer, shot.band, shot.overlay, it) }
+            val full = save(still, dir, image, meta).also(done)
             shot.zoomRect?.let { rect ->
-                val zoomed = Frames.zoomed(rotated, rect, shot.renderer, shot.band, shot.overlay)
                 // named after the full frame as saved, so the pair stays together after a rename
-                done(save(CaptureNames.zoomed((full as? Result.Saved)?.name ?: still), dir, zoomed, shot.meta.copy(zoomed = true)))
+                what = CaptureNames.zoomed((full as? Result.Saved)?.name ?: still)
+                val (zoomed, zoomedMeta) = ScaleStamp.withScaleOrPlain(
+                    scale, shot.meta.copy(zoomed = true), { it.meta(upright.width, ZoomCrop.upscale(rect.width)) }, failed,
+                    plain = { Frames.zoomed(rotated, rect, shot.renderer, shot.band, shot.overlay) },
+                ) { stamp!!.zoomed(upright, rect, shot.renderer, shot.band, shot.overlay, it) }
+                done(save(what, dir, zoomed, zoomedMeta))
             }
-            return@execute
-        }
-        val stamp = shot.stamp!!
-        val upright = rotated.toPixelImage()
-        val meta = shot.meta.copy(scale = scale.meta(upright.width))
-        val full = save(still, dir, stamp.still(upright, shot.renderer, shot.band, shot.overlay, scale), meta).also(done)
-        shot.zoomRect?.let { rect ->
-            val zoomed = stamp.zoomed(upright, rect, shot.renderer, shot.band, shot.overlay, scale)
-            val zoomedMeta = shot.meta.copy(zoomed = true, scale = scale.meta(upright.width, ZoomCrop.upscale(rect.width)))
-            done(save(CaptureNames.zoomed((full as? Result.Saved)?.name ?: still), dir, zoomed, zoomedMeta))
+        } catch (e: Throwable) {
+            Log.e(TAG, "snapshot failed", e)
+            done(Result.Failed(what, e.message ?: e.javaClass.simpleName))
         }
     }
 

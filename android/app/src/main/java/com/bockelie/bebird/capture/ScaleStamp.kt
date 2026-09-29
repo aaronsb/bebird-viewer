@@ -130,6 +130,18 @@ class ScaleStamp(private val overlay: OverlayRenderer, private val text: PixelTe
             }
         }
 
+        /**
+         * A still with [scale] ([scaled], and [meta] recording it via [scaleMeta]), or [plain] and
+         * [meta] as they are when there is no scale or drawing it fails ([onFailure] is told): a
+         * scale that can't be drawn never costs the picture.
+         */
+        fun withScaleOrPlain(
+            scale: SavedScale?, meta: SnapshotMeta, scaleMeta: (SavedScale) -> ScaleMeta, onFailure: (Throwable) -> Unit,
+            plain: () -> PixelImage, scaled: (SavedScale) -> PixelImage,
+        ): Pair<PixelImage, SnapshotMeta> =
+            drawnOrNone(scale, onFailure, scaled)?.let { (s, image) -> image to meta.copy(scale = scaleMeta(s)) }
+                ?: (plain() to meta)
+
         /** [image] with [drawn]'s non-transparent pixels over its top-left corner. */
         fun over(image: PixelImage, drawn: PixelImage): PixelImage {
             require(drawn.width <= image.width && drawn.height <= image.height) { "drawing larger than the image" }
