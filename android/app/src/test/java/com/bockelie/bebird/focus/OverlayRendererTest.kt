@@ -98,6 +98,33 @@ class OverlayRendererTest {
         assertEquals(listOf(4), runs.distinct())  // centre tick ("5") as wide as the rest
     }
 
+    @Test fun everyScaleLabelIsDrawnInsideTheCircle() {
+        // the labels alone, outline included: no pixel beyond the 240-px image circle (#45)
+        for (style in listOf(ScaleStyle.RING, ScaleStyle.BOWTIE, ScaleStyle.BAR)) for (locked in listOf(false, true)) {
+            val labels = ScaleOverlay.shapes(style, locked, close = false).filterIsInstance<OverlayShape.Label>()
+            val img = renderer.render(labels, 480, 480, 1.0)
+            var drawn = 0
+            for (y in 0 until 480) for (x in 0 until 480) {
+                if (img.at(x, y) == 0) continue
+                drawn++
+                assertTrue("$style locked=$locked: label pixel ($x, $y) outside", Math.hypot(x - 239.5, y - 239.5) <= 240.0)
+            }
+            assertTrue("$style: labels drawn", drawn > 0)
+        }
+    }
+
+    @Test fun theRingToleranceLabelSitsBetweenTheOuterRings() {
+        val img = ring(locked = true)
+        // "mm ±10%", 56 px wide, centred on x 240, bottom 188 below the centre: rows 412-427, between
+        // the rings at 160 (y 400) and 200 (y 440)
+        val label = (412 until 428).flatMap { y -> (212 until 268).map { x -> img.at(x, y) } }
+        assertTrue(label.count { it == ScaleOverlay.LOCK } > 30)
+        // the ⌀8 and ⌀10 rings below it are intact, and nothing is left at the old upper-right spot
+        assertEquals(ScaleOverlay.LOCK, img.at(240, 240 + 160))
+        assertEquals(ScaleOverlay.LOCK, img.at(240, 240 + 200))
+        assertTrue((74 until 90).all { y -> (390 until 446).all { x -> img.at(x, y) == 0 } })
+    }
+
     @Test fun ringsFollowTheDisplayScale() {
         // drawn at the screen size: 2.5 px per raw pixel puts the 1 mm ring at 100 px
         val img = ring(locked = true, f = 2.5)
