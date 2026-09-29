@@ -10,6 +10,7 @@ import androidx.core.content.ContextCompat
 import com.bockelie.bebird.connection.GraceKeeper
 import com.bockelie.bebird.connection.GraceService
 import com.bockelie.bebird.connection.ScopeConnection
+import com.bockelie.bebird.focus.ProximityPipeline
 import com.bockelie.bebird.settings.PrefsKeyValue
 import com.bockelie.bebird.settings.Settings
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +29,8 @@ class BebirdApp : Application() {
 
     val settings by lazy { Settings(PrefsKeyValue(this)) }
     val connection by lazy { ScopeConnection(this, scope, settings) }
+    /** Proximity estimation on the connection's frames (#27). */
+    val proximity by lazy { ProximityPipeline(connection, PrefsKeyValue(this), scope) }
     val grace by lazy {
         GraceKeeper(
             connection, settings, SystemClock::elapsedRealtime,

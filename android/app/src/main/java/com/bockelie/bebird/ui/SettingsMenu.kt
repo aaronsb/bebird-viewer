@@ -57,6 +57,7 @@ fun SettingsMenu(
     onConnection: (ConnectionSettings) -> Unit,
     canPowerOff: Boolean,
     onPowerOff: () -> Unit,
+    onProximity: () -> Unit = {},
 ) {
     var open by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
@@ -67,6 +68,10 @@ fun SettingsMenu(
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             CheckItem(stringResource(R.string.overlay), overlay) { onOverlay(!overlay) }
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.proximity_menu)) },
+                onClick = { open = false; onProximity() },
+            )
             CheckItem(stringResource(R.string.show_scope_id), showScopeId) { onShowScopeId(!showScopeId) }
             if (showScopeId) {
                 // The unique ID goes into every saved file from now on: say so where it's turned on.

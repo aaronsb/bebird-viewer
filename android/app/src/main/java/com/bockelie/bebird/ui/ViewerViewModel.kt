@@ -27,6 +27,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bockelie.bebird.BebirdApp
 import com.bockelie.bebird.band.BandFonts
+import com.bockelie.bebird.focus.OverlayRenderer
+import com.bockelie.bebird.focus.ProximityPipeline
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.connection.ScopeConnection
 import com.bockelie.bebird.control.RollFilter
@@ -45,6 +47,9 @@ import kotlinx.coroutines.withContext
 class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     private val settings = (app as BebirdApp).settings
     val connection: ScopeConnection = (app as BebirdApp).connection
+
+    /** Proximity estimation (#27): its settings and the latest result, app-scoped like the connection. */
+    val proximity: ProximityPipeline = (app as BebirdApp).proximity
     private val grace = (app as BebirdApp).grace
 
     private val _autoRotate = MutableStateFlow(settings.autoRotate)
@@ -70,12 +75,17 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     // The band's fonts take a moment to parse; the band appears once they have.
     private val _bandRenderer = MutableStateFlow<BandRenderer?>(null)
     val bandRenderer: StateFlow<BandRenderer?> = _bandRenderer.asStateFlow()
+    // The proximity overlay draws its labels with the band's font.
+    private val _overlayRenderer = MutableStateFlow<OverlayRenderer?>(null)
+    val overlayRenderer: StateFlow<OverlayRenderer?> = _overlayRenderer.asStateFlow()
 
     init {
         Log.i("BebirdSpike", "ViewModel created (${Integer.toHexString(System.identityHashCode(this))})")
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                _bandRenderer.value = BandRenderer(BandFonts.shared(app.assets))
+                val fonts = BandFonts.shared(app.assets)
+                _bandRenderer.value = BandRenderer(fonts)
+                _overlayRenderer.value = OverlayRenderer(fonts)
             } catch (e: Exception) {
                 Log.e("BebirdSpike", "band fonts failed to load", e)
             }

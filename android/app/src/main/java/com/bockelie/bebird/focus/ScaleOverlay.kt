@@ -92,7 +92,8 @@ object ScaleOverlay {
                 for (k in 1..RINGS) {
                     val r = k * pxPerMm
                     out += OverlayShape.Arc(c, c, r, 0.0, 360.0, dash, col, w)
-                    out += OverlayShape.Label(c + 3, c - r - 2, "$DIAMETER${2 * k}", TextAnchor.LEFT_BASELINE, col)
+                    // along the horizontal axis, just outside each ring: the scale stays upright on screen
+                    out += OverlayShape.Label(c + r + 3, c - 3, "$DIAMETER${2 * k}", TextAnchor.LEFT_BASELINE, col)
                 }
                 val d = RINGS * pxPerMm * 0.72
                 out += OverlayShape.Label(c + d + 6, c - d - 6, TOLERANCE_LABEL, TextAnchor.LEFT_BOTTOM, col)

@@ -17,7 +17,7 @@ class ScaleOverlayTest {
         assertTrue(rings.all { it.cx == 240.0 && it.cy == 240.0 && it.endDeg - it.startDeg == 360.0 })
         val labels = s.filterIsInstance<Label>().map { it.text }
         assertEquals(listOf("⌀2", "⌀4", "⌀6", "⌀8", "⌀10", "mm ±10%"), labels)
-        assertEquals(Label(243.0, 198.0, "⌀2", TextAnchor.LEFT_BASELINE, ScaleOverlay.GREY), s.filterIsInstance<Label>()[0])
+        assertEquals(Label(283.0, 237.0, "⌀2", TextAnchor.LEFT_BASELINE, ScaleOverlay.GREY), s.filterIsInstance<Label>()[0])
     }
 
     @Test fun unlockedIsGreyThinAndDashedLockedIsSolid() {
