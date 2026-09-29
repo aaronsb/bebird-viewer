@@ -146,12 +146,16 @@ fun AnnotateCanvas(
         var move by remember { mutableStateOf<MoveState?>(null) }  // a Move press, while it lasts
         // A dropped mark, shown where it landed until a layer drawn from the current marks has it
         // (apart from [move], so pressing again meanwhile doesn't put it back at its old spot).
-        var landing by remember { mutableStateOf<MoveState?>(null) }
+        var landing by remember { mutableStateOf<Landing?>(null) }
         // While Move holds a mark, the layer leaves it out and draws it alone, so a drag slides
         // that mark's own pixels instead of drawing everything again for each movement.
         val held = move?.takeIf { it.phase != Phase.DELETED }?.mark
         val layer = rememberLayer(marks, held, image.width, image.height, renderer)
-        LaunchedEffect(layer, landing) { if (landing != null && layer?.marks === marks) landing = null }
+        LaunchedEffect(layer, landing) {
+            val l = landing ?: return@LaunchedEffect
+            // only a layer of the marks after the drop (never the list the mark was dropped from)
+            if (layer?.marks === marks && marks !== l.before) landing = null
+        }
         with(LocalDensity.current) {
             Box(Modifier.offset { IntOffset(fit.left.roundToInt(), fit.top.roundToInt()) }.size(w.toDp(), h.toDp())) {
                 // As the live view shows it: the image circle, and the hair-thin ring with the overlay.
@@ -172,12 +176,14 @@ fun AnnotateCanvas(
                     )
                     // The layer's lone mark: where it is being dragged or has landed; where it is, if
                     // still one of the marks (a tap on it); else nowhere (deleted, or undone meanwhile).
-                    val lm = landing
+                    val lm = landing?.state
                     val mv = move
                     val at: Pair<Int, Int>? = when {
                         l.lone == null -> null
+                        // held: follows the drag while still one of the marks (not undone meanwhile)
+                        mv != null && mv.mark === l.picked ->
+                            if (mv.phase == Phase.DELETED || marks.none { it === l.picked }) null else mv.dx to mv.dy
                         lm != null && lm.mark === l.picked -> lm.dx to lm.dy
-                        mv != null && mv.mark === l.picked -> if (mv.phase == Phase.DELETED) null else mv.dx to mv.dy
                         marks.any { it === l.picked } -> 0 to 0
                         else -> null
                     }
@@ -240,8 +246,9 @@ fun AnnotateCanvas(
                                             // where it is shown. One history entry for the whole drag.
                                             val i = index()
                                             if (i >= 0 && (state.dx != 0 || state.dy != 0)) {
+                                                val before = current
                                                 moveMark(i, picker.shifted(mark, state.dx, state.dy))
-                                                landing = state
+                                                landing = Landing(state, before)
                                             }
                                             break
                                         }
@@ -295,7 +302,7 @@ fun AnnotateCanvas(
             for (m in pending) strokes(m, fit, image.width, image.height)
             Drag.mark(tools.tool, stroke, tools.color)?.let { strokes(it, fit, image.width, image.height) }
             // The mark a Move press holds: what will move, or (red) what was just deleted.
-            move?.let { m ->
+            move?.takeIf { m -> m.phase == Phase.DELETED || marks.any { it === m.mark } }?.let { m ->
                 val b = m.bounds
                 val dx = m.dx.toFloat() / image.width
                 val dy = m.dy.toFloat() / image.height
@@ -329,6 +336,9 @@ private fun DrawScope.strokes(m: Mark, fit: ImageFit, iw: Int, ih: Int) {
 
 /** Where a Move press is: held, being dragged, or just deleted (a long press). */
 private enum class Phase { PRESSED, DRAGGING, DELETED }
+
+/** A dropped move ([state]), and the marks as they were before it ([before]). */
+private class Landing(val state: MoveState, val before: List<Mark>)
 
 /** A Move press on [mark] (its drawn [bounds]), moved by ([dx], [dy]) whole frame pixels so far. */
 private data class MoveState(val mark: Mark, val bounds: Picker.Bounds, val phase: Phase, val dx: Int = 0, val dy: Int = 0)

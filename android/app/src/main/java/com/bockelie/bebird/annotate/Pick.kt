@@ -70,11 +70,6 @@ class Picker(private val renderer: AnnotationRenderer, private val w: Int, priva
      * short of where the screen showed it.
      */
     fun shifted(m: Mark, px: Int, py: Int): Mark {
-        if (m is Mark.Text) {
-            val x = (floor(m.at.x * w.toDouble()) + px + 0.5) / w
-            val y = (floor(m.at.y * h.toDouble()) + py + 0.5) / h
-            return m.copy(at = Pt(x.toFloat(), y.toFloat()))
-        }
         val dx = px.toFloat() / w
         val dy = py.toFloat() / h
         fun Pt.by() = Pt(x + dx, y + dy)
@@ -83,7 +78,11 @@ class Picker(private val renderer: AnnotationRenderer, private val w: Int, priva
             is Mark.Box -> m.copy(a = m.a.by(), b = m.b.by())
             is Mark.Arrow -> m.copy(from = m.from.by(), to = m.to.by())
             is Mark.Pen -> m.copy(points = m.points.map { it.by() })
-            is Mark.Text -> error("text is handled above")
+            is Mark.Text -> {
+                val x = (floor(m.at.x * w.toDouble()) + px + 0.5) / w
+                val y = (floor(m.at.y * h.toDouble()) + py + 0.5) / h
+                m.copy(at = Pt(x.toFloat(), y.toFloat()))
+            }
         }
     }
 
