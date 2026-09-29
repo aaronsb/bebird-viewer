@@ -208,7 +208,7 @@ The scale is **40 px/mm ±10 %** at the tip end, from ruler captures of 38.8–4
 - **Colour:**
   - Not locked: grey (170,170,170), 1 px, **dashed** (6° on, 6° off).
   - Locked (IN-ZONE): lock colour (0,230,200), 2 px, solid.
-- **Ring style (default):** circles at r = k·40 px for k = 1..5. Each ring is labelled by **diameter** ("⌀2", "⌀4", "⌀6", "⌀8", "⌀10") just right of it on the horizontal axis, baseline at (C + r + 3, C − 3). "mm ±10%" sits near the upper right of the outer ring. Something that fits within a ring is about that ring's diameter wide.
+- **Ring style (default):** circles at r = k·40 px for k = 1..5. Each ring is labelled by **diameter** ("⌀2", "⌀4", "⌀6", "⌀8", "⌀10") just right of it on the horizontal axis, baseline at (C + r + 3, C − 3). "mm ±10%" sits centred below the centre, between the ⌀8 and ⌀10 rings (bottom at C + 4.7 mm), inside the image circle. Something that fits within a ring is about that ring's diameter wide.
 - **Centre crosshair** (ring and bowtie): four short arms, up, down, left and right, from 0.1 to 0.4 mm (4–16 px) out, so the exact centre stays clear and the arms stay well inside the ⌀2 ring. Same colour and width as the scale; solid even when unlocked, since arms this short would show one dash or none. Upright, with no label.
 - **Bowtie:**
   - Two wedges at ±15° about the horizontal (0° and 180°), with edges running from r = 0.5 mm to 5.25 mm, dashed when unlocked.

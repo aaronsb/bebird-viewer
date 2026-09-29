@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.IntOffset
 import com.bockelie.bebird.R
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.band.PixelText
+import com.bockelie.bebird.band.ViewerPalette
 import com.bockelie.bebird.band.toBitmap
 import com.bockelie.bebird.capture.ZoomCrop
 import com.bockelie.bebird.focus.FrameGeometry
@@ -67,17 +68,19 @@ import kotlinx.coroutines.withContext
  * The image circle inside a rectangular viewport. Pinch zooms (1-6x) and drag pans, clipped
  * to the viewport; double-tap resets. Display only: nothing here changes what is received.
  * While there is no [frame], the circle says [status] (#32); while the scale is shown, a note
- * says it is approximate (#35). Both are drawn with [text] once the band's fonts are loaded.
+ * says it is approximate (#35); while the scope's battery is low ([batteryLow]), BATTERY LOW shows under
+ * CLOSE (#48). All three are drawn with [text] once the band's fonts are loaded.
  */
 @Composable
 fun ZoomableCircle(
     frame: Bitmap?, rotation: Int, outline: Boolean, view: ZoomView, modifier: Modifier,
     proximity: List<OverlayShape> = emptyList(), overlayRenderer: OverlayRenderer? = null,
-    status: CircleStatus? = null, text: PixelText? = null,
+    status: CircleStatus? = null, text: PixelText? = null, batteryLow: Boolean = false,
 ) {
     // Outside the image circle the viewport is the band's black, not the theme's surface, so
     // image and band read as one panel (as in saved stills with the overlay).
-    BoxWithConstraints(modifier.clipToBounds().background(Color(BandRenderer.BACKGROUND)), contentAlignment = Alignment.Center) {
+    val palette = ViewerPalette.DARK
+    BoxWithConstraints(modifier.clipToBounds().background(Color(palette.field)), contentAlignment = Alignment.Center) {
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
         val side = minOf(w, h)
@@ -135,7 +138,7 @@ fun ZoomableCircle(
                     .clip(CircleShape)
                     .background(Color.Black)
                     // the same hair-thin ring saved images get (#15)
-                    .then(if (outline) Modifier.border(Dp.Hairline, Color(BandRenderer.CIRCLE), CircleShape) else Modifier),
+                    .then(if (outline) Modifier.border(Dp.Hairline, Color(palette.circle), CircleShape) else Modifier),
             ) {
                 frame?.let {
                     // Rotated clockwise by the roll angle (and trim) keeps the picture upright.
@@ -162,6 +165,8 @@ fun ZoomableCircle(
             if (frame != null && overlayRenderer != null) {
                 CloseLayer(proximity.filter(ScaleOverlay::isClose), overlayRenderer, side.toInt(), Modifier.align(Alignment.TopStart))
             }
+            // Under CLOSE's slot, fixed like it; independent of the scale.
+            if (batteryLow && frame != null && text != null) BatteryLayer(text, side.toInt(), Modifier.align(Alignment.TopStart))
             // The scale is an estimate: said at the upper right, upright and fixed like CLOSE (#35).
             if (text != null && ScaleDisclaimer.shown(frame != null, proximity)) {
                 DisclaimerLayer(text, w.toInt(), h.toInt(), side.toInt(), Modifier.align(Alignment.TopEnd))
@@ -311,6 +316,7 @@ private fun StatusLayer(status: CircleStatus, text: PixelText, viewportW: Int, v
  */
 @Composable
 private fun DisclaimerLayer(text: PixelText, viewportW: Int, viewportH: Int, side: Int, modifier: Modifier) {
+    val palette = ViewerPalette.DARK
     val k = maxOf(1, side / FrameGeometry.SIZE)
     val paragraphs = listOf(
         stringResource(R.string.scale_note_title), stringResource(R.string.scale_note_focus), stringResource(R.string.scale_note_sensor),
@@ -321,7 +327,7 @@ private fun DisclaimerLayer(text: PixelText, viewportW: Int, viewportH: Int, sid
         drawn = try {
             withContext(Dispatchers.Default) {
                 ScaleDisclaimer.place(text, paragraphs, viewportW, viewportH, k, CLOSE_W * k)?.let { p ->
-                    text.draw(p.lines, p.width, p.height, BandRenderer.TAG, outline = true).toBitmap().asImageBitmap() to p.scale
+                    text.draw(p.lines, p.width, p.height, palette.note, outline = true, outlineColor = palette.halo).toBitmap().asImageBitmap() to p.scale
                 }
             }
         } catch (e: CancellationException) {
@@ -340,6 +346,31 @@ private fun DisclaimerLayer(text: PixelText, viewportW: Int, viewportH: Int, sid
             contentScale = ContentScale.FillBounds,
             filterQuality = FilterQuality.None,
             modifier = modifier.padding(top = inset, end = inset).size((image.width * s).toDp(), (image.height * s).toDp()),
+        )
+    }
+}
+
+/** BATTERY LOW at CLOSE's whole scale. TalkBack announces it when it appears. */
+@Composable
+private fun BatteryLayer(text: PixelText, side: Int, modifier: Modifier) {
+    val palette = ViewerPalette.DARK
+    val k = maxOf(1, side / FrameGeometry.SIZE)
+    val label = stringResource(R.string.battery_low)
+    val description = stringResource(R.string.battery_low_description)
+    val image = remember(text, label, k) {
+        val box = BatteryLow.box(text, label, k)
+        text.draw(listOf(PixelText.Line(label, 1, 1)), box.width / k, box.height / k, palette.batteryLow, outline = true, outlineColor = palette.halo)
+            .toBitmap().asImageBitmap()
+    }
+    with(LocalDensity.current) {
+        Image(
+            bitmap = image,
+            contentDescription = description,
+            contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.None,
+            modifier = modifier.offset { IntOffset(BatteryLow.LEFT * k, BatteryLow.TOP * k) }
+                .size((image.width * k).toDp(), (image.height * k).toDp())
+                .semantics { liveRegion = LiveRegionMode.Polite },
         )
     }
 }

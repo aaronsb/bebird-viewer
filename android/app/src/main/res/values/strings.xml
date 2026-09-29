@@ -27,6 +27,9 @@
     <string name="scale_note_focus">Valid only when in focus</string>
     <string name="scale_note_sensor">No distance sensor</string>
     <string name="scale_note_description">The scale and distance are approximate, estimated from several factors including the lens focal length. They hold within practical tolerances only when the picture is sharp and in focus. The scope has no distance-measuring signal.</string>
+    <!-- Under CLOSE, in the band's font (#48) -->
+    <string name="battery_low">BATTERY LOW</string>
+    <string name="battery_low_description">Scope battery low</string>
     <string name="no_device">Any Bebird scope</string>
     <string name="choose_device">Choose device</string>
     <string name="pick_different">Pick a different device</string>
