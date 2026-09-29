@@ -26,6 +26,17 @@ class PixelTextTest {
         )
     }
 
+    @Test fun theCircleBlockIsTheLinesBoundingBox() {
+        // the lines of linesWrapToTheChordAtTheirHeight, from (14, 12) to (86, 88)
+        assertEquals(
+            PixelText.Block(
+                14, 12, 72, 76,
+                listOf(PixelText.Line("AB", 28, 0), PixelText.Line("CCCC DDDD", 0, 40), PixelText.Line("EEEE", 20, 60)),
+            ),
+            text.circleBlock(listOf("AB", "CCCC DDDD EEEE"), 100),
+        )
+    }
+
     @Test fun aWordTooLongForItsRowIsBroken() {
         assertEquals(
             listOf(PixelText.Line("ABCDEFGHI", 14, 32), PixelText.Line("JKLMNOP", 22, 52)),
@@ -52,20 +63,22 @@ class PixelTextTest {
 
     @Test fun nothingWhenTheCircleIsTooSmall() {
         assertNull(text.layout(listOf("NOT CONNECTED"), 16))
-        assertTrue(text.render(listOf("NOT CONNECTED"), 16).pixels.all { it == 0 })
+        assertNull(text.circleBlock(listOf("NOT CONNECTED"), 16))
     }
 
     @Test fun renderDrawsTheGlyphsPixelForPixel() {
-        val img = text.render(listOf("I"), 64)
+        // "I" alone in a 64-px circle: its 8 × 16 cell at (28, 24), and only that box is drawn
+        val block = text.circleBlock(listOf("I"), 64)!!
+        assertEquals(PixelText.Block(28, 24, 8, 16, listOf(PixelText.Line("I", 0, 0))), block)
+        val img = text.draw(block.lines, block.width, block.height, BandRenderer.VALUE)
         val g = Fonts.source.glyph('I'.code)!!
         var set = 0
-        for (y in 0 until 64) for (x in 0 until 64) {
-            val inGlyph = x in 28 until 36 && y in 24 until 40 && g.pixel(x - 28, y - 24)
-            assertEquals("($x, $y)", if (inGlyph) BandRenderer.VALUE else 0, img.pixels[y * 64 + x])
-            if (inGlyph) set++
+        for (y in 0 until 16) for (x in 0 until 8) {
+            assertEquals("($x, $y)", if (g.pixel(x, y)) BandRenderer.VALUE else 0, img.pixels[y * 8 + x])
+            if (g.pixel(x, y)) set++
         }
         assertTrue(set > 0)
-        assertTrue(text.render(listOf("I"), 64, BandRenderer.TAG).pixels.filter { it != 0 }.all { it == BandRenderer.TAG })
+        assertTrue(text.draw(block.lines, 8, 16, BandRenderer.TAG).pixels.filter { it != 0 }.all { it == BandRenderer.TAG })
     }
 
     @Test fun ellipsisAndApostropheFallBackWhenNoFontHasThem() {

@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -43,10 +44,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import com.bockelie.bebird.R
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.band.PixelText
-import com.bockelie.bebird.band.GlyphSource
 import com.bockelie.bebird.band.toBitmap
 import com.bockelie.bebird.capture.ZoomCrop
 import com.bockelie.bebird.focus.FrameGeometry
@@ -61,13 +62,14 @@ import kotlinx.coroutines.withContext
 /**
  * The image circle inside a rectangular viewport. Pinch zooms (1-6x) and drag pans, clipped
  * to the viewport; double-tap resets. Display only: nothing here changes what is received.
- * While there is no [frame], the circle says [status] (#32).
+ * While there is no [frame], the circle says [status] (#32); while the scale is shown, a note
+ * says it is approximate (#35). Both are drawn with [text] once the band's fonts are loaded.
  */
 @Composable
 fun ZoomableCircle(
     frame: Bitmap?, rotation: Int, outline: Boolean, view: ZoomView, modifier: Modifier,
     proximity: List<OverlayShape> = emptyList(), overlayRenderer: OverlayRenderer? = null,
-    status: CircleStatus? = null,
+    status: CircleStatus? = null, text: PixelText? = null,
 ) {
     // Outside the image circle the viewport is the band's black, not the theme's surface, so
     // image and band read as one panel (as in saved stills with the overlay).
@@ -126,18 +128,19 @@ fun ZoomableCircle(
                 if (frame != null && overlayRenderer != null) {
                     ScaleLayer(proximity.filterNot(ScaleOverlay::isClose), overlayRenderer, side.toInt(), scaleLayerRotation(rotation))
                 }
-                // Display only, like the scale: captures take the frame, never this layer.
-                if (frame == null && status != null && overlayRenderer != null) {
-                    StatusLayer(status, overlayRenderer.font, side.toInt(), Modifier.align(Alignment.Center))
-                }
+            }
+            // Where the circle sits at zoom 1, whatever the zoom or pan left from the last picture.
+            // Display only, like the scale: captures take the frame, never this layer.
+            if (frame == null && status != null && text != null) {
+                StatusLayer(status, text, w.toInt(), h.toInt(), side.toInt(), Modifier.align(Alignment.TopStart))
             }
             // CLOSE stays upright at the viewport's upper left, whatever the roll or zoom.
             if (frame != null && overlayRenderer != null) {
                 CloseLayer(proximity.filter(ScaleOverlay::isClose), overlayRenderer, side.toInt(), Modifier.align(Alignment.TopStart))
             }
             // The scale is an estimate: said at the upper right, upright and fixed like CLOSE (#35).
-            if (overlayRenderer != null && ScaleDisclaimer.shown(frame != null, proximity)) {
-                DisclaimerLayer(overlayRenderer.font, w.toInt(), h.toInt(), side.toInt(), Modifier.align(Alignment.TopEnd))
+            if (text != null && ScaleDisclaimer.shown(frame != null, proximity)) {
+                DisclaimerLayer(text, w.toInt(), h.toInt(), side.toInt(), Modifier.align(Alignment.TopEnd))
             }
         }
     }
@@ -173,21 +176,25 @@ private fun ScaleLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, si
 }
 
 /**
- * [status] in the empty circle, in the band's font at the same whole scale as CLOSE: drawn at
- * 1/k of the circle's [side], off the main thread, and scaled up k times without smoothing.
+ * [status] in the empty circle, in the band's font at the same whole scale as CLOSE: laid out in
+ * 1/k of the circle's [side], only the text's box drawn, off the main thread, and shown k times
+ * larger without smoothing at its place in the unzoomed circle, centred in the viewport.
+ * TalkBack announces each new status.
  */
 @Composable
-private fun StatusLayer(status: CircleStatus, font: GlyphSource, side: Int, modifier: Modifier) {
+private fun StatusLayer(status: CircleStatus, text: PixelText, viewportW: Int, viewportH: Int, side: Int, modifier: Modifier) {
     val k = maxOf(1, side / FrameGeometry.SIZE)
     val small = side / k
     val title = stringResource(status.title)
     val hint = stringResource(status.hint)
-    val text = remember(font) { PixelText(font) }
-    var image by remember { mutableStateOf<ImageBitmap?>(null) }
+    var drawn by remember { mutableStateOf<Pair<ImageBitmap, PixelText.Block>?>(null) }
     LaunchedEffect(text, title, hint, small) {
-        image = try {
-            if (small <= 0) null
-            else withContext(Dispatchers.Default) { text.render(listOf(title, hint), small).toBitmap().asImageBitmap() }
+        drawn = try {
+            withContext(Dispatchers.Default) {
+                text.circleBlock(listOf(title, hint), small)?.let { b ->
+                    text.draw(b.lines, b.width, b.height, BandRenderer.VALUE).toBitmap().asImageBitmap() to b
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -195,14 +202,18 @@ private fun StatusLayer(status: CircleStatus, font: GlyphSource, side: Int, modi
             null
         }
     }
-    val shown = image ?: return
+    val (image, block) = drawn ?: return
+    val left = (viewportW - small * k) / 2 + block.x * k
+    val top = (viewportH - small * k) / 2 + block.y * k
+    val description = "$title. $hint"
     with(LocalDensity.current) {
         Image(
-            bitmap = shown,
-            contentDescription = "$title. $hint",
+            bitmap = image,
+            contentDescription = description,
             contentScale = ContentScale.FillBounds,
             filterQuality = FilterQuality.None,
-            modifier = modifier.size((shown.width * k).toDp(), (shown.height * k).toDp()),
+            modifier = modifier.offset { IntOffset(left, top) }.size((image.width * k).toDp(), (image.height * k).toDp())
+                .semantics { liveRegion = LiveRegionMode.Polite },
         )
     }
 }
@@ -213,13 +224,12 @@ private fun StatusLayer(status: CircleStatus, font: GlyphSource, side: Int, modi
  * reads the full sentence.
  */
 @Composable
-private fun DisclaimerLayer(font: GlyphSource, viewportW: Int, viewportH: Int, side: Int, modifier: Modifier) {
+private fun DisclaimerLayer(text: PixelText, viewportW: Int, viewportH: Int, side: Int, modifier: Modifier) {
     val k = maxOf(1, side / FrameGeometry.SIZE)
     val paragraphs = listOf(
         stringResource(R.string.scale_note_title), stringResource(R.string.scale_note_focus), stringResource(R.string.scale_note_sensor),
     )
     val description = stringResource(R.string.scale_note_description)
-    val text = remember(font) { PixelText(font) }
     var drawn by remember { mutableStateOf<Pair<ImageBitmap, Int>?>(null) }
     LaunchedEffect(text, paragraphs, viewportW, viewportH, k) {
         drawn = try {

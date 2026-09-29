@@ -37,6 +37,14 @@ class BandTest {
         }
     }
 
+    @Test fun bandPixelsArePinned() {
+        // Saved captures carry these pixels: any change to the band's drawing shows here. The
+        // hashes were taken from the renderer before the glyph blit was shared (drawGlyph).
+        assertEquals("480 px", PIN_480, renderer.render(full, 480).pixels.contentHashCode())
+        assertEquals("960 px", PIN_960, renderer.render(full, 960).pixels.contentHashCode())
+        assertEquals("sparse", PIN_SPARSE, renderer.render(sparse, 480).pixels.contentHashCode())
+    }
+
     @Test fun theLabelIsATaggedFieldOfItsOwn() {
         fun row1(d: BandData) = BandLayout.place(d, font).filter { it.row == 1 && it.col >= 30 }
         fun text(p: List<BandLayout.Placed>) = String(p.map { it.codepoint }.toIntArray(), 0, p.size)
@@ -220,5 +228,11 @@ class BandTest {
     @Test fun overlayOffIsTheFrameItself() {
         val f = frame()
         assertSame(f, renderer.compose(f, full, overlay = false))
+    }
+
+    companion object {
+        const val PIN_480 = -1126408723
+        const val PIN_960 = 1544876545
+        const val PIN_SPARSE = 962195081
     }
 }

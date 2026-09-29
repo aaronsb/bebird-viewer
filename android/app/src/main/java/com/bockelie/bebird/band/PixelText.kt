@@ -34,9 +34,21 @@ class PixelText(private val font: GlyphSource) {
         return null
     }
 
-    /** [paragraphs] drawn in [color] on a transparent [side] × [side] image; empty if they don't fit. */
-    fun render(paragraphs: List<String>, side: Int, color: Int = BandRenderer.VALUE): PixelImage =
-        draw(layout(paragraphs, side).orEmpty(), side, side, color)
+    /** Lines in a [width] × [height] box whose top left is at ([x], [y]) in the image around it. */
+    data class Block(val x: Int, val y: Int, val width: Int, val height: Int, val lines: List<Line>)
+
+    /**
+     * [layout]'s lines cropped to their bounding box, so only that much is drawn; null if they
+     * don't fit the circle, or there are none.
+     */
+    fun circleBlock(paragraphs: List<String>, side: Int): Block? {
+        val lines = layout(paragraphs, side)?.takeIf { it.isNotEmpty() } ?: return null
+        val left = lines.minOf { it.x }
+        val top = lines.minOf { it.y }
+        val right = lines.maxOf { it.x + width(it.text) }
+        val bottom = lines.maxOf { it.y + PixelFont.HEIGHT }
+        return Block(left, top, right - left, bottom - top, lines.map { it.copy(x = it.x - left, y = it.y - top) })
+    }
 
     /**
      * [paragraphs] right-aligned in a column at most [maxWidth] px wide, each on a new row, at most
@@ -50,24 +62,24 @@ class PixelText(private val font: GlyphSource) {
     }
 
     /**
-     * [lines] in [color] on a transparent [width] × [height] image. With [outline], each glyph's
+     * [lines] in [color] on a transparent [imageW] × [imageH] image. With [outline], each glyph's
      * pixels are first drawn one pixel out in all eight directions in black, as for CLOSE, so
      * the text reads over the picture; the caller leaves a pixel of room round the lines.
      */
-    fun draw(lines: List<Line>, width: Int, height: Int, color: Int, outline: Boolean = false): PixelImage {
-        val px = IntArray(width * height)
+    fun draw(lines: List<Line>, imageW: Int, imageH: Int, color: Int, outline: Boolean = false): PixelImage {
+        val px = IntArray(imageW * imageH)
         for (line in lines) {
             var x = line.x
             for (cp in line.text.codePoints()) {
                 val g = font.glyph(cp) ?: continue
                 if (outline) for (dy in -1..1) for (dx in -1..1) {
-                    if (dx != 0 || dy != 0) drawGlyph(px, width, height, g, x + dx, line.y + dy, 1, BandRenderer.BACKGROUND)
+                    if (dx != 0 || dy != 0) drawGlyph(px, imageW, imageH, g, x + dx, line.y + dy, 1, BandRenderer.BACKGROUND)
                 }
-                drawGlyph(px, width, height, g, x, line.y, 1, color)
+                drawGlyph(px, imageW, imageH, g, x, line.y, 1, color)
                 x += g.cells * PixelFont.CELL
             }
         }
-        return PixelImage(width, height, px)
+        return PixelImage(imageW, imageH, px)
     }
 
     /** Height in pixels of [rows] rows of text. */
