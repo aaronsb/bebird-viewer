@@ -17,8 +17,8 @@ class ProximityFrames(
     private val busy = AtomicBoolean(false)
     @Volatile var dropped = 0; private set
 
-    /** Offer a frame at [t] s with roll [roll]; [fillLuma] writes its raw luma. True if queued. */
-    fun offer(t: Double, roll: Int, fillLuma: (ByteArray) -> Unit): Boolean {
+    /** Offer a frame at [t] s with roll [roll]; [fill] writes its raw luma into the gate's buffers. True if queued. */
+    fun offer(t: Double, roll: Int, fill: (LumaBuffers) -> Unit): Boolean {
         if (!gate.enabled) return false
         if (!busy.compareAndSet(false, true)) {
             dropped++
@@ -27,7 +27,7 @@ class ProximityFrames(
         try {
             run(Runnable {
                 try {
-                    publish(gate.onFrame(t, roll, fillLuma))
+                    publish(gate.onFrame(t, roll, fill))
                 } finally {
                     busy.set(false)
                 }

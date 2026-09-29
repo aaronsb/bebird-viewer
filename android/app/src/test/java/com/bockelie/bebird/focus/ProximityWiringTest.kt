@@ -104,6 +104,16 @@ class ProximityWiringTest {
         assertEquals(ScaleStyle.BAR, o.state.value.style)
     }
 
+    @Test fun settingsPersistUnderTheirOwnKeys() {
+        val kv = MemoryKeyValue()
+        ProximitySettings(kv).apply { enabled = false; scaleStyle = ScaleStyle.BOWTIE; closeIndicator = false }
+        assertFalse(kv.getBoolean("proximity", true))
+        assertEquals("BOWTIE", kv.getString("proximity_scale", ""))
+        assertFalse(kv.getBoolean("proximity_close", true))
+        kv.putString("proximity_scale", "SPIRAL")  // unknown: back to the default
+        assertEquals(ScaleStyle.RING, ProximitySettings(kv).scaleStyle)
+    }
+
     @Test fun offMeansNoOverlay() {
         assertTrue(ScaleOverlay.forFrame(null, ScaleStyle.RING, true).isEmpty())
     }

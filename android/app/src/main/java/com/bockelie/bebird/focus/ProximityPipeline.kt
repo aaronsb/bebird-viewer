@@ -28,7 +28,6 @@ class ProximityPipeline(connection: ScopeConnection, kv: KeyValue, scope: Corout
     val result: StateFlow<FocusResult?> = _result.asStateFlow()
 
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "bebird-proximity").apply { isDaemon = true } }
-    private val argb = IntArray(FrameGeometry.SIZE * FrameGeometry.SIZE)  // worker only
     // A result from a frame that was already queued when estimation was turned off is dropped.
     private val frames = ProximityFrames(gate, worker::execute) { r -> _result.value = r.takeIf { gate.enabled } }
 
@@ -38,7 +37,7 @@ class ProximityPipeline(connection: ScopeConnection, kv: KeyValue, scope: Corout
                 when {
                     frame == null -> _result.value = null  // the stream stopped
                     frame.width != FrameGeometry.SIZE || frame.height != FrameGeometry.SIZE -> Unit
-                    else -> frames.offer(SystemClock.elapsedRealtime() / 1000.0, roll) { luma -> frame.lumaInto(argb, luma) }
+                    else -> frames.offer(SystemClock.elapsedRealtime() / 1000.0, roll) { buffers -> frame.lumaInto(buffers) }
                 }
             }
         }
