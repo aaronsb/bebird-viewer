@@ -33,14 +33,20 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -99,18 +105,19 @@ fun LiveControls(
             }
         }
         LabelRow(label, onEdit = onEditLabel, onClear = { vm.setLabel("") })
-        // Snapshot at the left, as tall as the rest together (#54); Record, Annotate and Files
+        // Snapshot and Record at the left, as tall as the rest together (#54); Annotate and Files
         // wrap onto another line on a narrow screen rather than squeeze, and Reconnect sits
-        // below them at the right.
+        // below them at the right, as its icon alone if its word doesn't fit.
         Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SnapshotButton(
                 enabled = streaming,
                 onClick = { vm.snapshot(zoomView.zoom, frame?.let { zoomView.crop(it.width) }) },
                 modifier = Modifier.fillMaxHeight(),
             )
-            Column(Modifier.weight(1f)) {
+            RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording, modifier = Modifier.fillMaxHeight())
+            var width by remember { mutableIntStateOf(Int.MAX_VALUE) }
+            Column(Modifier.weight(1f).onSizeChanged { width = it.width }) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording)
                     // Not while recording: the file would carry on behind the paused view.
                     FilledTonalButton(
                         onClick = onAnnotate,
@@ -119,14 +126,27 @@ fun LiveControls(
                     ) { Text(stringResource(R.string.annotate)) }
                     FilesButton(vm, snackbar)
                 }
-                OutlinedButton(onClick = conn::reconnect, enabled = online, modifier = Modifier.align(Alignment.End), contentPadding = CompactPadding) {
+                val reconnect = stringResource(R.string.reconnect)
+                val labelWidth = rememberTextMeasurer().measure(reconnect, MaterialTheme.typography.labelLarge).size.width
+                val extras = with(LocalDensity.current) { RECONNECT_EXTRAS.roundToPx() }
+                val withLabel = reconnectShowsLabel(width, labelWidth, extras)
+                OutlinedButton(
+                    onClick = conn::reconnect, enabled = online, contentPadding = CompactPadding,
+                    modifier = Modifier.align(Alignment.End).semantics { if (!withLabel) contentDescription = reconnect },
+                ) {
                     Icon(Icons.Default.Refresh, contentDescription = null)
-                    Text(stringResource(R.string.reconnect), Modifier.padding(start = 4.dp))
+                    if (withLabel) Text(reconnect, Modifier.padding(start = 4.dp), maxLines = 1)
                 }
             }
         }
     }
 }
+
+/** Reconnect's icon, gap and padding beside its word: 24 + 4 + 2 × 12 dp, and the outline. */
+private val RECONNECT_EXTRAS = 54.dp
+
+/** Whether Reconnect's word fits beside its icon in [available] px, or only the icon does (#54). */
+internal fun reconnectShowsLabel(available: Int, label: Int, extras: Int): Boolean = label + extras <= available
 
 private fun signed(n: Int, width: Int) = (if (n > 0) "+$n" else "$n").padStart(width, '\u2007')
 

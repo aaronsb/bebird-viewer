@@ -171,8 +171,8 @@ class HoldTurn {
 }
 
 /**
- * Plays hold vibrations on the device vibrator: the thin Android side of #44, and Snapshot's
- * click (#54). Nothing if the
+ * Plays hold vibrations on the device vibrator: the thin Android side of #44, and the capture
+ * buttons' clicks (#54). Nothing if the
  * phone has no vibrator, or touch feedback is off in the system settings. On API 33+ it counts
  * as touch feedback, so the system's touch-vibration strength applies. A vibrator without
  * amplitude control gets the pattern as lengths instead ([HoldPattern.onOff]). Errors are
@@ -200,6 +200,9 @@ class HoldVibrator(context: Context) {
      * hold pattern, which starts with a light tick and goes on.
      */
     fun click() = vibrate { VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK) }
+
+    /** Two quick clicks (#54), for Record: it feels unlike Snapshot's single one. */
+    fun doubleClick() = vibrate { VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK) }
 
     /** Play [effect], unless there is no vibrator or touch feedback is off. */
     private fun vibrate(effect: (Vibrator) -> VibrationEffect) {

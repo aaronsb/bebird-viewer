@@ -11,11 +11,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonColors
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -26,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,46 +52,76 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun SnapshotButton(enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val vibrator = remember(context) { HoldVibrator(context) }
-    val interaction = remember { MutableInteractionSource() }
-    LaunchedEffect(interaction) {
-        interaction.interactions.collect { if (it is PressInteraction.Press) vibrator.click() }
-    }
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier,
-        interactionSource = interaction,
-        contentPadding = CompactPadding,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(painterResource(R.drawable.ic_camera), contentDescription = null)
-            Text(stringResource(R.string.snapshot), maxLines = 1)
-        }
+    TallButton(onClick, enabled, HoldVibrator::click, ButtonDefaults.buttonColors(), modifier) {
+        Icon(painterResource(R.drawable.ic_camera), contentDescription = null)
+        Text(stringResource(R.string.snapshot), maxLines = 1)
     }
 }
 
-/** Narrower than a button's own padding, so the capture rows fit a 360 dp screen. */
-val CompactPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-
-/** Record, or Stop with the elapsed time (fixed-width digits) while recording. */
+/**
+ * Record, big like Snapshot (#54): a dot over "Record"; while recording, in the error colours, a
+ * square over "Stop" and the elapsed time (fixed-width digits). A double click on the press, so
+ * it feels unlike Snapshot's single one.
+ */
 @Composable
-fun RecordButton(since: Long?, enabled: Boolean, onClick: () -> Unit) {
+fun RecordButton(since: Long?, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val elapsed by produceState(0L, since) {
         while (since != null) {
             value = (SystemClock.elapsedRealtime() - since) / 1000
             delay(250)
         }
     }
-    FilledTonalButton(onClick = onClick, enabled = enabled || since != null, contentPadding = CompactPadding) {
+    val colors = if (since == null) {
+        ButtonDefaults.buttonColors()
+    } else {
+        ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.error,
+            contentColor = MaterialTheme.colorScheme.onError,
+        )
+    }
+    TallButton(onClick, enabled || since != null, HoldVibrator::doubleClick, colors, modifier) {
         if (since == null) {
-            Text(stringResource(R.string.record))
+            Icon(painterResource(R.drawable.ic_record), contentDescription = null)
+            Text(stringResource(R.string.record), maxLines = 1)
         } else {
-            Text(stringResource(R.string.record_stop, "%d:%02d".format(elapsed / 60, elapsed % 60)), style = LocalTextStyle.current.merge(tabular))
+            Icon(painterResource(R.drawable.ic_stop), contentDescription = null)
+            Text(stringResource(R.string.stop), maxLines = 1)
+            Text("%d:%02d".format(elapsed / 60, elapsed % 60), maxLines = 1, style = LocalTextStyle.current.merge(tabular))
         }
     }
 }
+
+/** A filled button with its content stacked, as tall as [modifier] makes it, and [haptic] on the press. */
+@Composable
+private fun TallButton(
+    onClick: () -> Unit,
+    enabled: Boolean,
+    haptic: (HoldVibrator) -> Unit,
+    colors: ButtonColors,
+    modifier: Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val context = LocalContext.current
+    val vibrator = remember(context) { HoldVibrator(context) }
+    val interaction = remember { MutableInteractionSource() }
+    val press by rememberUpdatedState(haptic)
+    LaunchedEffect(interaction) {
+        interaction.interactions.collect { if (it is PressInteraction.Press) press(vibrator) }
+    }
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        colors = colors,
+        interactionSource = interaction,
+        contentPadding = CompactPadding,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, content = content)
+    }
+}
+
+/** Narrower than a button's own padding, so the capture rows fit a 360 dp screen. */
+val CompactPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
 
 /** A short M3 snackbar for each saved capture, with Open. */
 @Composable
