@@ -238,6 +238,7 @@ class ScopeConnectionLostTest {
         assertEquals(ScopeWifi.State.Lost, wifi.state.value)
         assertEquals(1, wifi.stops.get())  // connect()'s own release only
         assertTrue(links.sends().isEmpty())
+        assertEquals("connection lost", conn.stats.value.status)  // the status line says so too
     }
 
     @Test fun aLossAfterPowerOffEndsAsNotConnected() {

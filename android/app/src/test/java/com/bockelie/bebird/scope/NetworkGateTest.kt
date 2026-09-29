@@ -7,18 +7,29 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CompletableFuture
 
 /** The ViewModel's ordering of network request and release against session STOPs. */
 class NetworkGateTest {
     private val events = mutableListOf<String>()
+    /** At each markEnding: the events so far, and whether the gate's lock was held. */
+    private val marks = mutableListOf<Pair<List<String>, Boolean>>()
+    private lateinit var lockHeld: () -> Boolean
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val gate = NetworkGate(
         scope,
         release = { synchronized(events) { events += "release" } },
         stopTimeoutMs = 5000,
+        markEnding = { synchronized(marks) { marks += events() to lockHeld() } },
     )
+
+    init {
+        // the gate's private lock, to check markEnding runs under it
+        val lock = NetworkGate::class.java.getDeclaredField("lock").apply { isAccessible = true }.get(gate)
+        lockHeld = { Thread.holdsLock(lock) }
+    }
 
     private val request = { synchronized(events) { events += "request" } }
 
@@ -93,6 +104,29 @@ class NetworkGateTest {
         await("release") { "release" in events() }
         Thread.sleep(100)
         assertEquals(listOf("stop", "release"), events())
+    }
+
+    @Test fun eachDisconnectMarksTheRequestEndingUnderTheLock() {
+        // Under the lock, after a waiting connect is cancelled: a request is either never filed,
+        // or filed before the mark and marked (#37).
+        gate.connect(request)
+        await("request") { "request" in events() }
+        gate.disconnect(null)
+        await("release") { "release" in events() }
+        gate.disconnect(null)
+        assertEquals(listOf(listOf("request") to true, listOf("request", "release") to true), synchronized(marks) { marks.toList() })
+    }
+
+    @Test fun aConnectCancelledByDisconnectFilesNothingAfterTheMark() {
+        val stop = CompletableFuture<Unit>()
+        gate.disconnect(stop)
+        gate.connect(request)
+        gate.disconnect(null)
+        stopDone(stop)
+        await("both releases") { events().count { it == "release" } == 2 }
+        Thread.sleep(100)
+        assertEquals(2, synchronized(marks) { marks.size })
+        assertTrue("request" !in events())
     }
 
     @Test fun connectWithNothingPendingRequestsAtOnce() {

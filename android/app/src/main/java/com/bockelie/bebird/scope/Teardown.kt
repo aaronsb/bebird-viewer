@@ -41,6 +41,12 @@ class NetworkGate(
     private val scope: CoroutineScope,
     private val release: () -> Unit,
     private val stopTimeoutMs: Long,
+    /**
+     * Marks the filed request as ending on purpose ([com.bockelie.bebird.wifi.WifiControl.markEnding]).
+     * Run by [disconnect] under the lock, after cancelling a waiting [connect]: a request is
+     * either never filed or filed before this and marked.
+     */
+    private val markEnding: () -> Unit = {},
 ) {
     private val lock = Any()
     private var lastStop: Future<*>? = null  // guarded by lock
@@ -75,6 +81,7 @@ class NetworkGate(
     fun disconnect(stopped: Future<*>?) = synchronized(lock) {
         connecting?.cancel()
         connecting = null
+        markEnding()
         if (stopped != null) lastStop = stopped
         releasing = afterStop(lastStop, stopTimeoutMs, release)
     }

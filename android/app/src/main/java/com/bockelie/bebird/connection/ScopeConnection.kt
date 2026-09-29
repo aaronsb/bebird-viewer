@@ -69,7 +69,7 @@ class ScopeConnection(
     /** Scopes in the phone's last Wi-Fi scan, or null if scans aren't available; see [refreshInRange]. */
     val inRange: StateFlow<List<ScopeWifi.Identity>?> = _inRange.asStateFlow()
 
-    private val gate = NetworkGate(scope, wifi::stop, STOP_TIMEOUT_MS)
+    private val gate = NetworkGate(scope, wifi::stop, STOP_TIMEOUT_MS, wifi::markEnding)
     private var session: ScopeSession? = null
     private var sessionJobs: Job? = null  // following the session's stats and light replies
     private var streaming = false          // the current session has shown a frame
@@ -199,8 +199,7 @@ class ScopeConnection(
     /** Stop the session, then release the network once its STOP has gone out. */
     fun disconnect() {
         wanted = null
-        wifi.markEnding()
-        gate.disconnect(stopSession())
+        gate.disconnect(stopSession())  // marks the request ending, so a loss from here reads as Idle
     }
 
     /** Wait up to [timeoutMs] for the network release after [disconnect] or [powerOff]. */
@@ -217,7 +216,8 @@ class ScopeConnection(
         if (session == null || !streaming) return false
         Log.i(TAG, "power off")
         wanted = null
-        wifi.markEnding()  // the scope drops its network after 66 3E, maybe before the release
+        // The scope drops its network after 66 3E, maybe before the release: the gate marks the
+        // request ending, so that loss reads as Idle.
         gate.disconnect(stopSession(ScopeSession::powerOff, "powered off"))
         settings.poweredOffAt = clock()
         return true
@@ -266,6 +266,7 @@ class ScopeConnection(
     private fun lost() {
         val dropped = stopSession(ScopeSession::drop, "connection lost")
         if (dropped == null && (wanted == null || gate.isConnecting)) return
+        if (dropped == null) _stats.value = _stats.value.copy(frame = null, fps = 0, status = "connection lost", beacon = null)
         Log.i(TAG, "connection lost; the request is released")
         wanted = null
         quiet = null
