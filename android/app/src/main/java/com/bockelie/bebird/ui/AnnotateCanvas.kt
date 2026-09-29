@@ -38,7 +38,11 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -56,8 +60,10 @@ import com.bockelie.bebird.annotate.ImageFit
 import com.bockelie.bebird.annotate.Mark
 import com.bockelie.bebird.annotate.Palette
 import com.bockelie.bebird.annotate.Picker
+import com.bockelie.bebird.annotate.PressOutcome
 import com.bockelie.bebird.annotate.Pt
 import com.bockelie.bebird.annotate.Tool
+import com.bockelie.bebird.annotate.classifyMovePress
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.band.toBitmap
 import kotlin.math.roundToInt
@@ -68,16 +74,30 @@ import kotlinx.coroutines.withContext
 
 /**
  * The annotate tool and colour in use, and where a text label is being placed (its dialog
- * open). Kept across rotation with [Saver].
+ * open). Move is a mode over the drawing tools: turning it off goes back to [drawTool], the
+ * last drawing tool. Kept across rotation with [Saver].
  */
 @Stable
 class AnnotateTools {
     var tool by mutableStateOf(Tool.ARROW)
     var color by mutableIntStateOf(Palette.RED)
     var textAt by mutableStateOf<Pt?>(null)
+    var drawTool by mutableStateOf(Tool.ARROW)
+        private set
 
-    /** Tool, colour and text point as saveable values. */
-    fun saved(): List<Any?> = listOf(tool.name, color, textAt?.x, textAt?.y)
+    /** Choose a drawing tool (which also leaves Move). */
+    fun draw(t: Tool) {
+        tool = t
+        if (t != Tool.MOVE) drawTool = t
+    }
+
+    /** Move on, or off again back to the last drawing tool. */
+    fun toggleMove() {
+        tool = if (tool == Tool.MOVE) drawTool else Tool.MOVE
+    }
+
+    /** Tool, colour, text point and last drawing tool as saveable values. */
+    fun saved(): List<Any?> = listOf(tool.name, color, textAt?.x, textAt?.y, drawTool.name)
 
     companion object {
         fun restored(v: List<Any?>) = AnnotateTools().apply {
@@ -86,6 +106,8 @@ class AnnotateTools {
             val x = v.getOrNull(2) as? Float
             val y = v.getOrNull(3) as? Float
             textAt = if (x != null && y != null) Pt(x, y) else null
+            drawTool = Tool.entries.firstOrNull { it.name == v.getOrNull(4) && it != Tool.MOVE }
+                ?: tool.takeIf { it != Tool.MOVE } ?: Tool.ARROW
         }
 
         val Saver = listSaver<AnnotateTools, Any?>(save = { it.saved() }, restore = ::restored)
@@ -120,11 +142,15 @@ fun AnnotateCanvas(
         val w = fit.width.roundToInt()
         val h = fit.height.roundToInt()
         var stroke by remember { mutableStateOf(emptyList<Pt>()) }  // the drag in progress
-        // Move: the mark under the finger (highlighted), and where it is being moved to
-        var picked by remember { mutableStateOf<Int?>(null) }
-        var moving by remember { mutableStateOf<Mark?>(null) }
-        val shown = moving?.let { m -> picked?.let { i -> marks.mapIndexed { j, o -> if (j == i) m else o } } } ?: marks
-        val layer = rememberLayer(shown, image.width, image.height, renderer)
+        var move by remember { mutableStateOf<MoveState?>(null) }  // a Move press, while it lasts
+        // While Move holds a mark, the layer leaves it out and draws it alone, so a drag slides
+        // that mark's own pixels instead of drawing everything again for each movement.
+        val held = move?.takeIf { it.phase == Phase.PRESSED || it.phase == Phase.DRAGGING }?.mark
+        val layer = rememberLayer(marks, held, image.width, image.height, renderer)
+        // A dropped mark stays shown where it landed until the layer has it.
+        LaunchedEffect(layer, move) {
+            if (move?.phase == Phase.COMMITTED && layer?.picked == null && layer?.marks === marks) move = null
+        }
         with(LocalDensity.current) {
             Box(Modifier.offset { IntOffset(fit.left.roundToInt(), fit.top.roundToInt()) }.size(w.toDp(), h.toDp())) {
                 // As the live view shows it: the image circle, and the hair-thin ring with the overlay.
@@ -135,14 +161,28 @@ fun AnnotateCanvas(
                     modifier = Modifier.fillMaxSize().clip(CircleShape).background(Color.Black)
                         .then(if (outline) Modifier.border(Dp.Hairline, Color(BandRenderer.CIRCLE), CircleShape) else Modifier),
                 )
-                layer?.let {
+                layer?.let { l ->
                     Image(
-                        bitmap = it.image,
+                        bitmap = l.base,
                         contentDescription = null,
                         contentScale = ContentScale.FillBounds,
                         filterQuality = FilterQuality.None,
                         modifier = Modifier.fillMaxSize(),
                     )
+                    val m = move?.takeIf { it.mark === l.picked }
+                    if (l.lone != null && m?.phase != Phase.DELETED) {
+                        val k = fit.width / image.width  // screen px per frame px
+                        Image(
+                            bitmap = l.lone,
+                            contentDescription = null,
+                            contentScale = ContentScale.FillBounds,
+                            filterQuality = FilterQuality.None,
+                            modifier = Modifier.fillMaxSize().graphicsLayer {
+                                translationX = (m?.dx ?: 0) * k
+                                translationY = (m?.dy ?: 0) * k
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -156,57 +196,44 @@ fun AnnotateCanvas(
                         val down = awaitFirstDown()
                         val start = fit.toImage(down.position.x, down.position.y)
                         val tolerance = Picker.tolerance(density, fit.width, image.width)
-                        val index = picker.pick(current, start, tolerance) ?: return@awaitEachGesture  // empty space
-                        val mark = current[index]
+                        val mark = picker.pick(current, start, tolerance)?.let { current[it] } ?: return@awaitEachGesture  // empty space
+                        // Found again by identity when acting: Undo with another finger may have moved it in the list.
+                        fun index() = current.indexOfFirst { it === mark }
+                        var state = MoveState(mark, picker.bounds(mark), Phase.PRESSED)
+                        var dropped = false
                         try {
-                            picked = index
-                            // Within the long-press timeout, moving past the touch slop starts a
-                            // move; holding still until it runs out deletes. Only the first finger counts.
-                            var at = down.position
-                            val press = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                                var result: Press? = null
-                                while (result == null) {
-                                    val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
-                                    result = when {
-                                        change == null || change.isConsumed -> Press.GONE
-                                        !change.pressed -> Press.LIFTED
-                                        (change.position - down.position).getDistance() > viewConfiguration.touchSlop -> {
-                                            change.consume()
-                                            at = change.position
-                                            Press.DRAG
-                                        }
-                                        else -> null
-                                    }
-                                }
-                                result
-                            }
-                            // The marks may have changed meanwhile (Undo with another finger): then leave them be.
-                            fun still() = current.getOrNull(index) === mark
-                            when (press) {
-                                null -> {
-                                    if (still()) {
+                            move = state
+                            val (outcome, at) = awaitMovePressOutcome(down, viewConfiguration.touchSlop, viewConfiguration.longPressTimeoutMillis)
+                            when (outcome) {
+                                PressOutcome.DELETE -> {
+                                    val i = index()
+                                    if (i >= 0) {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        deleteMark(index)
+                                        deleteMark(i)
+                                        move = state.copy(phase = Phase.DELETED)  // red until the finger lifts
                                     }
-                                    picked = null
-                                    // the rest of this touch does nothing
-                                    while (true) {
-                                        val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
-                                        change.consume()
-                                        if (!change.pressed) break
-                                    }
+                                    awaitFingerUp(down.id)
                                 }
-                                Press.DRAG -> {
+                                PressOutcome.MOVE -> {
                                     fun follow(p: Offset) {
                                         val to = fit.toImage(p.x, p.y)
-                                        moving = picker.moved(mark, to.x - start.x, to.y - start.y)
+                                        val (px, py) = picker.offsetPx(mark, to.x - start.x, to.y - start.y)
+                                        state = state.copy(phase = Phase.DRAGGING, dx = px, dy = py)
+                                        move = state
                                     }
                                     follow(at)
                                     while (true) {
                                         val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
                                         if (!change.pressed) {
-                                            // one history entry for the whole drag
-                                            moving?.let { if (still()) moveMark(index, it) }
+                                            // Compose delivers a cancelled touch (a system gesture) as this same
+                                            // release, so the two can't be told apart: either way the mark lands
+                                            // where it is shown. One history entry for the whole drag.
+                                            val i = index()
+                                            if (i >= 0 && (state.dx != 0 || state.dy != 0)) {
+                                                moveMark(i, picker.shifted(mark, state.dx, state.dy))
+                                                move = state.copy(phase = Phase.COMMITTED)
+                                                dropped = true
+                                            }
                                             break
                                         }
                                         if (change.isConsumed) break  // taken by something else: the mark stays
@@ -214,11 +241,10 @@ fun AnnotateCanvas(
                                         follow(change.position)
                                     }
                                 }
-                                Press.LIFTED, Press.GONE -> Unit
+                                PressOutcome.NONE -> Unit
                             }
                         } finally {
-                            picked = null
-                            moving = null
+                            if (!dropped) move = null
                         }
                     }
                 } else if (tool == Tool.TEXT) {
@@ -259,8 +285,13 @@ fun AnnotateCanvas(
             }
             for (m in pending) strokes(m, fit, image.width, image.height)
             Drag.mark(tools.tool, stroke, tools.color)?.let { strokes(it, fit, image.width, image.height) }
-            // The mark a Move press has picked: what will move, or be deleted on a long press.
-            picked?.let { i -> (moving ?: marks.getOrNull(i))?.let { highlight(picker.bounds(it), fit) } }
+            // The mark a Move press holds: what will move, or (red) what was just deleted.
+            move?.takeIf { it.phase != Phase.COMMITTED }?.let { m ->
+                val b = m.bounds
+                val dx = m.dx.toFloat() / image.width
+                val dy = m.dy.toFloat() / image.height
+                highlight(Picker.Bounds(b.left + dx, b.top + dy, b.right + dx, b.bottom + dy), fit, deleted = m.phase == Phase.DELETED)
+            }
         }
     }
 }
@@ -287,36 +318,78 @@ private fun DrawScope.strokes(m: Mark, fit: ImageFit, iw: Int, ih: Int) {
     }
 }
 
-/** How a Move press went before the long-press timeout ran out (null from the timeout: a long press). */
-private enum class Press { DRAG, LIFTED, GONE }
+/** Where a Move press is: held, being dragged, just deleted (a long press), or dropped and waiting for the layer. */
+private enum class Phase { PRESSED, DRAGGING, DELETED, COMMITTED }
 
-/** A translucent box around [b] (image coordinates), a little larger, for the picked mark. */
-private fun DrawScope.highlight(b: Picker.Bounds, fit: ImageFit) {
-    val pad = 6.dp.toPx()
-    val topLeft = Offset(fit.toViewX(Pt(b.left, b.top)) - pad, fit.toViewY(Pt(b.left, b.top)) - pad)
-    val size = Size(fit.toViewX(Pt(b.right, b.bottom)) - topLeft.x + pad, fit.toViewY(Pt(b.right, b.bottom)) - topLeft.y + pad)
-    drawRect(Color.White.copy(alpha = 0.2f), topLeft, size)
-    drawRect(Color.White, topLeft, size, style = Stroke(width = 2.dp.toPx()))
-}
-
-/** The marks drawn at the frame's size, and which marks they are. */
-private class Layer(val marks: List<Mark>, val image: ImageBitmap)
+/** A Move press on [mark] (its drawn [bounds]), moved by ([dx], [dy]) whole frame pixels so far. */
+private data class MoveState(val mark: Mark, val bounds: Picker.Bounds, val phase: Phase, val dx: Int = 0, val dy: Int = 0)
 
 /**
- * [marks] rasterised off the main thread at [w] × [h] (the frame's size); the previous layer
- * stays up until the new one is ready. A newer change cancels an older render, which stops
- * at its next mark rather than running on alongside.
+ * Wait until a Move press on a mark is decided ([classifyMovePress]): moved past the [slop],
+ * held still for [timeoutMs], or ended. Only the first finger ([down]) counts. Returns the
+ * outcome and the finger's position then; a move's event is consumed.
+ */
+private suspend fun AwaitPointerEventScope.awaitMovePressOutcome(
+    down: PointerInputChange, slop: Float, timeoutMs: Long,
+): Pair<PressOutcome, Offset> {
+    var elapsed = 0L
+    while (true) {
+        // no event before the timeout: the finger is still down and still
+        val event = withTimeoutOrNull(timeoutMs - elapsed) { awaitPointerEvent() }
+            ?: return (classifyMovePress(true, true, false, 0f, slop, timeoutMs, timeoutMs) ?: PressOutcome.DELETE) to down.position
+        val change = event.changes.firstOrNull { it.id == down.id }
+        if (change != null) elapsed = change.uptimeMillis - down.uptimeMillis
+        val outcome = classifyMovePress(
+            present = change != null, pressed = change?.pressed == true, consumed = change?.isConsumed == true,
+            distance = change?.let { (it.position - down.position).getDistance() } ?: 0f,
+            slop = slop, elapsedMs = elapsed, timeoutMs = timeoutMs,
+        ) ?: continue
+        if (outcome == PressOutcome.MOVE) change?.consume()
+        return outcome to (change?.position ?: down.position)
+    }
+}
+
+/** Swallow the rest of the touch by pointer [id] until it lifts. */
+private suspend fun AwaitPointerEventScope.awaitFingerUp(id: PointerId) {
+    while (true) {
+        val change = awaitPointerEvent().changes.firstOrNull { it.id == id } ?: return
+        change.consume()
+        if (!change.pressed) return
+    }
+}
+
+/** A translucent box around [b] (image coordinates), a little larger, for the held mark; red once [deleted]. */
+private fun DrawScope.highlight(b: Picker.Bounds, fit: ImageFit, deleted: Boolean) {
+    val pad = 6.dp.toPx()
+    val color = if (deleted) Color(0xFFFF3B30) else Color.White
+    val topLeft = Offset(fit.toViewX(Pt(b.left, b.top)) - pad, fit.toViewY(Pt(b.left, b.top)) - pad)
+    val size = Size(fit.toViewX(Pt(b.right, b.bottom)) - topLeft.x + pad, fit.toViewY(Pt(b.right, b.bottom)) - topLeft.y + pad)
+    drawRect(color.copy(alpha = 0.2f), topLeft, size)
+    drawRect(color, topLeft, size, style = Stroke(width = 2.dp.toPx()))
+}
+
+/**
+ * The marks drawn at the frame's size: [base] is every mark but [picked] (the one Move holds,
+ * if any), which is drawn alone as [lone]. [marks] says which marks these are.
+ */
+private class Layer(val marks: List<Mark>, val picked: Mark?, val base: ImageBitmap, val lone: ImageBitmap?)
+
+/**
+ * [marks] rasterised off the main thread at [w] × [h] (the frame's size), with [picked] apart
+ * (see [Layer]); the previous layer stays up until the new one is ready. A newer change cancels
+ * an older render, which stops at its next mark rather than running on alongside.
  */
 @Composable
-private fun rememberLayer(marks: List<Mark>, w: Int, h: Int, renderer: AnnotationRenderer): Layer? {
+private fun rememberLayer(marks: List<Mark>, picked: Mark?, w: Int, h: Int, renderer: AnnotationRenderer): Layer? {
     var layer by remember(w, h) { mutableStateOf<Layer?>(null) }
-    LaunchedEffect(marks, w, h) {
+    LaunchedEffect(marks, picked, w, h) {
         if (w <= 0 || h <= 0) return@LaunchedEffect
         try {
-            val image = withContext(Dispatchers.Default) {
-                renderer.render(marks, w, h) { ensureActive() }.toBitmap().asImageBitmap()
+            val (base, lone) = withContext(Dispatchers.Default) {
+                val base = renderer.render(marks.filter { it !== picked }, w, h) { ensureActive() }.toBitmap().asImageBitmap()
+                base to picked?.let { renderer.render(listOf(it), w, h) { ensureActive() }.toBitmap().asImageBitmap() }
             }
-            layer = Layer(marks, image)
+            layer = Layer(marks, picked, base, lone)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {

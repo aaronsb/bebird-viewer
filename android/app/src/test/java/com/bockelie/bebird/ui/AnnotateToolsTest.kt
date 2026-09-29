@@ -24,6 +24,26 @@ class AnnotateToolsTest {
         assertNull(back.textAt)
     }
 
+    @Test fun moveTurnsOffBackToTheLastDrawingTool() {
+        val t = AnnotateTools()
+        t.draw(Tool.PEN)
+        t.toggleMove()
+        assertEquals(Tool.MOVE, t.tool)
+        t.toggleMove()
+        assertEquals(Tool.PEN, t.tool)
+        // choosing a drawing tool leaves Move
+        t.toggleMove(); t.draw(Tool.BOX)
+        assertEquals(Tool.BOX, t.tool)
+    }
+
+    @Test fun moveAndTheToolToGoBackToSurviveRotation() {
+        val t = AnnotateTools().apply { draw(Tool.ELLIPSE); toggleMove() }
+        val back = AnnotateTools.restored(t.saved())
+        assertEquals(Tool.MOVE, back.tool)
+        back.toggleMove()
+        assertEquals(Tool.ELLIPSE, back.tool)
+    }
+
     @Test fun unknownValuesFallBackToTheDefaults() {
         val back = AnnotateTools.restored(listOf("LASER", 0x12345678, null, 0.5f))
         assertEquals(Tool.ARROW, back.tool)

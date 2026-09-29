@@ -118,7 +118,6 @@
     <string name="annotate_arrow">Arrow</string>
     <string name="annotate_pen">Pen</string>
     <string name="annotate_text">Text</string>
-    <string name="annotate_move">Move</string>
     <string name="annotate_move_description">Move or delete</string>
     <string name="annotate_hint_move">Drag a mark to move it; hold to delete.</string>
     <string name="annotate_color">Color</string>

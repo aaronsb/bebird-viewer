@@ -7,6 +7,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +20,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconToggleButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -34,6 +38,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -45,15 +52,25 @@ import com.bockelie.bebird.annotate.Palette
 import com.bockelie.bebird.annotate.Sketch
 import com.bockelie.bebird.annotate.Tool
 
+/**
+ * Four arrows out from the centre (Material's "open_with", Apache-2.0), for Move: the core
+ * icon set has no such icon.
+ */
+private val MoveIcon: ImageVector = ImageVector.Builder("Move", 24.dp, 24.dp, 24f, 24f).addPath(
+    addPathNodes("M10 9h4V6h3l-5-5-5 5h3v3zm-1 1H6V7l-5 5 5 5v-3h3v-4zm14 2l-5-5v3h-3v4h3v3l5-5zm-9 3h-4v3H7l5 5 5-5h-3v-3z"),
+    fill = SolidColor(Color.Black),
+).build()
+
 /** Longest text label, in characters. */
 private const val TEXT_MAX = 40
 
 /**
  * The controls while annotating, in place of the live ones: the tool, the colour, Undo and
- * Clear, and Resume (back to the live view, dropping unsaved marks after a confirmation) and
+ * Clear, Move (a toggle: drag marks to move them, hold to delete), and Resume (back to the live view, dropping unsaved marks after a confirmation) and
  * Save (both files, then back to the live view; on a failure the marks stay for another try).
  * Back does what Resume does. Nothing changes while a save runs.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AnnotateControls(
     tools: AnnotateTools, sketch: Sketch, saving: Boolean, savedOriginal: String?,
@@ -69,16 +86,26 @@ fun AnnotateControls(
             else -> R.string.annotate_hint_draw
         }
         Text(stringResource(if (saving) R.string.annotate_saving else hint), style = MaterialTheme.typography.bodySmall)
-        ToolRow(tools.tool) { tools.tool = it }
+        ToolRow(tools.tool) { tools.draw(it) }
         ColorRow(tools.color) { tools.color = it }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Resume and Save wrap onto a line of their own on a narrow screen.
+        FlowRow(verticalArrangement = Arrangement.Center, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { onEdit(Sketch::undo) }, enabled = !saving && sketch.canUndo) { Text(stringResource(R.string.annotate_undo)) }
             TextButton(onClick = { onEdit(Sketch::clear) }, enabled = !saving && sketch.marks.isNotEmpty()) {
                 Text(stringResource(R.string.annotate_clear))
             }
+            val moveName = stringResource(R.string.annotate_move_description)
+            FilledTonalIconToggleButton(
+                checked = tools.tool == Tool.MOVE,
+                onCheckedChange = { tools.toggleMove() },
+                enabled = !saving,
+                modifier = Modifier.semantics { contentDescription = moveName },
+            ) { Icon(MoveIcon, contentDescription = null) }
             Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = leave, enabled = !saving) { Text(stringResource(R.string.annotate_resume)) }
-            Button(onClick = onSave, enabled = !saving && sketch.marks.isNotEmpty()) { Text(stringResource(R.string.save)) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = leave, enabled = !saving) { Text(stringResource(R.string.annotate_resume)) }
+                Button(onClick = onSave, enabled = !saving && sketch.marks.isNotEmpty()) { Text(stringResource(R.string.save)) }
+            }
         }
     }
     tools.textAt?.let { at ->
@@ -107,7 +134,10 @@ fun AnnotateControls(
     }
 }
 
-/** The tools as one segmented control; short labels, a size smaller, so six fit a phone's width; full names for TalkBack. */
+/**
+ * The drawing tools as one segmented control; short labels so five fit a phone's width, full
+ * names for TalkBack. None is selected while Move is on.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ToolRow(tool: Tool, onTool: (Tool) -> Unit) {
@@ -117,7 +147,6 @@ private fun ToolRow(tool: Tool, onTool: (Tool) -> Unit) {
         Triple(Tool.ARROW, R.string.annotate_arrow, R.string.annotate_arrow),
         Triple(Tool.PEN, R.string.annotate_pen, R.string.annotate_pen),
         Triple(Tool.TEXT, R.string.annotate_text, R.string.annotate_text),
-        Triple(Tool.MOVE, R.string.annotate_move, R.string.annotate_move_description),
     )
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
         options.forEachIndexed { i, (t, label, name) ->
@@ -128,7 +157,7 @@ private fun ToolRow(tool: Tool, onTool: (Tool) -> Unit) {
                 shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
                 icon = {},  // no check mark: the labels keep their width
                 modifier = Modifier.semantics { contentDescription = description },
-            ) { Text(stringResource(label), maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium) }
+            ) { Text(stringResource(label), maxLines = 1) }
         }
     }
 }
