@@ -103,10 +103,14 @@ fun ZoomableCircle(
             Box(
                 Modifier.size(with(LocalDensity.current) { side.toDp() })
                     .graphicsLayer {
-                        scaleX = view.zoom
-                        scaleY = view.zoom
-                        translationX = view.offset.x
-                        translationY = view.offset.y
+                        // With no picture the empty circle sits unzoomed round the status text;
+                        // the zoom is kept for when the picture comes back.
+                        if (frame != null) {
+                            scaleX = view.zoom
+                            scaleY = view.zoom
+                            translationX = view.offset.x
+                            translationY = view.offset.y
+                        }
                     }
                     .clip(CircleShape)
                     .background(Color.Black)

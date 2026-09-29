@@ -8,6 +8,7 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
+import java.util.Locale
 
 class BandTest {
     private val font = Fonts.source
@@ -43,6 +44,18 @@ class BandTest {
         assertEquals("480 px", PIN_480, renderer.render(full, 480).pixels.contentHashCode())
         assertEquals("960 px", PIN_960, renderer.render(full, 960).pixels.contentHashCode())
         assertEquals("sparse", PIN_SPARSE, renderer.render(sparse, 480).pixels.contentHashCode())
+    }
+
+    @Test fun theBandIgnoresTheLocalesDigits() {
+        // Arabic-Indic digits by default: the clock and date must still be ASCII, as saved files have them
+        val before = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ar-u-nu-arab"))
+            assertEquals("480 px", PIN_480, renderer.render(full, 480).pixels.contentHashCode())
+            assertEquals("sparse", PIN_SPARSE, renderer.render(sparse, 480).pixels.contentHashCode())
+        } finally {
+            Locale.setDefault(before)
+        }
     }
 
     @Test fun theLabelIsATaggedFieldOfItsOwn() {

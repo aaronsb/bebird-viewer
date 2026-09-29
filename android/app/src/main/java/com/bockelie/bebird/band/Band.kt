@@ -2,6 +2,7 @@
 package com.bockelie.bebird.band
 
 import java.time.LocalDateTime
+import java.util.Locale
 
 /** What the status band shows. Null values show as "--". */
 data class BandData(
@@ -38,6 +39,7 @@ object BandLayout {
     /** A code point placed at a cell; [cells] is 2 for a wide glyph. */
     data class Placed(val row: Int, val col: Int, val codepoint: Int, val cells: Int, val bright: Boolean)
 
+    /** Digits are always ASCII (Locale.ROOT), whatever the phone's language: saved files carry them. */
     fun fields(d: BandData): List<Field> = listOf(
         // row 0: 0 BAT 100%+ | 10 LED 100% | 19 ROLL 359° | 29 TRIM +180° | 40 FPS 11 −3 | 50 12:34:56
         Field(0, 0, 9, "BAT", d.batteryPercent?.let { "$it%" + if (d.charging) "+" else " " } ?: "-- ", Align.RIGHT),
@@ -46,10 +48,10 @@ object BandLayout {
         Field(0, 29, 10, "TRIM", (if (d.trim > 0) "+" else "") + "${d.trim}°", Align.RIGHT),
         // fps, then frames dropped in the last second if any: "11 −3"
         Field(0, 40, 9, "FPS", (d.fps?.toString() ?: "--") + if (d.droppedPerSecond > 0) " \u2212${d.droppedPerSecond}" else "", Align.RIGHT),
-        Field(0, 50, 8, "", d.time?.let { "%02d:%02d:%02d".format(it.hour, it.minute, it.second) } ?: "--:--:--", Align.RIGHT),
+        Field(0, 50, 8, "", d.time?.let { String.format(Locale.ROOT, "%02d:%02d:%02d", it.hour, it.minute, it.second) } ?: "--:--:--", Align.RIGHT),
         // row 1: 0 device (18) | 19 date | 30 LABEL text (22 cells after the tag)
         Field(1, 0, 18, "", d.device ?: "--", Align.LEFT),
-        Field(1, 19, 10, "", d.time?.let { "%04d-%02d-%02d".format(it.year, it.monthValue, it.dayOfMonth) } ?: "----------", Align.LEFT),
+        Field(1, 19, 10, "", d.time?.let { String.format(Locale.ROOT, "%04d-%02d-%02d", it.year, it.monthValue, it.dayOfMonth) } ?: "----------", Align.LEFT),
         Field(1, 30, 28, "LABEL", d.label?.ifEmpty { null } ?: "--", Align.LEFT),
     )
 

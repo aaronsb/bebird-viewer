@@ -121,4 +121,27 @@ class PixelTextTest {
             assertEquals("($x, $y)", expected, img.pixels[y * 10 + x])
         }
     }
+
+    @Test fun aMissingGlyphLeavesABlankCell() {
+        // a font with only "A" and no replacement glyph: "B" draws nothing but still takes a cell
+        val onlyA = PixelFont.parseBdf(BufferedReader(StringReader("""
+            STARTFONT 2.1
+            FONTBOUNDINGBOX 8 16 0 -4
+            STARTCHAR A
+            ENCODING 65
+            DWIDTH 8 0
+            BBX 8 16 0 -4
+            BITMAP
+            ${"FF\n".repeat(16).trim()}
+            ENDCHAR
+            ENDFONT
+        """.trimIndent())))
+        val bare = PixelText(GlyphSource(onlyA))
+        assertNull(GlyphSource(onlyA).glyph('B'.code))
+        assertEquals(16, bare.width("BA"))
+        val img = bare.draw(listOf(PixelText.Line("BA", 0, 0)), 16, 16, BandRenderer.VALUE)
+        for (y in 0 until 16) for (x in 0 until 16) {
+            assertEquals("($x, $y)", if (x >= 8) BandRenderer.VALUE else 0, img.pixels[y * 16 + x])
+        }
+    }
 }

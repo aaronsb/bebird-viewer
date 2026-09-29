@@ -71,7 +71,12 @@ class PixelText(private val font: GlyphSource) {
         for (line in lines) {
             var x = line.x
             for (cp in line.text.codePoints()) {
-                val g = font.glyph(cp) ?: continue
+                // no glyph and no replacement: a blank cell, as width() counts it
+                val g = font.glyph(cp)
+                if (g == null) {
+                    x += PixelFont.CELL
+                    continue
+                }
                 if (outline) for (dy in -1..1) for (dx in -1..1) {
                     if (dx != 0 || dy != 0) drawGlyph(px, imageW, imageH, g, x + dx, line.y + dy, 1, BandRenderer.BACKGROUND)
                 }
