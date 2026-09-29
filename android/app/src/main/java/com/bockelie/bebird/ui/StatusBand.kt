@@ -24,6 +24,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import com.bockelie.bebird.R
 import com.bockelie.bebird.band.BandData
 import com.bockelie.bebird.band.BandRenderer
+import com.bockelie.bebird.band.ViewerPalette
 
 /**
  * The space under the image for the status band or, when it is off (or its fonts are still
@@ -39,7 +40,7 @@ fun StatusBandSlot(renderer: BandRenderer?, showBand: Boolean, data: BandData, r
         val band = showBand && renderer != null
         // With the band, the whole slot is the band's black, so it joins the viewport above
         // without a strip of theme colour even when the slot is taller than the band.
-        val background = if (band) Modifier.background(Color(BandRenderer.BACKGROUND)) else Modifier
+        val background = if (band) Modifier.background(Color(LocalViewerPalette.current.field)) else Modifier
         Box(Modifier.fillMaxWidth().height(height).then(background), contentAlignment = Alignment.Center) {
             if (band) StatusBand(renderer!!, data, width) else readouts()
         }
@@ -55,7 +56,8 @@ private fun StatusBand(renderer: BandRenderer, data: BandData, width: Int) {
         val h = BandRenderer.height(width)
         BandBuffers(IntArray(width * h), Array(2) { Bitmap.createBitmap(width, h, Bitmap.Config.ARGB_8888) })
     }
-    val image = remember(data, buffers) { buffers.draw(renderer, data, width).asImageBitmap() }
+    val palette = LocalViewerPalette.current
+    val image = remember(data, buffers, palette) { buffers.draw(renderer, data, width, palette).asImageBitmap() }
     val description = bandDescription(data)
     with(LocalDensity.current) {
         Image(
@@ -71,8 +73,8 @@ private fun StatusBand(renderer: BandRenderer, data: BandData, width: Int) {
 private class BandBuffers(val pixels: IntArray, val bitmaps: Array<Bitmap>) {
     private var next = 0
 
-    fun draw(renderer: BandRenderer, data: BandData, width: Int): Bitmap {
-        val out = renderer.renderInto(data, width, pixels)
+    fun draw(renderer: BandRenderer, data: BandData, width: Int, palette: ViewerPalette): Bitmap {
+        val out = renderer.renderInto(data, width, pixels, palette)
         val bitmap = bitmaps[next]
         next = 1 - next
         bitmap.setPixels(out.pixels, 0, out.width, 0, 0, out.width, out.height)

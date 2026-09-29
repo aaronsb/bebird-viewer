@@ -64,7 +64,6 @@ import com.bockelie.bebird.annotate.PressOutcome
 import com.bockelie.bebird.annotate.Pt
 import com.bockelie.bebird.annotate.Tool
 import com.bockelie.bebird.annotate.classifyMovePress
-import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.band.toBitmap
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
@@ -137,7 +136,8 @@ fun AnnotateCanvas(
     val current by rememberUpdatedState(marks)
     val haptic = LocalHapticFeedback.current
     val picker = remember(renderer, image.width, image.height) { Picker(renderer, image.width, image.height) }
-    BoxWithConstraints(modifier.clipToBounds().background(Color(BandRenderer.BACKGROUND))) {
+    val palette = LocalViewerPalette.current  // the surround follows the live view's (#51)
+    BoxWithConstraints(modifier.clipToBounds().background(Color(palette.field))) {
         val vw = constraints.maxWidth.toFloat()
         val vh = constraints.maxHeight.toFloat()
         val fit = remember(vw, vh, image.width, image.height) { ImageFit(vw, vh, image.width, image.height) }
@@ -165,7 +165,7 @@ fun AnnotateCanvas(
                     contentDescription = null,
                     contentScale = ContentScale.FillBounds,
                     modifier = Modifier.fillMaxSize().clip(CircleShape).background(Color.Black)
-                        .then(if (outline) Modifier.border(Dp.Hairline, Color(BandRenderer.CIRCLE), CircleShape) else Modifier),
+                        .then(if (outline) Modifier.border(Dp.Hairline, Color(palette.circle), CircleShape) else Modifier),
                 )
                 // The proximity scale kept from the pause, under the marks as in the saved copy.
                 scale?.let {

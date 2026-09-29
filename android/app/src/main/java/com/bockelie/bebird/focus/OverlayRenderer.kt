@@ -24,12 +24,14 @@ class OverlayRenderer(private val font: GlyphSource) {
      * Render [shapes] into a [width] × [height] image at [f] output pixels per raw pixel, with
      * the raw point ([originX], [originY]) at the output's top left. Strokes and text are [k]
      * times their size: by default f's whole part, so they keep their look at any display size.
+     * Labels are outlined in [labelOutline]: black, except on the light theme's field (#51).
      */
     fun render(
         shapes: List<OverlayShape>, width: Int, height: Int, f: Double,
         originX: Double = 0.0, originY: Double = 0.0, k: Int = max(1, floor(f).toInt()),
+        labelOutline: Int = BLACK,
     ): PixelImage {
-        val c = Canvas(IntArray(width * height), width, height, f, originX, originY, k)
+        val c = Canvas(IntArray(width * height), width, height, f, originX, originY, k, labelOutline)
         for (s in shapes) when (s) {
             is OverlayShape.Arc -> c.arc(s)
             is OverlayShape.Line -> c.line(s)
@@ -43,6 +45,7 @@ class OverlayRenderer(private val font: GlyphSource) {
         val px: IntArray, val w: Int, val h: Int, val f: Double, val ox: Double, val oy: Double,
         /** Whole-pixel scale for stroke widths and text. */
         val k: Int,
+        val labelOutline: Int,
     ) {
         fun X(x: Double) = (x - ox) * f
         fun Y(y: Double) = (y - oy) * f
@@ -139,7 +142,7 @@ class OverlayRenderer(private val font: GlyphSource) {
                 TextAnchor.LEFT_BASELINE -> ay - BASELINE * k
             }
             // outline first (the text's pixels shifted by k in 8 directions), then the text
-            for ((ddx, ddy) in NEIGHBOURS) text(cps, left + ddx * k, top + ddy * k, BLACK)
+            for ((ddx, ddy) in NEIGHBOURS) text(cps, left + ddx * k, top + ddy * k, labelOutline)
             text(cps, left, top, l.color)
         }
 
