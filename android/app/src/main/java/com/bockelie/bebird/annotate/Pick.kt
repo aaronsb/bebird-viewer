@@ -34,30 +34,40 @@ class Picker(private val renderer: AnnotationRenderer, private val w: Int, priva
         return AnnotationRenderer.segments(m, w, h).any { distance(x, y, it) <= reach }
     }
 
-    /** What [m] covers, in image coordinates: its defining points, or a text label's drawn box. */
+    /**
+     * What [m] covers as drawn, in image coordinates: every stroke piece (arrowheads included)
+     * widened by half a stroke and the black edge, or a text label's drawn box. The highlight
+     * frames this, and moves keep it within the frame.
+     */
     fun bounds(m: Mark): Bounds {
-        val pts = when (m) {
-            is Mark.Ellipse -> listOf(m.a, m.b)
-            is Mark.Box -> listOf(m.a, m.b)
-            is Mark.Arrow -> listOf(m.from, m.to)
-            is Mark.Pen -> m.points
-            is Mark.Text -> {
-                val r = renderer.textBounds(m, w, h)
-                return Bounds(r.left.toFloat() / w, r.top.toFloat() / h, r.right.toFloat() / w, r.bottom.toFloat() / h)
-            }
+        if (m is Mark.Text) {
+            val r = renderer.textBounds(m, w, h)
+            return Bounds(r.left.toFloat() / w, r.top.toFloat() / h, r.right.toFloat() / w, r.bottom.toFloat() / h)
         }
-        return Bounds(pts.minOf { it.x }, pts.minOf { it.y }, pts.maxOf { it.x }, pts.maxOf { it.y })
+        val segs = AnnotationRenderer.segments(m, w, h)
+        val pad = AnnotationRenderer.half(w) + AnnotationRenderer.edge(w)
+        val left = segs.minOf { min(it.x0, it.x1) } - pad
+        val top = segs.minOf { min(it.y0, it.y1) } - pad
+        val right = segs.maxOf { max(it.x0, it.x1) } + pad
+        val bottom = segs.maxOf { max(it.y0, it.y1) } + pad
+        return Bounds((left / w).toFloat(), (top / h).toFloat(), (right / w).toFloat(), (bottom / h).toFloat())
     }
 
     /**
-     * [m] moved by ([dx], [dy]) image units, held within the frame. A mark already over an edge
-     * (a long label) may stay there, but never goes further out.
+     * How far [m] may move for a drag of ([dx], [dy]) image units, in whole frame pixels (so the
+     * screen can slide the mark's own pixels and the file gets exactly those): held within the
+     * frame by [clamp], rounded towards zero so it never passes the limit.
      */
-    fun moved(m: Mark, dx: Float, dy: Float): Mark {
+    fun offsetPx(m: Mark, dx: Float, dy: Float): Pair<Int, Int> {
         val b = bounds(m)
-        val cx = clamp(dx, b.left, b.right)
-        val cy = clamp(dy, b.top, b.bottom)
-        fun Pt.by() = Pt(x + cx, y + cy)
+        return (clamp(dx, b.left, b.right) * w).toInt() to (clamp(dy, b.top, b.bottom) * h).toInt()
+    }
+
+    /** [m] moved by ([px], [py]) frame pixels. */
+    fun shifted(m: Mark, px: Int, py: Int): Mark {
+        val dx = px.toFloat() / w
+        val dy = py.toFloat() / h
+        fun Pt.by() = Pt(x + dx, y + dy)
         return when (m) {
             is Mark.Ellipse -> m.copy(a = m.a.by(), b = m.b.by())
             is Mark.Box -> m.copy(a = m.a.by(), b = m.b.by())
@@ -67,12 +77,21 @@ class Picker(private val renderer: AnnotationRenderer, private val w: Int, priva
         }
     }
 
+    /** [m] moved by a drag of ([dx], [dy]) image units, held within the frame ([offsetPx], then [shifted]). */
+    fun moved(m: Mark, dx: Float, dy: Float): Mark = offsetPx(m, dx, dy).let { (px, py) -> shifted(m, px, py) }
+
     companion object {
         /** The touch tolerance: this many dp around what is drawn still picks it. */
         const val TOUCH_DP = 24f
 
-        /** [d] limited so the span [lo, hi] stays within 0..1, or at least gets no further out. */
-        fun clamp(d: Float, lo: Float, hi: Float): Float = d.coerceIn(min(-lo, 0f), max(1f - hi, 0f))
+        /**
+         * [d] limited so the span [lo, hi] stays within 0..1. A span over an edge may stay
+         * there but gets no further out. One wider than the frame (a long label) slides until
+         * one of its ends reaches the frame's edge, rather than being stuck.
+         */
+        fun clamp(d: Float, lo: Float, hi: Float): Float =
+            if (hi - lo <= 1f) d.coerceIn(min(-lo, 0f), max(1f - hi, 0f))
+            else d.coerceIn(min(1f - hi, 0f), max(-lo, 0f))
 
         /** Distance from ([x], [y]) to the segment [s]. */
         fun distance(x: Double, y: Double, s: AnnotationRenderer.Seg): Double {
