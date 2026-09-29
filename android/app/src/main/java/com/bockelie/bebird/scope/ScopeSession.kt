@@ -131,21 +131,27 @@ class ScopeSession(
      */
     fun powerOff(): Future<*> = end("powered off", powerOff = true)
 
+    /**
+     * Close the links without a word, instead of [stop]: for when the network has already gone
+     * (#37), so there is nothing to send STOP over. Never blocks, idempotent, like [stop].
+     */
+    fun drop(): Future<*> = end("stopped", powerOff = false, farewell = false)
+
     @Synchronized
-    private fun end(status: String, powerOff: Boolean): Future<*> {
+    private fun end(status: String, powerOff: Boolean, farewell: Boolean = true): Future<*> {
         stopDone?.let { return it }
         stopped.set(true)
         job?.cancel()
         _stats.update { it.copy(status = status, fps = 0) }
         return videoOps.submit {
-            video?.let {
+            video?.takeIf { farewell }?.let {
                 val sent = send(it, Protocol.STOP)
                 Log.i(TAG, if (sent) "STOP sent" else "STOP could not be sent (network gone?)")
                 ctrl?.takeIf { powerOff }?.let { c ->
                     Log.i(TAG, if (send(c, Protocol.powerOff())) "power off (66 3E) sent" else "power off could not be sent")
                 }
-                it.close()
             }
+            video?.close()
             ctrl?.close()
             beacon?.close()
         }.also { stopDone = it }

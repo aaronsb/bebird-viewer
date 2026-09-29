@@ -85,7 +85,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
     val book by conn.book.collectAsStateWithLifecycle()
     val inRange by conn.inRange.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val idle = wifi == ScopeWifi.State.Idle || wifi is ScopeWifi.State.Unavailable || wifi is ScopeWifi.State.Failed
+    val idle = !wifi.filed  // Connect instead of Disconnect: idle, not found, failed or lost
 
     // Every way of joining needs the permission first; the pending action runs once it's granted.
     var pending by remember { mutableStateOf<(() -> Unit)?>(null) }

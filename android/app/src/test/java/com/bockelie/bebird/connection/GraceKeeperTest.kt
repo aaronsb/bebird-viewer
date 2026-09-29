@@ -406,6 +406,43 @@ class GraceKeeperTest {
         assertEquals(1, wifi.releases.size)
     }
 
+    @Test fun aLossWhileKeptEndsTheGraceWithoutWaitingOnTheNetwork() {
+        // The scope went off in the background (#37): ScopeWifi has released the request, so
+        // there is no keepalive to keep, no STOP to send and nothing to release.
+        grace(60, powerOff = true)
+        join()
+        stream()
+        onMain { keeper.onLeave() }
+        assertEquals(1, awake)
+        val mark = links.sends().size
+        onMain { wifi.state.value = ScopeWifi.State.Lost }
+        await("the keep ended") { keeper.kept.value == null }
+        assertEquals(0, awake)
+        assertTrue(conn.decoding)
+        assertFalse(conn.isWanted)
+        timer.advance(60_000)  // the old deadline: nothing more happens
+        Thread.sleep(150)
+        assertTrue(sendsSince(mark).none { it == STOP || it == POWER_OFF })
+        assertTrue(wifi.releases.isEmpty())
+        assertEquals(ScopeWifi.State.Lost, wifi.state.value)
+    }
+
+    @Test fun leavingAfterALossKeepsTheMarkerAndClosingClearsIt() {
+        grace(60, powerOff = false)
+        join()
+        stream()
+        onMain { wifi.state.value = ScopeWifi.State.Lost }
+        await("the session ended") { !conn.isStreaming.value }
+        onMain { keeper.onLeave() }
+        Thread.sleep(100)
+        assertNull(keeper.kept.value)
+        assertEquals(0, services)
+        assertEquals(ScopeWifi.State.Lost, wifi.state.value)  // CONNECTION LOST when back
+        onMain { keeper.onClose() }
+        await("the release") { wifi.releases.isNotEmpty() }
+        assertEquals(ScopeWifi.State.Idle, wifi.state.value)
+    }
+
     @Test fun aHungStopStillTearsDownWithinTheWait() {
         // STOP never completes in time: end() gives up waiting after 1 s, the release goes ahead
         // on its own timeout, and the keeper is clean

@@ -12,7 +12,7 @@
     <string name="circle_waiting">WAITING FOR PICTURE…</string>
     <string name="circle_waiting_hint">If none comes, tap Reconnect</string>
     <string name="circle_lost">CONNECTION LOST</string>
-    <string name="circle_lost_hint">Tap Disconnect, then Connect</string>
+    <string name="circle_lost_hint">Turn the scope on, then tap Connect</string>
     <string name="circle_not_found">SCOPE NOT FOUND</string>
     <string name="circle_not_found_hint">Is it on and nearby? Tap Connect</string>
     <string name="circle_failed">COULDN’T CONNECT</string>

@@ -40,19 +40,29 @@ class CircleStatusTest {
         )
     }
 
+    @Test fun theTopButtonReadsConnectUnlessARequestIsFiled() {
+        // Connect after a loss, as after a deliberate Disconnect: the loss released the request (#37)
+        assertEquals(listOf(false, true, true, false, false, false), states.map { it.filed })
+    }
+
+    @Test fun aLossReadsDifferentlyFromADeliberateDisconnect() {
+        assertEquals(CircleStatus.NOT_CONNECTED, CircleStatus.of(ScopeWifi.State.Idle, hasFrame = false))
+        assertEquals(CircleStatus.LOST, CircleStatus.of(ScopeWifi.State.Lost, hasFrame = false))
+        assertEquals(text(CircleStatus.NOT_CONNECTED.hint), text(CircleStatus.LOST.hint))
+    }
+
     @Test fun aPictureHidesTheMessageInEveryState() {
         for (s in states) assertNull("$s", CircleStatus.of(s, hasFrame = true))
     }
 
     @Test fun theWordingNamesTheButtonOnScreen() {
-        // Connect shows while idle, not found or failed; Reconnect only works once joined;
-        // while lost the top button is Disconnect.
+        // Connect shows while idle, not found, failed or lost; Reconnect only works once joined.
         assertEquals(
             mapOf(
                 CircleStatus.NOT_CONNECTED to ("NOT CONNECTED" to "Turn the scope on, then tap Connect"),
                 CircleStatus.CONNECTING to ("CONNECTING…" to "Pick the scope if Android asks"),
                 CircleStatus.WAITING to ("WAITING FOR PICTURE…" to "If none comes, tap Reconnect"),
-                CircleStatus.LOST to ("CONNECTION LOST" to "Tap Disconnect, then Connect"),
+                CircleStatus.LOST to ("CONNECTION LOST" to "Turn the scope on, then tap Connect"),
                 CircleStatus.NOT_FOUND to ("SCOPE NOT FOUND" to "Is it on and nearby? Tap Connect"),
                 CircleStatus.FAILED to ("COULDN’T CONNECT" to "Tap Connect to try again"),
             ),
