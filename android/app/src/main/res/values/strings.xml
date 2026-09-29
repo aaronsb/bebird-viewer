@@ -108,8 +108,10 @@
     <string name="proximity_close_description">CLOSE: something is probably at the tip end</string>
     <string name="proximity_stopped">Proximity estimation stopped after an error. The viewer is unaffected; restart the app to try again.</string>
     <string name="annotate">Annotate</string>
-    <string name="annotate_hint">Paused on this frame. Drag on the picture to draw; Resume goes back to the live view.</string>
-    <string name="annotate_canvas_description">Paused picture. Drag to draw with the selected tool.</string>
+    <string name="annotate_hint_draw">Paused on this frame. Drag on the picture to draw; Resume goes back to the live view.</string>
+    <string name="annotate_hint_text">Paused on this frame. Tap where the text should start; Resume goes back to the live view.</string>
+    <string name="annotate_saving">Saving…</string>
+    <string name="annotate_canvas_description">Paused picture. Drag to draw, or tap to place text, with the selected tool.</string>
     <string name="annotate_ellipse">Ellipse</string>
     <string name="annotate_ellipse_short">Oval</string>
     <string name="annotate_box">Box</string>

@@ -29,7 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,25 +51,30 @@ private const val TEXT_MAX = 40
 /**
  * The controls while annotating, in place of the live ones: the tool, the colour, Undo and
  * Clear, and Resume (back to the live view, dropping unsaved marks after a confirmation) and
- * Save (both files, then back to the live view). Back does what Resume does.
+ * Save (both files, then back to the live view; on a failure the marks stay for another try).
+ * Back does what Resume does. Nothing changes while a save runs.
  */
 @Composable
 fun AnnotateControls(
-    tools: AnnotateTools, sketch: Sketch, onEdit: ((Sketch) -> Sketch) -> Unit, onResume: () -> Unit, onSave: () -> Unit,
+    tools: AnnotateTools, sketch: Sketch, saving: Boolean,
+    onEdit: ((Sketch) -> Sketch) -> Unit, onResume: () -> Unit, onSave: () -> Unit,
 ) {
-    var confirmingDiscard by remember { mutableStateOf(false) }
+    var confirmingDiscard by rememberSaveable { mutableStateOf(false) }
     val leave = { if (sketch.marks.isEmpty()) onResume() else confirmingDiscard = true }
-    BackHandler(onBack = leave)
+    BackHandler(enabled = !saving, onBack = leave)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.annotate_hint), style = MaterialTheme.typography.bodySmall)
+        val hint = if (tools.tool == Tool.TEXT) R.string.annotate_hint_text else R.string.annotate_hint_draw
+        Text(stringResource(if (saving) R.string.annotate_saving else hint), style = MaterialTheme.typography.bodySmall)
         ToolRow(tools.tool) { tools.tool = it }
         ColorRow(tools.color) { tools.color = it }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { onEdit(Sketch::undo) }, enabled = sketch.canUndo) { Text(stringResource(R.string.annotate_undo)) }
-            TextButton(onClick = { onEdit(Sketch::clear) }, enabled = sketch.marks.isNotEmpty()) { Text(stringResource(R.string.annotate_clear)) }
+            TextButton(onClick = { onEdit(Sketch::undo) }, enabled = !saving && sketch.canUndo) { Text(stringResource(R.string.annotate_undo)) }
+            TextButton(onClick = { onEdit(Sketch::clear) }, enabled = !saving && sketch.marks.isNotEmpty()) {
+                Text(stringResource(R.string.annotate_clear))
+            }
             Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = leave) { Text(stringResource(R.string.annotate_resume)) }
-            Button(onClick = onSave, enabled = sketch.marks.isNotEmpty()) { Text(stringResource(R.string.save)) }
+            OutlinedButton(onClick = leave, enabled = !saving) { Text(stringResource(R.string.annotate_resume)) }
+            Button(onClick = onSave, enabled = !saving && sketch.marks.isNotEmpty()) { Text(stringResource(R.string.save)) }
         }
     }
     tools.textAt?.let { at ->
@@ -147,7 +152,7 @@ private fun ColorRow(color: Int, onColor: (Int) -> Unit) {
 
 @Composable
 private fun TextLabelDialog(onDone: (String) -> Unit, onCancel: () -> Unit) {
-    var text by remember { mutableStateOf("") }
+    var text by rememberSaveable { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text(stringResource(R.string.annotate_text_title)) },

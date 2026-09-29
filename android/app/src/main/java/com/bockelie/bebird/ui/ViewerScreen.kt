@@ -11,10 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -22,19 +19,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,31 +38,24 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,16 +63,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bockelie.bebird.R
 import com.bockelie.bebird.connection.ScopeConnection
-import com.bockelie.bebird.control.LightControl
 import com.bockelie.bebird.control.RollFilter
 import com.bockelie.bebird.devices.DeviceBook
 import com.bockelie.bebird.devices.KnownDevice
 import com.bockelie.bebird.focus.ScaleOverlay
-import com.bockelie.bebird.focus.ScaleStyle
 import com.bockelie.bebird.scope.ScopeSession
 import com.bockelie.bebird.wifi.ScopeWifi
 import java.time.LocalDateTime
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 /** Joining a network by specifier needs this permission: nearby devices on 13+, location before. */
@@ -94,7 +77,6 @@ internal val wifiPermission =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.NEARBY_WIFI_DEVICES
     else Manifest.permission.ACCESS_FINE_LOCATION
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ViewerScreen(vm: ViewerViewModel) {
     val conn = vm.connection
@@ -167,7 +149,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
     // Annotate (#16): a paused frame replaces the live view, and its tools the live controls.
     val annotating by vm.annotating.collectAsStateWithLifecycle()
     val annotationRenderer by vm.annotationRenderer.collectAsStateWithLifecycle()
-    val annotateTools = remember { AnnotateTools() }
+    val annotateTools = rememberSaveable(saver = AnnotateTools.Saver) { AnnotateTools() }
 
     val stoppedNotice = stringResource(R.string.proximity_stopped)
     LaunchedEffect(proximityStopped) { if (vm.proximity.takeStoppedNotice()) snackbar.showSnackbar(stoppedNotice) }
@@ -232,58 +214,17 @@ fun ViewerScreen(vm: ViewerViewModel) {
             val paused = annotating
             if (paused != null) {
                 AnnotateControls(
-                    annotateTools, paused.sketch, onEdit = vm::editAnnotations, onResume = vm::resumeLive, onSave = vm::saveAnnotated,
+                    annotateTools, paused.sketch, saving = paused.progress.saving,
+                    onEdit = vm::editAnnotations, onResume = vm::resumeLive, onSave = vm::saveAnnotated,
                 )
             } else {
-                // The scale style lives here, above Light; greyed out (keeping its value, and the
-                // row's height) while proximity estimation is off.
-                ScaleRow(proximityState.style, enabled = proximityState.enabled, onStyle = vm.proximity.options::setStyle)
-                LightRow(light, onToggle = conn::toggleLight, onLevel = conn::setLight)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // The switch and its label are one control, so TalkBack names it.
-                    Row(
-                        Modifier.weight(1f).toggleable(value = autoRotate, role = Role.Switch, onValueChange = vm::setAutoRotate),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Switch(checked = autoRotate, onCheckedChange = null)
-                        Text(stringResource(R.string.auto_rotate), Modifier.padding(start = 8.dp))
-                    }
-                    val minus = stringResource(R.string.trim_minus_description)
-                    val plus = stringResource(R.string.trim_plus_description)
-                    TextButton(onClick = { vm.stepTrim(-1) }, modifier = Modifier.semantics { contentDescription = minus }) {
-                        Text(stringResource(R.string.trim_minus))
-                    }
-                    Text(
-                        stringResource(R.string.trim_value, signed(trim, 4)),
-                        style = MaterialTheme.typography.bodyMedium.merge(tabular),
-                    )
-                    TextButton(onClick = { vm.stepTrim(1) }, modifier = Modifier.semantics { contentDescription = plus }) {
-                        Text(stringResource(R.string.trim_plus))
-                    }
-                }
-                LabelRow(label, onEdit = { editingLabel = true }, onClear = { vm.setLabel("") })
-                // Wraps onto a second line on a narrow screen rather than squeezing the buttons.
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Only while frames are arriving; captures never talk to the scope.
-                    // canPowerOff is ScopeConnection.isStreaming: this session has shown a frame
-                    val streaming = canPowerOff && stats.frame != null
-                    FilledTonalButton(
-                        onClick = { vm.snapshot(zoomView.zoom, stats.frame?.let { zoomView.crop(it.width) }) },
-                        enabled = streaming,
-                    ) { Text(stringResource(R.string.snapshot)) }
-                    RecordButton(recordingSince, enabled = streaming, onClick = vm::toggleRecording)
-                    // Not while recording: the file would carry on behind the paused view.
-                    FilledTonalButton(
-                        onClick = { annotateTools.textAt = null; vm.startAnnotating(zoomView.zoom) },
-                        enabled = streaming && recordingSince == null && annotationRenderer != null,
-                    ) { Text(stringResource(R.string.annotate)) }
-                    FilesButton(vm, snackbar)
-                    Spacer(Modifier.weight(1f))
-                    OutlinedButton(onClick = conn::reconnect, enabled = online) {
-                        Icon(Icons.Default.Refresh, contentDescription = null)
-                        Text(stringResource(R.string.reconnect), Modifier.padding(start = 4.dp))
-                    }
-                }
+                // Only while frames are arriving; captures never talk to the scope.
+                // canPowerOff is ScopeConnection.isStreaming: this session has shown a frame
+                LiveControls(
+                    vm, zoomView, snackbar, frame = stats.frame, streaming = canPowerOff && stats.frame != null,
+                    onEditLabel = { editingLabel = true },
+                    onAnnotate = { annotateTools.textAt = null; vm.startAnnotating(zoomView.zoom) },
+                )
             }
         }
     }
@@ -427,9 +368,7 @@ private fun statusLine(wifi: ScopeWifi.State, s: ScopeSession.Stats): String {
 internal val tabular = TextStyle(fontFeatureSettings = "tnum")
 
 /** [n] right-aligned in [width] characters, padded with figure spaces (as wide as a digit). */
-private fun fixed(n: Int, width: Int) = n.toString().padStart(width, '\u2007')
-
-private fun signed(n: Int, width: Int) = (if (n > 0) "+$n" else "$n").padStart(width, '\u2007')
+internal fun fixed(n: Int, width: Int) = n.toString().padStart(width, '\u2007')
 
 @Composable
 private fun Readouts(s: ScopeSession.Stats, roll: Int) {
@@ -444,101 +383,5 @@ private fun Readouts(s: ScopeSession.Stats, roll: Int) {
         Text(stringResource(R.string.fps_value, fixed(s.fps, 2)), style = style)
         Text(stringResource(R.string.roll_value, fixed(roll, 3)), style = style)
         Text(stringResource(R.string.dropped_value, fixed(s.dropped, 5)), style = style)
-    }
-}
-
-@Composable
-private fun LightRow(light: ScopeConnection.Light, onToggle: () -> Unit, onLevel: (Int) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Row(
-            Modifier.toggleable(value = light.level > 0, role = Role.Switch, onValueChange = { onToggle() }),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Switch(checked = light.level > 0, onCheckedChange = null)
-            Text(stringResource(R.string.light), Modifier.padding(horizontal = 8.dp))
-        }
-        val levelName = stringResource(R.string.light_level)
-        val levelState = stringResource(R.string.light_level_state, light.level)
-        Slider(
-            value = light.level.toFloat(),
-            onValueChange = { onLevel(it.roundToInt()) },
-            valueRange = 0f..100f,
-            modifier = Modifier.weight(1f).semantics {
-                contentDescription = levelName
-                stateDescription = levelState
-            },
-        )
-        Text(
-            fixed(light.level, 3) + "%",
-            style = MaterialTheme.typography.bodyMedium.merge(tabular),
-            modifier = Modifier.padding(start = 8.dp),
-        )
-        // Whether the scope confirmed the level (read back after it was sent).
-        val (mark, what) = when (val st = light.status) {
-            LightControl.Status.Idle -> "\u2007" to R.string.light_idle
-            LightControl.Status.Pending, is LightControl.Status.Verifying -> "…" to R.string.light_verifying
-            is LightControl.Status.Confirmed -> "✓" to R.string.light_confirmed
-            is LightControl.Status.Mismatch -> "!" to R.string.light_mismatch
-        }
-        val desc = stringResource(what)
-        Text(
-            mark,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.width(20.dp).padding(start = 4.dp).semantics { contentDescription = desc },
-        )
-    }
-}
-
-
-/**
- * The label, like Trim a control of its own: the current text (or a prompt) opens the editing
- * dialog, and a clear button next to it. Its height doesn't depend on the text.
- */
-@Composable
-private fun LabelRow(label: String, onEdit: () -> Unit, onClear: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(stringResource(R.string.label), Modifier.padding(end = 8.dp))
-        val description = if (label.isEmpty()) stringResource(R.string.label_add) else stringResource(R.string.label_edit_description, label)
-        OutlinedButton(
-            onClick = onEdit,
-            modifier = Modifier.weight(1f).semantics { contentDescription = description },
-        ) {
-            Text(
-                label.ifEmpty { stringResource(R.string.label_add) },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        // Disabled rather than hidden when there's nothing to clear, so the row never changes shape.
-        IconButton(onClick = onClear, enabled = label.isNotEmpty()) {
-            Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.label_clear))
-        }
-    }
-}
-
-/** The proximity scale's style: Ring / Bowtie / Bar / Off, as one segmented control. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ScaleRow(style: ScaleStyle, enabled: Boolean, onStyle: (ScaleStyle) -> Unit) {
-    val options = listOf(
-        ScaleStyle.RING to R.string.proximity_scale_ring,
-        ScaleStyle.BOWTIE to R.string.proximity_scale_bowtie,
-        ScaleStyle.BAR to R.string.proximity_scale_bar,
-        ScaleStyle.NONE to R.string.proximity_scale_off,
-    )
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(stringResource(R.string.proximity_scale), Modifier.padding(end = 8.dp).alpha(if (enabled) 1f else 0.38f))
-        SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
-            options.forEachIndexed { i, (s, name) ->
-                SegmentedButton(
-                    selected = style == s,
-                    onClick = { onStyle(s) },
-                    enabled = enabled,
-                    shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
-                    icon = {},  // no check mark: the labels keep their width
-                ) { Text(stringResource(name), maxLines = 1) }
-            }
-        }
     }
 }
