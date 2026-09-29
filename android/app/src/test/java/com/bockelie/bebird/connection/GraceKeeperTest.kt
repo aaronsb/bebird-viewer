@@ -285,14 +285,14 @@ class GraceKeeperTest {
     }
 
     @Test fun quitWhileStreamingPowersOffWhateverTheSettings() {
-        // Quit (#38): power off and release before returning, even with a grace period set and
-        // power-off at its end turned off; then the app closes and finds nothing left to end
+        // Quit (#38): power off and release, even with a grace period set and power-off at its
+        // end turned off; then the app closes and finds nothing left to end
         grace(600, powerOff = false)
         poweringOff = true
         join()
         stream()
         onMain { keeper.quit() }
-        assertEquals(1, wifi.releases.size)  // done before quit() returns
+        assertTrue(conn.awaitRelease(2000))  // the caller's wait, off the main thread
         assertReleasedAfter(STOP, POWER_OFF)
         assertEquals(0, services)
         assertNull(keeper.kept.value)
@@ -305,11 +305,25 @@ class GraceKeeperTest {
         assertEquals(requests, wifi.starts.size)
     }
 
+    @Test fun quitDoesNotWaitForTheReleaseOnTheMainThread() {
+        grace(0, powerOff = false)
+        poweringOff = true  // Quit switches the scope off whatever the setting
+        join()
+        stream()
+        wifi.releaseMs = 500  // a slow release
+        val t0 = System.nanoTime()
+        onMain { keeper.quit() }
+        val tookMs = (System.nanoTime() - t0) / 1_000_000
+        assertTrue("quit() took $tookMs ms", tookMs < 300)
+        assertTrue(conn.awaitRelease(2000))
+        assertReleasedAfter(STOP, POWER_OFF)
+    }
+
     @Test fun quitBeforeVideoOnlyDisconnects() {
         grace(600, powerOff = true)
         join()  // START sent, no frame yet: the scope isn't known to be listening
         onMain { keeper.quit() }
-        assertEquals(1, wifi.releases.size)
+        assertTrue(conn.awaitRelease(2000))
         assertReleasedAfter(STOP)
         assertTrue(links.sends().none { it.bytes == POWER_OFF })
     }

@@ -14,12 +14,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -169,7 +167,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // The device selector: what Connect goes to, and where devices are managed.
-                OutlinedButton(onClick = { choosing = true }, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = { choosing = true }, modifier = Modifier.weight(1f), contentPadding = TopRowPadding) {
                     Text(book.last?.label ?: stringResource(R.string.no_device), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Icon(Icons.Default.ArrowDropDown, contentDescription = stringResource(R.string.choose_device))
                 }
@@ -189,21 +187,17 @@ fun ViewerScreen(vm: ViewerViewModel) {
                         Text(stringResource(R.string.disconnect))
                     }
                 }
-                val holdToQuit = stringResource(R.string.hold_to_quit)
+                // Icon only, to leave the selector room; the words say whether it switches the scope off.
+                val holdToQuit = stringResource(if (canPowerOff) R.string.hold_to_quit_power_off else R.string.hold_to_quit)
                 HoldButton(
                     Hold.QUIT_MS,
-                    onHeld = {
-                        vm.quit()
-                        (context as? Activity)?.finishAndRemoveTask()
-                    },
+                    onHeld = { vm.quit { (context as? Activity)?.finishAndRemoveTask() } },
                     onTap = { hint(holdToQuit) },
-                    description = stringResource(R.string.quit_description),
+                    description = stringResource(if (canPowerOff) R.string.quit_power_off else R.string.quit),
                     colors = ButtonDefaults.filledTonalButtonColors(),
                     contentPadding = TopRowPadding,
                 ) {
-                    Icon(painterResource(R.drawable.ic_power), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                    Text(stringResource(R.string.quit))
+                    Icon(painterResource(R.drawable.ic_power), contentDescription = null)
                 }
                 val theme by vm.theme.collectAsStateWithLifecycle()
                 val connectionSettings by vm.connectionSettings.collectAsStateWithLifecycle()

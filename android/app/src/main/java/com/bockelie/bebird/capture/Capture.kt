@@ -18,6 +18,7 @@ import com.bockelie.bebird.band.toBitmap
 import com.bockelie.bebird.band.toPixelImage
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -159,9 +160,12 @@ class Capture(resolver: ContentResolver) {
         }
     }
 
-    /** Stop recording; the start's `ended` callback gets the result ("no recording" if none). */
-    fun stopRecording(ifNone: (Result) -> Unit) = worker.execute {
-        if (recorder == null) return@execute ifNone(Result.Failed("recording", "no recording"))
+    /**
+     * Stop recording; the start's `ended` callback gets the result ("no recording" if none). The
+     * returned future completes once the file is finished (published, or failed).
+     */
+    fun stopRecording(ifNone: (Result) -> Unit): Future<*> = worker.submit {
+        if (recorder == null) return@submit ifNone(Result.Failed("recording", "no recording"))
         end(null)
     }
 

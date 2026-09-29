@@ -5,9 +5,10 @@
     <string name="connect">Connect</string>
     <string name="disconnect">Disconnect</string>
     <string name="quit">Quit</string>
-    <string name="quit_description">Turn the scope off and quit</string>
+    <string name="quit_power_off">Turn the scope off and quit</string>
     <string name="hold_to_disconnect">Hold to disconnect</string>
-    <string name="hold_to_quit">Hold to turn the scope off and quit</string>
+    <string name="hold_to_quit">Hold to quit</string>
+    <string name="hold_to_quit_power_off">Hold to turn the scope off and quit</string>
     <!-- The empty image circle (#32), in the band's font: see CircleStatus for which button each hint names. -->
     <string name="circle_not_connected">NOT CONNECTED</string>
     <string name="circle_not_connected_hint">Turn the scope on, then tap Connect</string>

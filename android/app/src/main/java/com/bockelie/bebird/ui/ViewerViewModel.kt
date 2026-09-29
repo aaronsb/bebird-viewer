@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZonedDateTime
+import java.util.concurrent.Future
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bockelie.bebird.BebirdApp
@@ -308,7 +309,9 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         CaptureFolder.plan(capture.hasCaptures(), LocalDate.now(), capture::hasCapturesIn)
     }
 
-    fun toggleRecording() = if (_recordingSince.value == null) startRecording() else stopRecording()
+    fun toggleRecording() {
+        if (_recordingSince.value == null) startRecording() else stopRecording()
+    }
 
     private fun startRecording() {
         // never behind a paused view: the recording would carry on unseen
@@ -330,20 +333,25 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Finish the recording, if any (also when leaving the app: recording is foreground-only for now). */
-    fun stopRecording() {
-        if (_recordingSince.value == null) return
+    /**
+     * Finish the recording, if any (also when leaving the app: recording is foreground-only for
+     * now). Returns the file's completion, or null if nothing was recording.
+     */
+    fun stopRecording(): Future<*>? {
+        if (_recordingSince.value == null) return null
         _recordingSince.value = null  // the UI stops at once; the file is finished on the worker
-        capture.stopRecording { _captureResults.tryEmit(it) }
+        return capture.stopRecording { _captureResults.tryEmit(it) }
     }
+
+    private val quitting = QuitSequence(viewModelScope, Dispatchers.IO, ::stopRecording, grace::quit, connection::awaitRelease)
 
     /**
      * The Quit button (#38): finish any recording, then end the connection now, switching the
-     * scope off if video had started; no grace period. The caller then closes the activity.
+     * scope off if video had started (no grace period), then [exit] once the network is released.
+     * Once only.
      */
-    fun quit() {
-        stopRecording()
-        grace.quit()
+    fun quit(exit: () -> Unit) {
+        quitting.start(exit)
     }
 
     override fun onCleared() {
