@@ -147,6 +147,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
     val proximityResult by vm.proximity.result.collectAsStateWithLifecycle()
     val overlayRenderer by vm.overlayRenderer.collectAsStateWithLifecycle()
     var editingProximity by remember { mutableStateOf(false) }
+    val proximityStopped by vm.proximity.stopped.collectAsStateWithLifecycle()
     if (editingProximity) {
         val options = vm.proximity.options
         ProximityDialog(
@@ -154,6 +155,9 @@ fun ViewerScreen(vm: ViewerViewModel) {
             onDismiss = { editingProximity = false },
         )
     }
+
+    val stoppedNotice = stringResource(R.string.proximity_stopped)
+    LaunchedEffect(proximityStopped) { if (proximityStopped) snackbar.showSnackbar(stoppedNotice) }
 
     Scaffold(modifier = Modifier.fillMaxSize(), snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         Column(

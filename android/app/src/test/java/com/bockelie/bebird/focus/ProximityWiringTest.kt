@@ -100,6 +100,42 @@ class ProximityWiringTest {
         assertTrue(hook.offer(0.3, 0) {})  // and the hook isn't stuck busy
     }
 
+    @Test fun errorsTooAreCaughtNotJustExceptions() {
+        // the device crash: a StackOverflowError (an Error) escaped `catch (Exception)`
+        val gate = ProximityGate { FrameEstimator { _, _, _ -> throw StackOverflowError() } }.apply { setEnabled(true) }
+        val errors = mutableListOf<Throwable>()
+        val hook = ProximityFrames(gate, { it.run() }, onError = { errors += it }) { results += it }
+        hook.offer(0.0, 0) {}  // must not throw
+        assertTrue(errors.single() is StackOverflowError)
+        assertEquals(listOf<FocusResult?>(null), results)
+        assertTrue(gate.enabled)  // started over
+    }
+
+    @Test fun afterThreeFailuresInTenSecondsItStopsForTheSession() {
+        var now = 0L
+        val gate = ProximityGate { FrameEstimator { _, _, _ -> throw IllegalStateException() } }.apply { setEnabled(true) }
+        var gaveUp = 0
+        val hook = ProximityFrames(gate, { it.run() }, onGiveUp = { gaveUp++ }, clockMs = { now }) { results += it }
+        hook.offer(0.0, 0) {}; now += 3_000
+        hook.offer(0.1, 0) {}; now += 3_000
+        assertEquals(0, gaveUp)
+        hook.offer(0.2, 0) {}  // the third within 10 s
+        assertEquals(1, gaveUp)
+        assertTrue(hook.gaveUp)
+        assertFalse(gate.enabled)
+        assertFalse(hook.offer(0.3, 0) {})  // nothing more this session
+        assertEquals(3, hook.errors)
+    }
+
+    @Test fun failuresFarApartDontAddUp() {
+        var now = 0L
+        val gate = ProximityGate { FrameEstimator { _, _, _ -> throw IllegalStateException() } }.apply { setEnabled(true) }
+        val hook = ProximityFrames(gate, { it.run() }, clockMs = { now }) { results += it }
+        repeat(6) { hook.offer(it.toDouble(), 0) {}; now += 6_000 }  // one every 6 s: never 3 within 10 s
+        assertFalse(hook.gaveUp)
+        assertTrue(gate.enabled)
+    }
+
     @Test fun anErrorAfterSwitchingOffDoesntSwitchItBackOn() {
         val gate = ProximityGate { FrameEstimator { _, _, _ -> throw IllegalStateException() } }.apply { setEnabled(true) }
         val pending = ArrayDeque<Runnable>()

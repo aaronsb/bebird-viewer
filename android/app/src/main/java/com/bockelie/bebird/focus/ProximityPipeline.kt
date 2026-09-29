@@ -27,10 +27,19 @@ class ProximityPipeline(connection: ScopeConnection, kv: KeyValue, scope: Corout
     private val _result = MutableStateFlow<FocusResult?>(null)
     val result: StateFlow<FocusResult?> = _result.asStateFlow()
 
+    private val _stopped = MutableStateFlow(false)
+    /** Estimation stopped for this session after repeated errors (the setting stays on). */
+    val stopped: StateFlow<Boolean> = _stopped.asStateFlow()
+
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "bebird-proximity").apply { isDaemon = true } }
     private val frames = ProximityFrames(
         gate, worker::execute,
-        onError = { Log.e(TAG, "proximity estimator failed; starting it over (${it.javaClass.simpleName})", it) },
+        onError = { Log.e(TAG, "proximity estimator failed (${it.javaClass.simpleName})", it) },
+        onGiveUp = {
+            Log.e(TAG, "proximity estimator keeps failing: stopped for this session")
+            _result.value = null
+            _stopped.value = true
+        },
         // a result from a frame already queued when estimation was turned off is dropped
     ) { r -> _result.value = r.takeIf { gate.enabled } }
 
