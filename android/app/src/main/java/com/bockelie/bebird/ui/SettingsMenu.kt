@@ -40,9 +40,10 @@ import com.bockelie.bebird.settings.Labels
 import com.bockelie.bebird.settings.ThemeMode
 
 /**
- * The gear menu: the overlay (status band and circle), the theme, and last Power off scope,
- * which works only once video has started ([onPowerOff] should ask for confirmation first).
- * It takes values and callbacks only, so it can be previewed and extended.
+ * The gear menu: the overlay (status band and circle), the theme, the connection settings
+ * (see [ConnectionDialog]), and last Power off scope, which works only once video has started
+ * ([onPowerOff] should ask for confirmation first). It takes values and callbacks only, so it can
+ * be previewed and extended.
  */
 @Composable
 fun SettingsMenu(
@@ -52,10 +53,14 @@ fun SettingsMenu(
     onOverlay: (Boolean) -> Unit,
     showScopeId: Boolean,
     onShowScopeId: (Boolean) -> Unit,
+    connection: ConnectionSettings,
+    onConnection: (ConnectionSettings) -> Unit,
     canPowerOff: Boolean,
     onPowerOff: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    if (editing) ConnectionDialog(connection, onConnection, onDone = { editing = false })
     Box {
         IconButton(onClick = { open = true }) {
             Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
@@ -94,6 +99,10 @@ fun SettingsMenu(
                 )
             }
             HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.connection_settings)) },
+                onClick = { open = false; editing = true },
+            )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.power_off_title)) },
                 enabled = canPowerOff,

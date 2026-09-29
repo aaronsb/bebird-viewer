@@ -28,4 +28,19 @@ class SettingsTest {
         assertEquals(180, s.trim)
         assertEquals(ThemeMode.SYSTEM, s.theme)
     }
+
+    @Test fun gracePeriodDefaultsToAMinuteWithPowerOff() {
+        val kv = MemoryKeyValue()
+        val s = Settings(kv)
+        assertEquals(60, s.graceSeconds)
+        assertEquals(true, s.powerOffAfterGrace)
+        s.graceSeconds = 0
+        assertEquals(0, s.graceSeconds)
+        s.graceSeconds = 600
+        s.powerOffAfterGrace = false
+        assertEquals(600, Settings(kv).graceSeconds)
+        assertEquals(false, Settings(kv).powerOffAfterGrace)
+        kv.putInt("grace_s", 45)  // not one of the choices
+        assertEquals(60, s.graceSeconds)
+    }
 }

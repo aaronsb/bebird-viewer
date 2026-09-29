@@ -37,9 +37,9 @@ import java.util.concurrent.Future
  * The scope connection: the Wi-Fi request, the video session on it, and the remembered
  * devices. A session starts when the scope's network becomes available and stops when it is
  * lost or on [disconnect]; the network request is released only after the session's STOP has
- * gone out (see [NetworkGate]). Owned by the ViewModel for now; it only needs a Context and a
- * scope, so a foreground service can own it instead when the app keeps the connection in the
- * background (#18). Not thread-safe: call it from the main thread.
+ * gone out (see [NetworkGate]). One per app (see [com.bockelie.bebird.BebirdApp]), shared by
+ * the screen and the service that keeps it through the background grace period (#18, see
+ * [GraceKeeper]). Not thread-safe: call it from the main thread.
  */
 class ScopeConnection(
     private val wifi: WifiControl,
@@ -83,6 +83,14 @@ class ScopeConnection(
     // The request the user last asked for; null after disconnect(). A fallback runs only for it,
     // so a late Unavailable can't file a request after Disconnect or leaving the app.
     private var wanted: Target? = null
+    // The request connectOnLaunch() made: if it finds nothing (scope off), no fallback, since
+    // that could show Android's picker nobody asked for.
+    private var quiet: Target? = null
+    /** Called when the connection lets go on its own while not decoding (see [GraceKeeper]). */
+    var onLetGo: (() -> Unit)? = null
+
+    /** A connection was asked for and not ended since: something to keep in the background. */
+    val isWanted: Boolean get() = wanted != null
 
     private val light = LightControl(settings.light, settings.lightBeforeOff, lightTiming)
     private var lightJob: Job? = null  // wakes pumpLight() when the light control is next due
@@ -103,7 +111,18 @@ class ScopeConnection(
                     is ScopeWifi.State.Available -> if (wanted != null) startSession(state)
                     is ScopeWifi.State.Unavailable -> {
                         stopSession()
-                        if (state.target == wanted) fallBack(state.target)
+                        if (state.target == wanted) {
+                            // In the background a new request could show Android's picker over
+                            // another app: let go instead (the grace period then just ends).
+                            when {
+                                !decoding -> {
+                                    disconnect()
+                                    onLetGo?.invoke()
+                                }
+                                state.target == quiet -> Log.i(TAG, "last device not found at launch; staying idle")
+                                else -> fallBack(state.target)
+                            }
+                        }
                     }
                     else -> stopSession()
                 }
@@ -121,6 +140,27 @@ class ScopeConnection(
 
     /** Join the last device by its exact SSID/BSSID, or show the picker if there is none. */
     fun connect() = request(_book.value.last?.let { Target.Exact(it.ssid, it.bssid) } ?: Target.AnyScope)
+
+    /**
+     * At launch (if [Settings.autoConnect]): connect to the last device, as [connect] does, but
+     * only by its exact BSSID, so Android shows no picker, and without the fallback if it isn't
+     * found. Nothing if no such device is remembered, or a connection is already wanted (kept
+     * through the grace period).
+     */
+    fun connectOnLaunch() {
+        if (!settings.autoConnect || wanted != null) return
+        val sincePowerOff = clock() - settings.poweredOffAt
+        if (sincePowerOff in 0 until POWER_OFF_QUIET_MS) {
+            // it may still be shutting down: a new session would send STOP/START after its 66 3E
+            Log.i(TAG, "powered off $sincePowerOff ms ago: not connecting at launch")
+            return
+        }
+        val last = _book.value.last?.takeIf { it.bssid != null } ?: return
+        Log.i(TAG, "connecting to the last device at launch")
+        val t = Target.Exact(last.ssid, last.bssid)
+        request(t)
+        quiet = t
+    }
 
     fun connectTo(ssid: String, bssid: String?) = request(Target.Exact(ssid, bssid))
 
@@ -160,6 +200,9 @@ class ScopeConnection(
         gate.disconnect(stopSession())
     }
 
+    /** Wait up to [timeoutMs] for the network release after [disconnect] or [powerOff]. */
+    fun awaitRelease(timeoutMs: Long): Boolean = gate.awaitRelease(timeoutMs)
+
     /**
      * Switch the scope off (see [ScopeSession.powerOff]), then release the network once that
      * has gone out, as [disconnect] does; the device stays remembered. Only once video has
@@ -172,6 +215,7 @@ class ScopeConnection(
         Log.i(TAG, "power off")
         wanted = null
         gate.disconnect(stopSession(ScopeSession::powerOff, "powered off"))
+        settings.poweredOffAt = clock()
         return true
     }
 
@@ -190,6 +234,7 @@ class ScopeConnection(
     private fun request(t: Target, why: String? = null) {
         disconnect()  // whatever is filed or streaming now; the gate orders the new request after it
         wanted = t
+        quiet = null
         gate.connect { wifi.start(t, why) }
     }
 
@@ -231,7 +276,7 @@ class ScopeConnection(
         edit { it.seen(result.ssid, result.bssid, System.currentTimeMillis(), result.bssidConfirmed) }
     }
 
-    /** Whether sessions decode frames; off while the app is covered (see ExternalLaunch). */
+    /** Whether sessions decode frames; off while the app is away (see [GraceKeeper]). */
     var decoding = true
         set(value) {
             field = value
@@ -302,5 +347,7 @@ class ScopeConnection(
         private const val TAG = "BebirdSpike"
         // A dead link can't hold up the release for longer than this.
         private const val STOP_TIMEOUT_MS = 1000L
+        // No connecting at launch this soon after a power-off (the process may have been restarted).
+        private const val POWER_OFF_QUIET_MS = 10_000L
     }
 }

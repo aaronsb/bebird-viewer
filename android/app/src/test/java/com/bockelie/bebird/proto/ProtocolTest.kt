@@ -72,8 +72,10 @@ class ProtocolTest {
         assertEquals(listOf("ScopeSession.kt"), files(ref))
         assertEquals(1, count("ScopeSession.kt", ref))
         // Any other mention of powerOff (with(Protocol) { powerOff() }, an alias) shows up here. The
-        // UI and ScopeConnection call ScopeConnection/ScopeSession.powerOff, the fenced path.
-        assertEquals(listOf("Protocol.kt", "ScopeConnection.kt", "ScopeSession.kt", "ViewerScreen.kt"), files(Regex("""\bpowerOff\b""")))
+        // UI, ScopeConnection and GraceKeeper (the end of the grace period, #18/#19) call
+        // ScopeConnection/ScopeSession.powerOff, the fenced path.
+        assertEquals(listOf("GraceKeeper.kt", "Protocol.kt", "ScopeConnection.kt", "ScopeSession.kt", "ViewerScreen.kt"), files(Regex("""\bpowerOff\b""")))
+        assertEquals(1, count("GraceKeeper.kt", Regex("""connection\.powerOff\(\)""")))
 
         // 0x3E in any case, anywhere: only Protocol's one. If a new one isn't 66 3E (a glyph, a
         // colour), allow-list its file here.

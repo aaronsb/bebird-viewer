@@ -70,4 +70,36 @@ class Settings(private val kv: KeyValue) {
     var theme: ThemeMode
         get() = ThemeMode.entries.firstOrNull { it.name == kv.getString("theme", "") } ?: ThemeMode.SYSTEM
         set(v) = kv.putString("theme", v.name)
+    /**
+     * How long the connection is kept after leaving the app (#18), in seconds; one of
+     * [GRACE_CHOICES], 0 meaning it ends at once.
+     */
+    var graceSeconds: Int
+        get() = kv.getInt("grace_s", 60).takeIf { it in GRACE_CHOICES } ?: 60
+        set(v) = kv.putInt("grace_s", v.takeIf { it in GRACE_CHOICES } ?: 60)
+    /**
+     * When the app lets go of the scope (the end of the grace period, or closing the app), switch
+     * it off rather than only disconnecting (#19).
+     */
+    var powerOffAfterGrace: Boolean
+        get() = kv.getBoolean("power_off_after_grace", true)
+        set(v) = kv.putBoolean("power_off_after_grace", v)
+
+    /**
+     * When the app last powered the scope off, on the connection's clock (monotonic since boot;
+     * a value from before a reboot is ignored), so a launch right after doesn't reconnect.
+     */
+    var poweredOffAt: Long
+        get() = kv.getString("powered_off_at", "").toLongOrNull() ?: Long.MIN_VALUE
+        set(v) = kv.putString("powered_off_at", v.toString())
+
+    /** At launch, connect to the last device, if its exact BSSID is known (no picker). */
+    var autoConnect: Boolean
+        get() = kv.getBoolean("auto_connect", true)
+        set(v) = kv.putBoolean("auto_connect", v)
+
+    companion object {
+        /** Immediately, 30 s, 1, 2, 5 and 10 min. */
+        val GRACE_CHOICES = listOf(0, 30, 60, 120, 300, 600)
+    }
 }
