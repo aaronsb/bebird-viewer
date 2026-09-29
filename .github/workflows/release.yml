@@ -43,9 +43,16 @@ jobs:
         run: |
           version=$(sed -nE 's/^ *versionName = "([^"]+)".*/\1/p' android/app/build.gradle.kts)
           test -n "$version" || { echo "::error::no versionName in android/app/build.gradle.kts"; exit 1; }
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match versionName $version"
-            exit 1
+          # vX.Y.Z is the release of versionName X.Y.Z; vX.Y.Z-rc.N is a pre-release of it, for a
+          # rehearsal (docs/building.md#rehearsing-a-release).
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag_version=${GITHUB_REF_NAME#v}
+            rc=${tag_version#"$version"-rc.}
+            if [ "$tag_version" != "$version" ] && { [ "$rc" = "$tag_version" ] || ! [[ $rc =~ ^[0-9]+$ ]]; }; then
+              echo "::error::tag $GITHUB_REF_NAME does not match versionName $version"
+              exit 1
+            fi
+            version=$tag_version
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -138,7 +145,7 @@ jobs:
           if [ "$PUBLISH" = true ]; then
             echo "$committed" | grep -qxE '[0-9a-f]{64}' || { echo "::error::$keys has no Android certificate SHA-256"; exit 1; }
             [ "$committed" = "$actual" ] || { echo "::error::$keys lists certificate '$committed', the APK is signed with $actual"; exit 1; }
-            echo "$gpg_fpr" | grep -qxE '[0-9A-Fa-f]{40}' || { echo "::error::$keys has no GPG fingerprint"; exit 1; }
+            echo "$gpg_fpr" | grep -qxE '[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64}' || { echo "::error::$keys has no GPG fingerprint"; exit 1; }
           fi
           echo "cert=$actual" >> "$GITHUB_OUTPUT"
 
@@ -203,6 +210,7 @@ jobs:
 
           \`$CERT\`
           EOF
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "bebird-viewer $VERSION" \
+          case "$VERSION" in *-rc.*) pre=(--prerelease) ;; *) pre=() ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "bebird-viewer $VERSION" "${pre[@]}" \
             --notes-file "$notes" "${generate[@]}" \
             "out/$apk" "out/$apk.sha256" LICENSE LICENSES/Apache-2.0.txt

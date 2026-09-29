@@ -12,7 +12,7 @@ EXCLUDES := $(addprefix --exclude-module PyQt6.,QtWebEngineCore QtWebEngineWidge
             QtMultimedia QtPdf QtSql QtTest QtDesigner QtBluetooth QtPositioning QtSensors)
 
 .PHONY: help venv run app app-image app-lock install uninstall \
-        android-image android-test android-apk android-release android-release-sign android-release-verify \
+        android-image android-test android-apk android-release android-release-sign android-release-sign-check android-release-verify \
         android-lock android-shell release-sign clean distclean
 .DEFAULT_GOAL := help
 
@@ -117,6 +117,7 @@ android-release-sign: android-image  ## sign the release APK offline with BEBIRD
 	@test -f "$(BEBIRD_KEYSTORE)" || { echo "BEBIRD_KEYSTORE: no such file: $(BEBIRD_KEYSTORE)"; exit 1; }
 	@test -f $(UNSIGNED_APK) || { echo "$(UNSIGNED_APK) not found: run 'make android-release' first"; exit 1; }
 	rm -f $(SIGNED_APK) $(SIGNED_APK).idsig
+	@ls -A $(RELEASE_DIR) > $(FILES_BEFORE)
 	$(DOCKER_RUN) --network none -v "$(abspath $(RELEASE_DIR)):/apk" -v "$(abspath $(BEBIRD_KEYSTORE)):$(KEYSTORE_IN):ro" \
 		-e BEBIRD_KEYSTORE_PASSWORD -e BEBIRD_KEY_ALIAS -e BEBIRD_KEY_PASSWORD $(DROID_IMAGE) sh -ec '\
 		$(BUILD_TOOLS)/zipalign -c 4 /apk/$(notdir $(UNSIGNED_APK)); \
@@ -124,7 +125,31 @@ android-release-sign: android-image  ## sign the release APK offline with BEBIRD
 			--ks-pass env:BEBIRD_KEYSTORE_PASSWORD --key-pass env:BEBIRD_KEY_PASSWORD \
 			--v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true \
 			--v4-signing-enabled false --out /apk/$(notdir $(SIGNED_APK)) /apk/$(notdir $(UNSIGNED_APK))'
+	@$(check_signed)
 	@$(call verify_apk,$(SIGNED_APK))
+
+# Signing must only add signatures. v2/v3 live in the APK Signing Block, outside the zip entries,
+# so the signed APK's entries (names and CRC-32s) must equal the unsigned one's, and the signer
+# must have written nothing but app-release.apk. Anything else, key material smuggled into the
+# APK or a stray file, fails the build.
+FILES_BEFORE := $(RELEASE_DIR)/../release-files.before
+apk_entries   = $(DOCKER_RUN) --network none -v "$(abspath $(RELEASE_DIR)):/apk:ro" $(DROID_IMAGE) \
+	unzip -v "/apk/$(notdir $(1))" | awk '/^--------/ {n++; next} n == 1 {$$1 = $$2 = $$3 = $$4 = $$5 = $$6 = ""; print}'
+define check_signed
+set -e; t=$$(mktemp -d); trap 'rm -rf "$$t"' EXIT; \
+{ cat $(FILES_BEFORE); echo $(notdir $(SIGNED_APK)); } | LC_ALL=C sort > "$$t/want"; \
+ls -A $(RELEASE_DIR) | LC_ALL=C sort > "$$t/got"; \
+diff "$$t/want" "$$t/got" || { echo "signing left unexpected files in $(RELEASE_DIR)"; exit 1; }; \
+$(call apk_entries,$(UNSIGNED_APK)) > "$$t/unsigned"; \
+$(call apk_entries,$(SIGNED_APK)) > "$$t/signed"; \
+test -s "$$t/unsigned" || { echo "couldn't list $(UNSIGNED_APK)"; exit 1; }; \
+diff "$$t/unsigned" "$$t/signed" || { echo "signing changed the APK's zip entries"; exit 1; }; \
+echo "$(notdir $(SIGNED_APK)): same $$(wc -l < "$$t/signed") zip entries as the unsigned APK, nothing else written"
+endef
+
+# The check alone, for testing it against a tampered APK.
+android-release-sign-check: android-image
+	@$(check_signed)
 
 android-release-verify: android-image  ## check an APK's v2/v3 signature, print its certificate and SHA-256: APK=path
 	@test -f "$(APK)" || { echo "usage: make android-release-verify APK=path/to/app.apk"; exit 1; }
@@ -140,12 +165,14 @@ android-lock: android-image  ## re-record android/gradle/verification-metadata.x
 # Runs on your machine: it needs your gpg-agent and gh login, and uses the build image only for an
 # offline apksigner. The release workflow never sees the GPG key. Before signing, it checks the
 # published APK itself, independently of CI: its SHA-256 against the .sha256 (which must name
-# exactly this APK) and its signing certificate against docs/release-keys.txt.
+# exactly this APK) and its signing certificate against docs/release-keys.txt. UPLOAD=0 does all
+# of that and the signature but keeps the .asc locally instead of uploading it (a rehearsal).
 RELEASE_KEYS = docs/release-keys.txt
+UPLOAD ?= 1
 REL_TAG = v$(VERSION)
 REL_APK = bebird-$(VERSION).apk
-release-sign: android-image  ## GPG-sign a published release's .sha256 and upload the .asc: VERSION=X.Y.Z [GPG_KEY=id]
-	@echo "$(VERSION)" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+' || { echo "usage: make release-sign VERSION=X.Y.Z [GPG_KEY=key id]"; exit 1; }
+release-sign: android-image  ## GPG-sign a published release's .sha256 and upload the .asc: VERSION=X.Y.Z [GPG_KEY=id] [UPLOAD=0]
+	@echo "$(VERSION)" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' || { echo "usage: make release-sign VERSION=X.Y.Z[-rc.N] [GPG_KEY=key id] [UPLOAD=0]"; exit 1; }
 	@set -e; \
 	pin=$$(sed -nE 's/^Android certificate SHA-256: *//p' "$(RELEASE_KEYS)" | tr -d ':[:space:]' | tr 'A-F' 'a-f'); \
 	echo "$$pin" | grep -qxE '[0-9a-f]{64}' || { echo "$(RELEASE_KEYS): no Android certificate SHA-256 yet"; exit 1; }; \
@@ -162,8 +189,8 @@ release-sign: android-image  ## GPG-sign a published release's .sha256 and uploa
 	gpg --armor --detach-sign $(if $(GPG_KEY),--local-user "$(GPG_KEY)") \
 		--output "$$d/$(REL_APK).sha256.asc" "$$d/$(REL_APK).sha256"; \
 	gpg --verify "$$d/$(REL_APK).sha256.asc" "$$d/$(REL_APK).sha256"; \
-	gh release upload "$(REL_TAG)" "$$d/$(REL_APK).sha256.asc"; \
-	echo "uploaded $(REL_APK).sha256.asc to $(REL_TAG)"
+	if [ "$(UPLOAD)" = 0 ]; then trap - EXIT; echo "not uploaded (UPLOAD=0): $$d/$(REL_APK).sha256.asc"; \
+	else gh release upload "$(REL_TAG)" "$$d/$(REL_APK).sha256.asc"; echo "uploaded $(REL_APK).sha256.asc to $(REL_TAG)"; fi
 
 android-shell: android-image  ## open a shell in the Android build container
 	$(DOCKER_RUN) -it -v "$(CURDIR)/android:/work" -v $(GRADLE_VOL):/home/builder/.gradle $(DROID_IMAGE) bash

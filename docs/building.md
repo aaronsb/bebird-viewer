@@ -11,7 +11,7 @@ Both builds run in Docker containers, never directly on your machine, so you nee
 | `make android-release-sign` | sign it offline with the release key |
 | `make android-release-verify APK=…` | check an APK's signature and print its certificate and SHA-256 |
 | `make android-lock` | re-record the Gradle dependency checksums (see [Dependency verification](#dependency-verification)) |
-| `make release-sign VERSION=…` | GPG-sign a published release's checksum (on your machine; see [Cutting a release](#cutting-a-release)) |
+| `make release-sign VERSION=…` | GPG-sign a published release's checksum (on your machine; see [Cutting a release](#cutting-a-release)); `UPLOAD=0` for a rehearsal |
 | `make android-shell` | open a shell in the Android build container |
 | `make clean` | remove build output (desktop and Android) |
 | `make distclean` | also remove `.venv`, the Gradle cache volume and the build images |
@@ -43,6 +43,8 @@ make android-lock
 
 which resolves everything afresh for the tasks CI runs (tests, debug and release APKs) and records the new checksums. It records whatever it downloads, so review the diff: it should add or change only the artifacts you meant to.
 
+The checksums cover those tasks in the Linux build container, which is how every build here runs. Other tasks (`lint`, `connectedAndroidTest`) and builds on other hosts (Android Studio on macOS or Windows pulls different `aapt2` artifacts) resolve artifacts that aren't listed, and fail verification until they're added: add the task to `android-lock`'s list, or run Gradle with `--write-verification-metadata sha256` on that host, and review the diff the same way.
+
 ## Release builds
 
 Building and signing are separate steps, so the Gradle build, which runs plugins and dependencies with network access, never sees the signing key:
@@ -54,7 +56,7 @@ make android-release-sign   # sign it offline
 
 `make android-release` builds `app-release-unsigned.apk` into `android/app/build/outputs/apk/release/`. It is shrunk and obfuscated by R8 (rules in [`android/app/proguard-rules.pro`](../android/app/proguard-rules.pro)), and the build checks that it still carries every asset in `android/app/required-assets.txt`, as it does for the debug APK. Android won't install an unsigned APK, and the release is never signed with the debug key.
 
-`make android-release-sign` signs it into `app-release.apk` in a container with no network that sees only that directory and the keystore (read-only). It checks the APK is zip-aligned, signs with `apksigner` (v2 and v3 signatures; v3 allows rotating to a new key later; no v1, which only Android 6 and older need), then prints the verification, the signing certificate and the APK's SHA-256. It reads the key from these environment variables:
+`make android-release-sign` signs it into `app-release.apk` in a container with no network that sees only that directory and the keystore (read-only). It checks the APK is zip-aligned and signs with `apksigner` (v2 and v3 signatures; v3 allows rotating to a new key later; no v1, which only Android 6 and older need). Then it checks that signing only added signatures: the signed APK must have the same zip entries, by name and CRC-32, as the unsigned one (v2 and v3 signatures sit in the APK Signing Block, outside the entries), and the directory must hold nothing new but `app-release.apk`. Last, it prints the verification, the signing certificate and the APK's SHA-256. It reads the key from these environment variables:
 
 | Variable | Value |
 |---|---|
@@ -95,27 +97,44 @@ Android now requires apps on certified devices to come from a verified developer
 
 ### GitHub environment and secrets
 
-The [release workflow](../.github/workflows/release.yml) reads the key from the secrets of a GitHub environment named `release`, and only its sign job uses that environment. Restrict the environment to release tags, so no other workflow, branch or manual run on a branch can read the key:
+The [release workflow](../.github/workflows/release.yml) reads the key from the secrets of a GitHub environment named `release`, and only its sign job uses that environment. Set it up in this order, **before** setting any secret or pushing a release tag: a workflow that refers to an environment that doesn't exist yet creates it, with no rules at all.
 
-```sh
-repo=aaronsb/bebird-viewer
-gh api -X PUT repos/$repo/environments/release \
-    -F 'deployment_branch_policy[protected_branches]=false' \
-    -F 'deployment_branch_policy[custom_branch_policies]=true'
-gh api -X POST repos/$repo/environments/release/deployment-branch-policies -f name='v*.*.*' -f type=tag
-```
+1. Create the environment, limited to release tags and with you as a required reviewer, so every signing run waits for your approval. You are the only reviewer, so self-review must stay allowed:
 
-(In the web UI: Settings → Environments → New environment `release` → Deployment branches and tags → Selected branches and tags → add a tag rule `v*.*.*`.) You can also add yourself as a required reviewer there, so every signing run waits for your approval.
+   ```sh
+   repo=aaronsb/bebird-viewer
+   me=$(gh api user -q .id)
+   gh api -X PUT repos/$repo/environments/release --input - <<EOF
+   {"reviewers": [{"type": "User", "id": $me}], "prevent_self_review": false,
+    "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
+   EOF
+   gh api -X POST repos/$repo/environments/release/deployment-branch-policies -f name='v*.*.*' -f type=tag
+   ```
 
-Then set the secrets and the variable in that environment. The keystore goes in from its file, and for the passwords `gh` prompts, so no value lands in your shell history:
+   In the web UI: Settings → Environments → New environment `release`; tick Required reviewers and add yourself; under Deployment branches and tags choose Selected branches and tags and add a tag rule `v*.*.*`.
 
-```sh
-base64 -w0 ~/bebird-signing/bebird-release.keystore | gh secret set BEBIRD_KEYSTORE_BASE64 --env release
-gh secret set BEBIRD_KEYSTORE_PASSWORD --env release
-gh secret set BEBIRD_KEY_PASSWORD --env release
-gh secret set BEBIRD_KEY_ALIAS --env release --body bebird
-gh variable set BEBIRD_CERT_SHA256 --env release --body "<the SHA-256 fingerprint>"
-```
+2. Restrict who can create, move or delete `v*` tags, since pushing one starts a signing run. This ruleset lets only repository admins (you) do it:
+
+   ```sh
+   gh api -X POST repos/$repo/rulesets --input - <<'EOF'
+   {"name": "release tags", "target": "tag", "enforcement": "active",
+    "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+    "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
+    "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]}
+   EOF
+   ```
+
+   In the web UI: Settings → Rules → Rulesets → New ruleset → New tag ruleset; name it `release tags`, set Enforcement to Active, add Repository admin to the bypass list, target tags matching `v*`, and tick Restrict creations, Restrict updates and Restrict deletions.
+
+3. Then set the secrets and the variable in that environment. The keystore goes in from its file, and for the passwords `gh` prompts, so no value lands in your shell history:
+
+   ```sh
+   base64 -w0 ~/bebird-signing/bebird-release.keystore | gh secret set BEBIRD_KEYSTORE_BASE64 --env release
+   gh secret set BEBIRD_KEYSTORE_PASSWORD --env release
+   gh secret set BEBIRD_KEY_PASSWORD --env release
+   gh secret set BEBIRD_KEY_ALIAS --env release --body bebird
+   gh variable set BEBIRD_CERT_SHA256 --env release --body "<the SHA-256 fingerprint>"
+   ```
 
 If any of them were set at repository level earlier, remove those copies (`gh secret delete NAME`, `gh variable delete BEBIRD_CERT_SHA256`), since every workflow can read repository secrets.
 
@@ -126,7 +145,7 @@ If any of them were set at repository level earlier, remove those copies (`gh se
 [`docs/release-keys.txt`](release-keys.txt) lists the two fingerprints users check a release against:
 
 - **Android certificate SHA-256**: the release key's certificate fingerprint (from `keytool -list -v`, above). It must match `BEBIRD_CERT_SHA256`.
-- **GPG fingerprint**: the maintainer's GPG key, as `gpg --fingerprint` prints it. The public key is at <https://github.com/aaronsb.gpg>; publish it on [keys.openpgp.org](https://keys.openpgp.org) too if you like.
+- **GPG fingerprint**: the maintainer's GPG key, as `gpg --fingerprint` prints it (40 hex digits, or 64 for a v5/v6 key). The public key is at <https://github.com/aaronsb.gpg>; publish it on [keys.openpgp.org](https://keys.openpgp.org) too if you like.
 
 Both start as `TODO`. Fill them in, in a commit on `main`, before the first release: a tag push fails while either is missing or the certificate doesn't match the APK, and `make release-sign` refuses to sign without the certificate. The release notes quote both.
 
@@ -158,6 +177,24 @@ GPG never runs in CI; the private key stays on your machine. `make release-sign`
 - Only then does it make a detached ASCII-armoured signature of the `.sha256` (`gpg --armor --detach-sign`; `GPG_KEY` picks a key other than the default), check it, and upload it as `bebird-X.Y.Z.apk.sha256.asc`.
 
 To try the workflow without publishing, run it by hand (Actions → Release → Run workflow, or `gh workflow run release.yml --ref <ref>`). It uploads the APK as a workflow artifact only: signed when run on a `v*.*.*` tag, which the `release` environment allows, and unsigned on any other ref.
+
+### Rehearsing a release
+
+`make release-sign` runs for real only after a release is public, so rehearse the whole path once before the first release, with a pre-release tag. A tag `vX.Y.Z-rc.N`, where `X.Y.Z` is the current `versionName`, goes through the same workflow and publishes a GitHub pre-release named `bebird-X.Y.Z-rc.N`, signed with the release key:
+
+```sh
+git tag -s v0.1.0-rc.1 -m "bebird-viewer 0.1.0-rc.1 (rehearsal)"
+git push origin v0.1.0-rc.1
+# approve the sign job, wait for the pre-release, then:
+make release-sign VERSION=0.1.0-rc.1 UPLOAD=0   # every check and the GPG signature, no upload
+```
+
+`UPLOAD=0` prints where it left the `.asc`. Check it and the pre-release's files as in [Verifying a release](#verifying-a-release), and install the APK on a device. When it all holds, delete the rehearsal:
+
+```sh
+gh release delete v0.1.0-rc.1 --cleanup-tag --yes
+git tag -d v0.1.0-rc.1
+```
 
 ### Verifying a release
 

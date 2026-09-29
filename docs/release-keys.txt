@@ -1,5 +1,6 @@
 # The keys that sign bebird-viewer releases (docs/building.md#release-keys). The maintainer fills
 # these in before the first release; the release workflow and `make release-sign` refuse to go on
-# while either is TODO. Fingerprints are hex; colons and spaces are ignored.
+# while either is TODO. Fingerprints are hex (GPG: 40 digits, or 64 for a v5/v6 key); colons and
+# spaces are ignored.
 Android certificate SHA-256: TODO
 GPG fingerprint: TODO
