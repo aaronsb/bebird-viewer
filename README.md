@@ -3,7 +3,7 @@
 A viewer for **Bebird "ES" Wi-Fi otoscope / ear cameras** that works without the vendor app, an account, or an internet connection. It talks only to the scope, over the scope's own Wi-Fi. There is an Android app and a Linux desktop app.
 
 <p>
-<img src="docs/media/android-ring.webp" alt="The Android app streaming a close-up of a ruler. Cyan rings of an approximate mm scale, labelled ⌀2 to ⌀10, surround a small crosshair in the centre, with a yellow CLOSE warning top left. Above the picture are the scope selector, Disconnect, a power button and a settings gear; below it the status band, the Scale selector set to Ring, Light at 100%, Auto-rotate with trim, a Label field reading Ruler, and Snapshot, Record, Annotate and Files buttons." width="270">
+<img src="docs/media/android-ring.webp" alt="The Android app streaming a close-up of a ruler. Teal rings of an approximate mm scale, labelled ⌀2 to ⌀10, surround a small crosshair in the centre, with a yellow CLOSE warning top left. Above the picture are the scope selector, Disconnect, a power button and a settings gear; below it the status band, the Scale selector set to Ring, Light at 100%, Auto-rotate with trim, a Label field reading Ruler, and Snapshot, Record, Annotate and Files buttons." width="270">
 <img src="docs/media/android-annotate.webp" alt="The Android app in annotate mode on the same ruler picture: a yellow oval around one gap between the ruler's marks, a red arrow pointing at it, and the red text 1 mm. Below are the tools Oval, Box, Arrow, Pen and Text, five colours, Undo, Clear, a move tool, Resume and Save." width="270">
 </p>
 
@@ -23,9 +23,13 @@ Android 10 or later. What you can do:
 
 | Ring | Bowtie | Bar |
 |---|---|---|
-| <img src="docs/media/scale-ring.webp" alt="Five cyan rings, labelled ⌀2 to ⌀10 mm, around a centre crosshair over a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="docs/media/scale-bowtie.webp" alt="A cyan bowtie with arcs at ⌀2 to ⌀10 mm across a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="docs/media/scale-bar.webp" alt="A cyan bar marked 0 to 10 whose ticks line up with the ruler's mm marks, and a yellow CLOSE warning top left" width="200"> |
+| <img src="docs/media/scale-ring.webp" alt="Five teal rings, labelled ⌀2 to ⌀10 mm, around a centre crosshair over a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="docs/media/scale-bowtie.webp" alt="A teal bowtie with arcs at ⌀2 to ⌀10 mm across a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="docs/media/scale-bar.webp" alt="A teal bar marked 0 to 10 whose ticks line up with the ruler's mm marks, and a yellow CLOSE warning top left" width="200"> |
 
 The CLOSE warning and the mm scale are estimates. They come from focus (how sharp the picture is), movement and brightness in the picture, and the scope's motion sensor; the scope has no distance sensor. They can be wrong, so always rely on common sense to operate the scope safely; the indicators never replace that.
+
+<img src="docs/media/android-light.webp" alt="The Android app in the light theme: a Bar scale in solid teal over a ruler, a CLOSE warning with a dark-amber label top left, the APPROXIMATE SCALE note top right, and a light-grey field and status band around the picture. The controls below use the light theme too." width="270">
+
+In the light theme, the area around the picture and the status band turn light on screen. Saved pictures always keep the dark band.
 
 ### Getting started
 
