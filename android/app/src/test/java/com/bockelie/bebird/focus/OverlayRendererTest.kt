@@ -52,6 +52,52 @@ class OverlayRendererTest {
         assertEquals(0, img.at(240, 240))  // the centre is left clear
     }
 
+    @Test fun theCrosshairMarksTheCentreAndLeavesItClear() {
+        val locked = ring(locked = true)
+        for ((dx, dy) in listOf(10 to 0, -10 to 0, 0 to 10, 0 to -10)) assertEquals("($dx, $dy)", ScaleOverlay.LOCK, locked.at(240 + dx, 240 + dy))
+        // locked arms are 2 px thick, like the locked rings: rows 240-241, columns 239-240
+        for (x in listOf(230, 250)) assertEquals(listOf(0, ScaleOverlay.LOCK, ScaleOverlay.LOCK, 0), (239..242).map { locked.at(x, it) })
+        for (y in listOf(230, 250)) assertEquals(listOf(0, ScaleOverlay.LOCK, ScaleOverlay.LOCK, 0), (238..241).map { locked.at(it, y) })
+        for (d in listOf(0, 1, 2)) assertEquals("gap $d", 0, locked.at(240 + d, 240))
+        assertEquals("past the arm", 0, locked.at(240 + 20, 240))
+        assertEquals("not diagonal", 0, locked.at(240 + 10, 240 + 10))
+        val unlocked = ring(locked = false)
+        assertEquals(ScaleOverlay.GREY, unlocked.at(240 + 10, 240))
+        assertEquals(ScaleOverlay.GREY, unlocked.at(240, 240 - 10))
+    }
+
+    @Test fun linesAreAsThickAsRingsOfTheSameWidth() {
+        val shapes = listOf(
+            OverlayShape.Line(100.0, 240.0, 380.0, 240.0, ScaleOverlay.LOCK, 2, false),  // horizontal
+            OverlayShape.Line(120.0, 100.0, 120.0, 380.0, ScaleOverlay.LOCK, 2, false),  // vertical
+            OverlayShape.Arc(240.0, 240.0, 100.0, 0.0, 360.0, 0.0, ScaleOverlay.LOCK, 2),
+        )
+        for ((f, px) in listOf(1.0 to 2, 2.0 to 4)) {
+            val img = renderer.render(shapes, (480 * f).toInt(), (480 * f).toInt(), f)
+            fun column(x: Int, ys: IntRange) = ys.count { img.at(x, it) == ScaleOverlay.LOCK }
+            fun row(y: Int, xs: IntRange) = xs.count { img.at(it, y) == ScaleOverlay.LOCK }
+            val s = f.toInt()
+            assertEquals("horizontal line at f=$f", px, column(300 * s, 200 * s until 280 * s))
+            assertEquals("vertical line at f=$f", px, row(300 * s, 100 * s until 130 * s))
+            assertEquals("ring at f=$f", px, column(240 * s, 130 * s until 150 * s))  // its top, 100 above the centre
+        }
+    }
+
+    @Test fun barTicksAreEvenOnAFractionalScale() {
+        // a 1000-px circle: f = 2.0833, so some ticks land on whole pixels and some don't
+        val f = 1000.0 / 480
+        val img = renderer.render(ScaleOverlay.shapes(ScaleStyle.BAR, locked = true, close = false), 1000, 1000, f)
+        // a row through the ticks, 5 raw px below the bar: only the ticks cross it
+        val y = ((240 + 5) * f).toInt()
+        val runs = ArrayList<Int>()
+        var run = 0
+        for (x in 0 until 1000) {
+            if (img.at(x, y) == ScaleOverlay.LOCK) run++ else if (run > 0) { runs += run; run = 0 }
+        }
+        assertEquals(11, runs.size)
+        assertEquals(listOf(4), runs.distinct())  // centre tick ("5") as wide as the rest
+    }
+
     @Test fun ringsFollowTheDisplayScale() {
         // drawn at the screen size: 2.5 px per raw pixel puts the 1 mm ring at 100 px
         val img = ring(locked = true, f = 2.5)

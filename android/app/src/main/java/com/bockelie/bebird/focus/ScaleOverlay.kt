@@ -59,6 +59,11 @@ object ScaleOverlay {
     /** Rings (and bowtie ticks) at k mm radius for k in 1..RINGS, labelled by diameter 2k. */
     const val RINGS = 5
 
+    /** The centre crosshair's arms start this far from the centre (mm), leaving the centre point clear. */
+    const val CROSS_GAP_MM = 0.1
+    /** And end this far out (mm): well inside the ⌀2 ring's 1 mm radius. */
+    const val CROSS_ARM_MM = 0.4
+
     /** Whether [s] is part of CLOSE (the triangle or its label) rather than of the scale. */
     fun isClose(s: OverlayShape) = s is OverlayShape.Warning || (s is OverlayShape.Label && s.text == CLOSE_LABEL)
 
@@ -100,6 +105,7 @@ object ScaleOverlay {
                 }
                 val d = RINGS * pxPerMm * 0.72
                 out += OverlayShape.Label(c + d + 6, c - d - 6, TOLERANCE_LABEL, TextAnchor.LEFT_BOTTOM, col)
+                out += crosshair(c, pxPerMm, col, w)
             }
             ScaleStyle.BOWTIE -> {
                 val r0 = 0.5 * pxPerMm
@@ -134,6 +140,7 @@ object ScaleOverlay {
                     }
                 }
                 out += OverlayShape.Label(c + 3.2 * pxPerMm, c + r1 * s15 + 6, TOLERANCE_LABEL, TextAnchor.LEFT_TOP, col)
+                out += crosshair(c, pxPerMm, col, w)
             }
             ScaleStyle.BAR -> {
                 // straight scale through the centre, to lay along a ruler: a tick per mm, long every 5
@@ -157,5 +164,23 @@ object ScaleOverlay {
             out += OverlayShape.Label(x + s + 8, y + s * 0.45, CLOSE_LABEL, TextAnchor.LEFT_MIDDLE, WARNING)
         }
         return java.util.Collections.unmodifiableList(out)
+    }
+
+    /**
+     * A small crosshair at the centre ([center], [center]) of the ring and bowtie scales, to line
+     * things up against (#36): four arms, up, down, left and right, from [CROSS_GAP_MM] to
+     * [CROSS_ARM_MM] out. Upright; no label. In the scale's [col]our and [w]idth, but solid even
+     * unlocked: arms this short would show one dash or none.
+     */
+    fun crosshair(center: Double, pxPerMm: Double, col: Int, w: Int): List<OverlayShape> {
+        val a = CROSS_GAP_MM * pxPerMm
+        val b = CROSS_ARM_MM * pxPerMm
+        val c = center
+        return listOf(
+            OverlayShape.Line(c - b, c, c - a, c, col, w, false),
+            OverlayShape.Line(c + a, c, c + b, c, col, w, false),
+            OverlayShape.Line(c, c - b, c, c - a, col, w, false),
+            OverlayShape.Line(c, c + a, c, c + b, col, w, false),
+        )
     }
 }

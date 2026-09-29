@@ -28,16 +28,51 @@ class ScaleOverlayTest {
     }
 
     @Test fun bowtieHasTwoWedgesWithATickPerMillimetre() {
-        val dashed = ScaleOverlay.shapes(ScaleStyle.BOWTIE, locked = false, close = false)
+        val dashed = ScaleOverlay.shapes(ScaleStyle.BOWTIE, locked = false, close = false) - crosshair(locked = false).toSet()
         assertEquals(24, dashed.filterIsInstance<Line>().size)  // 4 edges × 6 dashes
         val ticks = dashed.filterIsInstance<Arc>()
         assertEquals(10, ticks.size)
         assertTrue(ticks.all { it.endDeg - it.startDeg == 30.0 && it.dashDeg == 0.0 })
         assertEquals(setOf(-15.0, 165.0), ticks.map { it.startDeg }.toSet())
-        val solid = ScaleOverlay.shapes(ScaleStyle.BOWTIE, locked = true, close = false).filterIsInstance<Line>()
+        val solid = (ScaleOverlay.shapes(ScaleStyle.BOWTIE, locked = true, close = false) - crosshair(locked = true).toSet()).filterIsInstance<Line>()
         assertEquals(4, solid.size)
         val edge = solid.first()
         assertEquals(240 + 210 * Math.cos(Math.toRadians(-15.0)), edge.x1, 1e-9)
+    }
+
+    private fun crosshair(locked: Boolean) =
+        ScaleOverlay.crosshair(240.0, ScaleOverlay.PX_PER_MM, if (locked) ScaleOverlay.LOCK else ScaleOverlay.GREY, if (locked) 2 else 1)
+
+    @Test fun theCrosshairIsFourShortArmsRoundTheCentre() {
+        // 0.1 to 0.4 mm out at 40 px/mm: 4 to 16 px, well inside the ⌀2 ring (radius 40)
+        assertEquals(
+            listOf(
+                Line(224.0, 240.0, 236.0, 240.0, ScaleOverlay.GREY, 1, false),
+                Line(244.0, 240.0, 256.0, 240.0, ScaleOverlay.GREY, 1, false),
+                Line(240.0, 224.0, 240.0, 236.0, ScaleOverlay.GREY, 1, false),
+                Line(240.0, 244.0, 240.0, 256.0, ScaleOverlay.GREY, 1, false),
+            ),
+            crosshair(locked = false),
+        )
+        val locked = crosshair(locked = true)
+        assertTrue(locked.all { it is Line && it.color == ScaleOverlay.LOCK && it.width == 2 && !it.outlined })
+    }
+
+    @Test fun ringAndBowtieHaveTheCrosshairBarAndNoneDont() {
+        for (locked in listOf(false, true)) {
+            for (style in listOf(ScaleStyle.RING, ScaleStyle.BOWTIE)) {
+                val s = ScaleOverlay.shapes(style, locked, close = false)
+                assertTrue("$style locked=$locked", s.containsAll(crosshair(locked)))
+            }
+            for (style in listOf(ScaleStyle.BAR, ScaleStyle.NONE)) {
+                val s = ScaleOverlay.shapes(style, locked, close = true)
+                assertTrue("$style locked=$locked", crosshair(locked).none { it in s })
+            }
+        }
+        // the ring scale itself: only the crosshair is a Line, and no "0" label joins the ⌀ labels
+        val ring = ScaleOverlay.shapes(ScaleStyle.RING, locked = false, close = false)
+        assertEquals(crosshair(locked = false), ring.filterIsInstance<Line>())
+        assertTrue(ring.filterIsInstance<Label>().none { it.text == "0" })
     }
 
     @Test fun barHasElevenOutlinedTicksLongEveryFive() {
