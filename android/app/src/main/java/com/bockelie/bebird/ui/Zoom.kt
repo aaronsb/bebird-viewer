@@ -393,7 +393,7 @@ private fun CloseLayer(close: List<OverlayShape>, renderer: OverlayRenderer, sid
     val palette = LocalViewerPalette.current
     // the label in the palette's warning colour and halo; the triangle keeps its own colours
     val shapes = remember(close, palette) { closeInPalette(close, palette) }
-    val image = rendered(shapes, k) {
+    val image = rendered(shapes to palette.halo, k) {
         renderer.render(shapes, CLOSE_W * k, CLOSE_H * k, k.toDouble(), CLOSE_X, CLOSE_Y, labelOutline = palette.halo)
             .toBitmap().asImageBitmap()
     } ?: return
@@ -411,16 +411,17 @@ private fun CloseLayer(close: List<OverlayShape>, renderer: OverlayRenderer, sid
 }
 
 /**
- * [draw]'s image for ([shapes], [size]), rasterised off the main thread; the previous image
- * stays up until the new one is ready. A few recent ones are kept, so flipping between locked
- * and unlocked (or CLOSE on and off) reuses them instead of drawing again.
+ * [draw]'s image for ([key], [size]), rasterised off the main thread; the previous image
+ * stays up until the new one is ready. [key] names everything the drawing depends on (the
+ * shapes, and anything else such as a colour). A few recent ones are kept, so flipping between
+ * locked and unlocked (or CLOSE on and off) reuses them instead of drawing again.
  */
 @Composable
-private fun rendered(shapes: List<OverlayShape>, size: Int, draw: () -> ImageBitmap): ImageBitmap? {
-    val cache = remember(size) { BoundedCache<List<OverlayShape>, ImageBitmap>(6) }
+private fun rendered(key: Any, size: Int, draw: () -> ImageBitmap): ImageBitmap? {
+    val cache = remember(size) { BoundedCache<Any, ImageBitmap>(6) }
     var image by remember(size) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(shapes, size) {
-        image = cache[shapes] ?: withContext(Dispatchers.Default) { draw() }.also { cache[shapes] = it }
+    LaunchedEffect(key, size) {
+        image = cache[key] ?: withContext(Dispatchers.Default) { draw() }.also { cache[key] = it }
     }
     return image
 }
