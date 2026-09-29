@@ -27,6 +27,10 @@ Android 10 or later. What you can do:
 
 The CLOSE warning and the mm scale are estimates. They come from focus (how sharp the picture is), movement and brightness in the picture, and the scope's motion sensor; the scope has no distance sensor. They can be wrong, so always rely on common sense to operate the scope safely; the indicators never replace that.
 
+<img src="docs/media/android-light.webp" alt="The Android app in the light theme: a Bar scale in solid teal over a ruler, a CLOSE warning with a dark-amber label top left, the APPROXIMATE SCALE note top right, and a light-grey field and status band around the picture. The controls below use the light theme too." width="270">
+
+In the light theme, the area around the picture and the status band turn light on screen. Saved pictures always keep the dark band.
+
 ### Getting started
 
 1. Turn the scope on.

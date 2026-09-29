@@ -11,6 +11,7 @@ From top to bottom:
 - **Top row:** the device selector, **Connect** / **Disconnect**, the power button (Quit), and the settings menu (gear).
 - **Status line:** the Wi-Fi and stream state.
 - **Picture:** the live video in a circle, rotated upright, with pinch-zoom. When there is no picture, the circle says why (for example NOT CONNECTED, CONNECTING…, CONNECTION LOST) and what to do next.
+- **BATTERY LOW** in red at the upper left, under CLOSE's place, while a picture is shown and the scope's battery is low (see [Battery warning](#battery-warning)).
 - **Status band** under the picture (when the overlay is on), in a fixed-layout bitmap font: battery, light, roll, trim, fps, time, and the label.
 - **Scale:** Ring, Bowtie, Bar or Off (see [Proximity and mm scale](#proximity-and-mm-scale)).
 - **Light:** on/off switch and slider. The level is sent once you stop moving the slider, then read back from the scope; ✓ means the scope confirmed it.
@@ -28,9 +29,18 @@ At launch it connects to the last device on its own, when that device can be joi
 
 **Reconnect** restarts the video session.
 
+## Battery warning
+
+**BATTERY LOW** comes on when the scope's battery is at 20 % or below and goes off again only at 25 % or above. It never shows while the scope is charging or before the first battery reading. It belongs to the scope: Reconnect or a lost and rejoined connection keeps its state, and it resets only when you switch to a different scope. It is shown on screen only and is not saved; the band already records the battery level.
+
 ## Disconnect and Quit
 
-Both act only when held; a tap shows a hint.
+Both act only when held; a tap shows a hint. A finger covers the button, so each hold vibrates while it fills:
+
+- **Disconnect:** light ticks that speed up, then one firm pulse when it completes.
+- **Quit:** a double pulse each second, stronger each time, then a long buzz when it completes.
+
+Only one hold runs at a time.
 
 - **Disconnect:** hold for 2 seconds.
 - **Quit** (the power button in the top row): hold for 5 seconds. It finishes any recording, then switches the scope off if video has started (otherwise it disconnects), releases the network, and closes the app.
@@ -106,9 +116,18 @@ How it works, and its limits: [focus-detection.md](focus-detection.md).
 - **Overlay (status band and circle)**
 - **Proximity…**: proximity estimation on/off, scale style, CLOSE indicator
 - **Show scope ID (ES-XXXXXX) in the band and saved files**
-- **Theme:** follow system, light or dark
+- **Theme:** follow system, light or dark. In the light theme the field around the picture and the status band turn light too, on screen only. Saved pictures, videos and annotated images always use the dark band.
 - **Connection…**: connect when the app starts; the grace period; power off when the app lets go of the scope
 - **Power off scope**
+
+<img src="media/android-light.webp" alt="The app in the light theme with the Bar scale over a ruler, a dark-amber CLOSE label, and a light-grey field and status band" width="270">
+
+## Screen reader
+
+- The picture is announced as "Live picture", with the zoom when it isn't 1× ("Live picture, zoom 2×").
+- **Zoom in**, **Zoom out** and **Reset zoom** are available as accessibility actions on the picture, in place of pinch and double-tap. They step through 1, 1.5, 2, 3, 4 and 6×, and only the actions that would do something are offered.
+- The mm scale says which scale it is and whether it is locked, for example "Ring scale, 2 to 10 millimetres, locked".
+- **BATTERY LOW** is announced politely as "Scope battery low".
 
 ## Debugging
 
