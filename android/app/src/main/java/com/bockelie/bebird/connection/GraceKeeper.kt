@@ -88,6 +88,17 @@ class GraceKeeper(
         if (_kept.value == null) leave(0) else expire()
     }
 
+    /**
+     * Quit (#38): end the connection now, whatever the grace period and the power-off setting:
+     * switch the scope off if video had started (as the menu's Power off does), and otherwise
+     * disconnect, then wait for the release. Anything kept (the service, the timer, the wake
+     * lock) ends with it. The caller then closes the app, and [onClose] finds nothing to end.
+     */
+    fun quit() {
+        Log.i(TAG, "quit")
+        end(powerOff = true)
+    }
+
     /** The screen is back: the kept session carries on, and the service stops. */
     fun onReturn() {
         cover.returned()

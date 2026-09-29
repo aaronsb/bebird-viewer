@@ -337,6 +337,15 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         capture.stopRecording { _captureResults.tryEmit(it) }
     }
 
+    /**
+     * The Quit button (#38): finish any recording, then end the connection now, switching the
+     * scope off if video had started; no grace period. The caller then closes the activity.
+     */
+    fun quit() {
+        stopRecording()
+        grace.quit()
+    }
+
     override fun onCleared() {
         Log.i("BebirdSpike", "ViewModel cleared")
         stopRecording()

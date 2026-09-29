@@ -2,6 +2,7 @@
 package com.bockelie.bebird.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import android.text.format.DateUtils
@@ -11,11 +12,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -25,6 +29,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,10 +54,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -71,6 +78,7 @@ import com.bockelie.bebird.scope.ScopeSession
 import com.bockelie.bebird.wifi.ScopeWifi
 import java.time.LocalDateTime
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** Joining a network by specifier needs this permission: nearby devices on 13+, location before. */
 internal val wifiPermission =
@@ -165,8 +173,37 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     Text(book.last?.label ?: stringResource(R.string.no_device), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Icon(Icons.Default.ArrowDropDown, contentDescription = stringResource(R.string.choose_device))
                 }
-                Button(onClick = { if (idle) withPermission(conn::connect) else conn.disconnect() }) {
-                    Text(stringResource(if (idle) R.string.connect else R.string.disconnect))
+                // Connect is a tap; Disconnect and Quit act only when held (#38), and a tap says so.
+                val hints = rememberCoroutineScope()
+                fun hint(text: String) = hints.launch {
+                    snackbar.currentSnackbarData?.dismiss()
+                    snackbar.showSnackbar(text)
+                }
+                if (idle) {
+                    Button(onClick = { withPermission(conn::connect) }, contentPadding = TopRowPadding) {
+                        Text(stringResource(R.string.connect))
+                    }
+                } else {
+                    val holdToDisconnect = stringResource(R.string.hold_to_disconnect)
+                    HoldButton(Hold.DISCONNECT_MS, onHeld = conn::disconnect, onTap = { hint(holdToDisconnect) }, contentPadding = TopRowPadding) {
+                        Text(stringResource(R.string.disconnect))
+                    }
+                }
+                val holdToQuit = stringResource(R.string.hold_to_quit)
+                HoldButton(
+                    Hold.QUIT_MS,
+                    onHeld = {
+                        vm.quit()
+                        (context as? Activity)?.finishAndRemoveTask()
+                    },
+                    onTap = { hint(holdToQuit) },
+                    description = stringResource(R.string.quit_description),
+                    colors = ButtonDefaults.filledTonalButtonColors(),
+                    contentPadding = TopRowPadding,
+                ) {
+                    Icon(painterResource(R.drawable.ic_power), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                    Text(stringResource(R.string.quit))
                 }
                 val theme by vm.theme.collectAsStateWithLifecycle()
                 val connectionSettings by vm.connectionSettings.collectAsStateWithLifecycle()
@@ -371,6 +408,9 @@ private fun statusLine(wifi: ScopeWifi.State, s: ScopeSession.Stats): String {
 
 /** Digits all the same width, so changing numbers don't shift the layout. */
 internal val tabular = TextStyle(fontFeatureSettings = "tnum")
+
+// Narrower than a Button's own padding, so the top row leaves the device selector some room.
+private val TopRowPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
 
 /** [n] right-aligned in [width] characters, padded with figure spaces (as wide as a digit). */
 internal fun fixed(n: Int, width: Int) = n.toString().padStart(width, '\u2007')
