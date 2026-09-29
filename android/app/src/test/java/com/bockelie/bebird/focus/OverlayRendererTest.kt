@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package com.bockelie.bebird.focus
+
+import com.bockelie.bebird.band.Fonts
+import com.bockelie.bebird.band.PixelImage
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
+
+/** The proximity overlay's primitives drawn into a pixel buffer, the band's way. */
+class OverlayRendererTest {
+    private val renderer = OverlayRenderer(Fonts.source)
+    private val c = FrameGeometry.CENTER.toDouble()
+
+    private fun PixelImage.at(x: Int, y: Int) = pixels[y * width + x]
+
+    /** The colour at angle [deg] (clockwise from +x) on a circle of radius [r] about the centre. */
+    private fun PixelImage.onCircle(r: Double, deg: Double, f: Double = 1.0): Int {
+        val a = Math.toRadians(deg)
+        return at(((c + r * cos(a)) * f).roundToInt(), ((c + r * sin(a)) * f).roundToInt())
+    }
+
+    private fun ring(locked: Boolean, f: Double = 1.0): PixelImage {
+        val size = (FrameGeometry.SIZE * f).toInt()
+        return renderer.render(ScaleOverlay.shapes(ScaleStyle.RING, locked, close = false), size, size, f)
+    }
+
+    @Test fun writesAPreview() {
+        // For eyeballing: build/proximity-preview.ppm, each style (unlocked, locked) over grey, CLOSE on the last.
+        val tiles = listOf(ScaleStyle.RING to false, ScaleStyle.RING to true, ScaleStyle.BOWTIE to true, ScaleStyle.BAR to true)
+        val w = 480 * tiles.size
+        val out = IntArray(w * 480) { 0xFF505050.toInt() }
+        tiles.forEachIndexed { i, (style, locked) ->
+            val img = renderer.render(ScaleOverlay.shapes(style, locked, close = i == tiles.size - 1), 480, 480, 1.0)
+            for (y in 0 until 480) for (x in 0 until 480) img.at(x, y).takeIf { it != 0 }?.let { out[y * w + i * 480 + x] = it }
+        }
+        java.io.File("build/proximity-preview.ppm").outputStream().buffered().use { o ->
+            o.write("P6 $w 480 255\n".toByteArray())
+            for (p in out) { o.write(p shr 16 and 0xFF); o.write(p shr 8 and 0xFF); o.write(p and 0xFF) }
+        }
+    }
+
+    @Test fun ringsAtTheScale() {
+        val img = ring(locked = true)
+        // 1 mm radius is 40 px: the first ring, in lock colour; half-way between rings, nothing
+        assertEquals(ScaleOverlay.LOCK, img.at(240 + 40, 240))
+        assertEquals(ScaleOverlay.LOCK, img.at(240 + 120, 240))
+        assertEquals(0, img.at(240 + 60, 240))
+        assertEquals(0, img.at(240, 240))  // the centre is left clear
+    }
+
+    @Test fun ringsFollowTheDisplayScale() {
+        // drawn at the screen size: 2.5 px per raw pixel puts the 1 mm ring at 100 px
+        val img = ring(locked = true, f = 2.5)
+        assertEquals(1200, img.width)
+        assertEquals(ScaleOverlay.LOCK, img.at(600 + 100, 600))
+        assertEquals(0, img.at(600 + 150, 600))
+    }
+
+    @Test fun lockedRingsAreSolidUnlockedAreDashed() {
+        val r = 80.0  // the 2 mm ring; sample the lower half, away from the labels above
+        val locked = ring(locked = true)
+        val unlocked = ring(locked = false)
+        val angles = (5 until 175).map { it.toDouble() }
+        assertTrue(angles.all { locked.onCircle(r, it) == ScaleOverlay.LOCK })
+        val on = angles.map { unlocked.onCircle(r, it) == ScaleOverlay.GREY }
+        // dashes: on and off in runs of about DASH_DEG
+        assertTrue(on.count { it } in 60..110)
+        assertTrue(on.count { !it } in 60..110)
+        val runs = on.zipWithNext().count { (a, b) -> a != b }
+        assertTrue("runs $runs", runs >= 20)
+    }
+
+    @Test fun theDiameterLabelIsHandDrawn() {
+        // the ⌀ glyph has both a ring and a slash
+        val pixels = (0 until 16).flatMap { y -> (0 until 8).filter { x -> OverlayRenderer.diameter(x, y) }.map { x -> x to y } }
+        assertTrue(pixels.size in 12..40)
+        assertTrue(OverlayRenderer.diameter(7, 4))  // top of the slash
+        // and a label with it renders in the scale's colour
+        val img = ring(locked = true)
+        val labelRow = (240 - 40 - 14 until 240 - 40).flatMap { y -> (243 until 243 + 24).map { x -> img.at(x, y) } }
+        assertTrue(labelRow.any { it == ScaleOverlay.LOCK })
+        assertTrue(labelRow.any { it == OverlayRenderer.BLACK })  // outlined
+    }
+
+    @Test fun closeIsATriangleAndLabelAtTheUpperLeft() {
+        val shapes = ScaleOverlay.shapes(ScaleStyle.NONE, locked = false, close = true)
+        val img = renderer.render(shapes, 480, 480, 1.0)
+        // the triangle: warning yellow inside, black edge at the apex, black "!" in the middle
+        assertEquals(ScaleOverlay.WARNING, img.at(18 + 12, 16 + 34))
+        assertEquals(OverlayRenderer.BLACK, img.at(18 + 20, 16 + 20))  // the "!" bar
+        assertEquals(0, img.at(10, 10))
+        // "CLOSE" to its right
+        // anchored left-middle at (66, 34): rows 26..42
+        val label = (26 until 42).flatMap { y -> (66 until 110).map { x -> img.at(x, y) } }
+        assertTrue(label.count { it == ScaleOverlay.WARNING } > 30)
+        // nothing near the centre: CLOSE alone draws no scale
+        assertTrue((200 until 280).all { img.at(it, 240) == 0 })
+    }
+
+    @Test fun aWindowMapsRawCoordinates() {
+        // the CLOSE layer is rendered on its own, from raw (10, 8), at a whole scale
+        val shapes = ScaleOverlay.shapes(ScaleStyle.NONE, locked = false, close = true)
+        val img = renderer.render(shapes, 112 * 2, 58 * 2, 2.0, 10.0, 8.0)
+        assertEquals(ScaleOverlay.WARNING, img.at((18 + 12 - 10) * 2, (16 + 34 - 8) * 2))
+    }
+}

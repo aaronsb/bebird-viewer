@@ -95,4 +95,15 @@
     <string name="grace_then_power_off">Powers off the scope when the time is up. Tap to carry on.</string>
     <string name="grace_then_disconnect">Disconnects when the time is up. Tap to carry on.</string>
     <string name="grace_held">Kept connected while in use. Tap to carry on.</string>
+    <string name="proximity_menu">Proximity…</string>
+    <string name="proximity_title">Proximity</string>
+    <string name="proximity_enabled">Proximity estimation</string>
+    <string name="proximity_note">Estimates from image sharpness whether something is at the tip end, and draws a mm scale when it can. Best effort, shown on screen only; saved files don\'t include it.</string>
+    <string name="proximity_scale">Scale</string>
+    <string name="proximity_scale_ring">Ring</string>
+    <string name="proximity_scale_bowtie">Bowtie</string>
+    <string name="proximity_scale_bar">Bar</string>
+    <string name="proximity_scale_off">Off</string>
+    <string name="proximity_close">CLOSE indicator</string>
+    <string name="proximity_close_description">CLOSE: something is probably at the tip end</string>
 </resources>

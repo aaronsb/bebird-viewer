@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bockelie.bebird.R
+import com.bockelie.bebird.focus.ScaleOverlay
 import com.bockelie.bebird.connection.ScopeConnection
 import com.bockelie.bebird.devices.DeviceBook
 import com.bockelie.bebird.devices.KnownDevice
@@ -142,6 +143,18 @@ fun ViewerScreen(vm: ViewerViewModel) {
     val snackbar = remember { SnackbarHostState() }
     CaptureSnackbar(vm, snackbar)
 
+    val proximityState by vm.proximity.options.state.collectAsStateWithLifecycle()
+    val proximityResult by vm.proximity.result.collectAsStateWithLifecycle()
+    val overlayRenderer by vm.overlayRenderer.collectAsStateWithLifecycle()
+    var editingProximity by remember { mutableStateOf(false) }
+    if (editingProximity) {
+        val options = vm.proximity.options
+        ProximityDialog(
+            proximityState, onEnabled = options::setEnabled, onStyle = options::setStyle, onClose = options::setClose,
+            onDismiss = { editingProximity = false },
+        )
+    }
+
     Scaffold(modifier = Modifier.fillMaxSize(), snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp, vertical = 8.dp),
@@ -163,6 +176,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     showScopeId = showScopeId, onShowScopeId = vm::setShowScopeId,
                     connection = connectionSettings, onConnection = vm::setConnectionSettings,
                     canPowerOff = canPowerOff, onPowerOff = { confirmingPowerOff = true },
+                    onProximity = { editingProximity = true },
                 )
             }
             Text(
@@ -177,6 +191,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     outline = overlayOn,
                     view = zoomView,
                     modifier = Modifier.fillMaxWidth().weight(1f),
+                    proximity = ScaleOverlay.forFrame(proximityResult, proximityState.style, proximityState.close),
+                    overlayRenderer = overlayRenderer,
                 )
                 StatusBandSlot(
                     renderer = renderer,
