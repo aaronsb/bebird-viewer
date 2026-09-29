@@ -137,19 +137,32 @@ android-release-verify: android-image  ## check an APK's v2/v3 signature, print 
 android-lock: android-image  ## re-record android/gradle/verification-metadata.xml (SHA-256 of every dependency)
 	$(DROID_RUN) $(GRADLE) --refresh-dependencies --write-verification-metadata sha256 test assembleDebug assembleRelease
 
-# Runs on your machine, not in Docker: it needs your gpg-agent and gh login. The release workflow
-# never sees the GPG key; this adds a detached signature of the published checksum afterwards.
+# Runs on your machine: it needs your gpg-agent and gh login, and uses the build image only for an
+# offline apksigner. The release workflow never sees the GPG key. Before signing, it checks the
+# published APK itself, independently of CI: its SHA-256 against the .sha256 (which must name
+# exactly this APK) and its signing certificate against docs/release-keys.txt.
+RELEASE_KEYS = docs/release-keys.txt
 REL_TAG = v$(VERSION)
 REL_APK = bebird-$(VERSION).apk
-release-sign:  ## GPG-sign a published release's .sha256 and upload the .asc: VERSION=X.Y.Z [GPG_KEY=id]
-	@test -n "$(VERSION)" || { echo "usage: make release-sign VERSION=X.Y.Z [GPG_KEY=key id]"; exit 1; }
-	@set -e; d=$$(mktemp -d); trap 'rm -rf "$$d"' EXIT; \
-	gh release download $(REL_TAG) --dir "$$d" --pattern $(REL_APK) --pattern $(REL_APK).sha256; \
-	(cd "$$d" && sha256sum -c $(REL_APK).sha256); \
+release-sign: android-image  ## GPG-sign a published release's .sha256 and upload the .asc: VERSION=X.Y.Z [GPG_KEY=id]
+	@echo "$(VERSION)" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+' || { echo "usage: make release-sign VERSION=X.Y.Z [GPG_KEY=key id]"; exit 1; }
+	@set -e; \
+	pin=$$(sed -nE 's/^Android certificate SHA-256: *//p' "$(RELEASE_KEYS)" | tr -d ':[:space:]' | tr 'A-F' 'a-f'); \
+	echo "$$pin" | grep -qxE '[0-9a-f]{64}' || { echo "$(RELEASE_KEYS): no Android certificate SHA-256 yet"; exit 1; }; \
+	d=$$(mktemp -d); trap 'rm -rf "$$d"' EXIT; \
+	gh release download "$(REL_TAG)" --dir "$$d" --pattern "$(REL_APK)" --pattern "$(REL_APK).sha256"; \
+	sum=$$(cd "$$d" && sha256sum "$(REL_APK)"); \
+	[ "$$(cat "$$d/$(REL_APK).sha256")" = "$$sum" ] || { echo "$(REL_APK).sha256 is not exactly: $$sum"; exit 1; }; \
+	$(DOCKER_RUN) --network none -v "$$d/$(REL_APK):/apk/$(REL_APK):ro" $(DROID_IMAGE) \
+		$(BUILD_TOOLS)/apksigner verify --print-certs -v --min-sdk-version 24 "/apk/$(REL_APK)" > "$$d/verify.txt"; \
+	grep -qxF "Number of signers: 1" "$$d/verify.txt" || { echo "$(REL_APK): expected exactly one signer"; exit 1; }; \
+	cert=$$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-f]+)$$/\1/p' "$$d/verify.txt"); \
+	[ "$$cert" = "$$pin" ] || { echo "$(REL_APK) is signed with certificate '$$cert', not $$pin"; exit 1; }; \
+	echo "$(REL_APK): checksum and signing certificate match"; \
 	gpg --armor --detach-sign $(if $(GPG_KEY),--local-user "$(GPG_KEY)") \
 		--output "$$d/$(REL_APK).sha256.asc" "$$d/$(REL_APK).sha256"; \
 	gpg --verify "$$d/$(REL_APK).sha256.asc" "$$d/$(REL_APK).sha256"; \
-	gh release upload $(REL_TAG) "$$d/$(REL_APK).sha256.asc"; \
+	gh release upload "$(REL_TAG)" "$$d/$(REL_APK).sha256.asc"; \
 	echo "uploaded $(REL_APK).sha256.asc to $(REL_TAG)"
 
 android-shell: android-image  ## open a shell in the Android build container

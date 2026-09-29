@@ -121,6 +121,7 @@ jobs:
             grep -qxF "$want" "$RUNNER_TEMP/verify.txt" || { echo "::error::apksigner did not report: $want"; exit 1; }
           done
           actual=$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-f]+)$/\1/p' "$RUNNER_TEMP/verify.txt")
+          echo "$actual" | grep -qxE '[0-9a-f]{64}' || { echo "::error::no certificate SHA-256 in apksigner's output"; exit 1; }
           if [ -n "$EXPECTED_CERT" ]; then
             expected=$(printf '%s' "$EXPECTED_CERT" | tr -d ':[:space:]' | tr 'A-F' 'a-f')
             [ "$actual" = "$expected" ] || { echo "::error::signed with certificate $actual, expected $expected"; exit 1; }
@@ -129,6 +130,15 @@ jobs:
             exit 1
           else
             echo "::warning::BEBIRD_CERT_SHA256 is not set: the signing certificate ($actual) was not checked"
+          fi
+          # The committed docs/release-keys.txt is what users and `make release-sign` check against.
+          keys=docs/release-keys.txt
+          committed=$(sed -nE 's/^Android certificate SHA-256: *//p' "$keys" | tr -d ':[:space:]' | tr 'A-F' 'a-f')
+          gpg_fpr=$(sed -nE 's/^GPG fingerprint: *//p' "$keys" | tr -d ':[:space:]')
+          if [ "$PUBLISH" = true ]; then
+            echo "$committed" | grep -qxE '[0-9a-f]{64}' || { echo "::error::$keys has no Android certificate SHA-256"; exit 1; }
+            [ "$committed" = "$actual" ] || { echo "::error::$keys lists certificate '$committed', the APK is signed with $actual"; exit 1; }
+            echo "$gpg_fpr" | grep -qxE '[0-9A-Fa-f]{40}' || { echo "::error::$keys has no GPG fingerprint"; exit 1; }
           fi
           echo "cert=$actual" >> "$GITHUB_OUTPUT"
 
@@ -172,6 +182,7 @@ jobs:
             CHANGELOG.md > "$notes" 2>/dev/null || true
           if grep -q '[^[:space:]]' "$notes"; then generate=(); else generate=(--generate-notes); fi
           apk=bebird-$VERSION.apk
+          gpg_fpr=$(sed -nE 's/^GPG fingerprint: *//p' docs/release-keys.txt | tr -d ':[:space:]')
           cat >> "$notes" <<EOF
 
           ## Verifying the download
@@ -184,7 +195,11 @@ jobs:
           apksigner verify --print-certs $apk
           \`\`\`
 
-          \`$apk.sha256.asc\`, the maintainer's GPG signature of the checksum, is added shortly after the release is published. apksigner must report this signing certificate SHA-256 digest, the same for every release:
+          \`$apk.sha256.asc\`, the maintainer's GPG signature of the checksum, is added shortly after the release is published. Get the maintainer's public key from https://github.com/aaronsb.gpg (\`curl -s https://github.com/aaronsb.gpg | gpg --import\`), and check that \`gpg --verify\` names this fingerprint, not just "Good signature":
+
+          \`$gpg_fpr\`
+
+          apksigner must report this signing certificate SHA-256 digest, the same for every release:
 
           \`$CERT\`
           EOF

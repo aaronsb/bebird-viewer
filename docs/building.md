@@ -121,6 +121,15 @@ If any of them were set at repository level earlier, remove those copies (`gh se
 
 `BEBIRD_CERT_SHA256` is required for publishing: the workflow refuses to publish an APK signed with any other certificate, or when the variable is missing. It isn't secret, so it is a variable (a secret of that name works too).
 
+### Release keys
+
+[`docs/release-keys.txt`](release-keys.txt) lists the two fingerprints users check a release against:
+
+- **Android certificate SHA-256**: the release key's certificate fingerprint (from `keytool -list -v`, above). It must match `BEBIRD_CERT_SHA256`.
+- **GPG fingerprint**: the maintainer's GPG key, as `gpg --fingerprint` prints it. The public key is at <https://github.com/aaronsb.gpg>; publish it on [keys.openpgp.org](https://keys.openpgp.org) too if you like.
+
+Both start as `TODO`. Fill them in, in a commit on `main`, before the first release: a tag push fails while either is missing or the certificate doesn't match the APK, and `make release-sign` refuses to sign without the certificate. The release notes quote both.
+
 ### Cutting a release
 
 1. In `android/app/build.gradle.kts`, raise `versionCode` by one and set `versionName` to the new version (`X.Y.Z`).
@@ -138,11 +147,15 @@ If any of them were set at repository level earlier, remove those copies (`gh se
    make release-sign VERSION=X.Y.Z        # GPG_KEY=<key id> to use a key other than the default
    ```
 
-The workflow checks that the tag matches `versionName`, runs the unit tests and builds the unsigned APK in one job, signs it offline and verifies the signature and certificate in a second job (the only one with the key), and creates the GitHub Release with `bebird-X.Y.Z.apk`, its `.sha256`, `LICENSE` and `LICENSES/Apache-2.0.txt`. The release notes are the version's `CHANGELOG.md` section, or GitHub's generated notes if there is none, followed by how to verify the download. R8's `mapping.txt`, which turns obfuscated stack traces back into source names, is kept as a workflow artifact; download it if you want it beyond GitHub's artifact retention.
+The workflow checks that the tag matches `versionName`, runs the unit tests and builds the unsigned APK in one job, signs it offline and verifies the signature and certificate in a second job (the only one with the key), and creates the GitHub Release with `bebird-X.Y.Z.apk`, its `.sha256`, `LICENSE` and `LICENSES/Apache-2.0.txt`. The release notes say how to verify the download: after the version's `CHANGELOG.md` section, or, when there is none, before GitHub's generated notes. R8's `mapping.txt`, which turns obfuscated stack traces back into source names, is kept as a workflow artifact; download it if you want it beyond GitHub's artifact retention.
 
 The workflow doesn't require the tag to be signed, since it has no public key to check it against, but a signed tag lets anyone check that the release was cut from a commit you vouched for (`git tag -v vX.Y.Z`).
 
-GPG never runs in CI; the private key stays on your machine. `make release-sign` runs on the host, not in Docker, because it uses your `gpg-agent` and your `gh` login. It downloads the APK and its `.sha256` from the release, checks one against the other, makes a detached ASCII-armoured signature of the `.sha256` (`gpg --armor --detach-sign`) and uploads it as `bebird-X.Y.Z.apk.sha256.asc`.
+GPG never runs in CI; the private key stays on your machine. `make release-sign` runs on the host, not in Docker, because it uses your `gpg-agent` and your `gh` login. Before signing, it checks the published APK itself rather than trusting CI:
+
+- It downloads the APK and its `.sha256` from the release, hashes the APK, and requires the `.sha256` to be exactly `<hash>  bebird-X.Y.Z.apk`.
+- It runs `apksigner` on the APK (in the build image, with no network) and requires one signer, with the certificate listed in [`docs/release-keys.txt`](release-keys.txt).
+- Only then does it make a detached ASCII-armoured signature of the `.sha256` (`gpg --armor --detach-sign`; `GPG_KEY` picks a key other than the default), check it, and upload it as `bebird-X.Y.Z.apk.sha256.asc`.
 
 To try the workflow without publishing, run it by hand (Actions → Release → Run workflow, or `gh workflow run release.yml --ref <ref>`). It uploads the APK as a workflow artifact only: signed when run on a `v*.*.*` tag, which the `release` environment allows, and unsigned on any other ref.
 
@@ -151,12 +164,13 @@ To try the workflow without publishing, run it by hand (Actions → Release → 
 With the release's files in one directory:
 
 ```sh
-sha256sum -c bebird-X.Y.Z.apk.sha256                          # the APK matches its checksum
-gpg --verify bebird-X.Y.Z.apk.sha256.asc bebird-X.Y.Z.apk.sha256   # the checksum is signed by the maintainer's key
-apksigner verify --print-certs bebird-X.Y.Z.apk               # Android signing certificate
+curl -s https://github.com/aaronsb.gpg | gpg --import             # the maintainer's public key, once
+sha256sum -c bebird-X.Y.Z.apk.sha256                              # the APK matches its checksum
+gpg --verify bebird-X.Y.Z.apk.sha256.asc bebird-X.Y.Z.apk.sha256  # the checksum is signed by the maintainer's key
+apksigner verify --print-certs bebird-X.Y.Z.apk                   # Android signing certificate
 ```
 
-The certificate's SHA-256 digest must be the one given in the release notes; it is the same for every release. `make android-release-verify APK=bebird-X.Y.Z.apk` runs `apksigner` in the build container.
+`gpg --verify` must name the GPG fingerprint in [`docs/release-keys.txt`](release-keys.txt); "Good signature" alone only says some key you imported signed it. The certificate's SHA-256 digest must be the Android certificate SHA-256 listed there, which the release notes quote too; it is the same for every release. `make android-release-verify APK=bebird-X.Y.Z.apk` runs `apksigner` in the build container.
 
 ## CI
 
