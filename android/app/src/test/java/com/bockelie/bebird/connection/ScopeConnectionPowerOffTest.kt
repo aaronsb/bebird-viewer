@@ -123,6 +123,12 @@ class ScopeConnectionPowerOffTest {
         assertFalse(conn.isStreaming.value)
         assertEquals("powered off", conn.stats.value.status)
         assertEquals("bebird-ES-1", conn.book.value.last?.ssid)  // still remembered
+
+        // relaunched straight away: no connecting to a scope that is shutting down
+        val requests = wifi.starts.size
+        onMain { conn.connectOnLaunch() }
+        Thread.sleep(100)
+        assertEquals(requests, wifi.starts.size)
     }
 
     @Test fun nothingStartsBetween663EAndTheRelease() {

@@ -93,8 +93,10 @@ class ScopeSession(
     private val frameCount = AtomicInteger()  // frames since the last fps tick
 
     /**
-     * False while nothing can show the frames (the app is covered by another activity): complete
-     * frames still count as video arriving, but aren't decoded. Receiving and the keepalive go on.
+     * False while nothing can show the frames (the app is covered by another activity, or in the
+     * background for the grace period, #18): complete frames still count as video arriving, but
+     * aren't decoded or published, except that the first one still counts in [Stats.frames] so
+     * the connection knows video is up. Receiving and the keepalive go on.
      */
     @Volatile var decoding = true
 
@@ -189,6 +191,8 @@ class ScopeSession(
             // The keepalive: without it video stops within ~1 s. Queued like every command, so a
             // poll can't reach the scope after STOP.
             command(null, listOf(Protocol.BATTERY))
+            // In the background, to check the cadence with the screen off (logcat -s BebirdSpike:D).
+            if (!decoding) Log.d(TAG, "keepalive (not decoding)")
             delay(timing.tickMs)
             val now = clock()
             val fps = frameCount.getAndSet(0)
@@ -253,6 +257,7 @@ class ScopeSession(
             val frame = assembler.accept(buf, n) ?: continue
             if (!decoding) {
                 synchronized(watchdog) { watchdog.onFrame(now) }  // video is still arriving
+                if (_stats.value.frames == 0) _stats.update { it.copy(frames = assembler.done) }
                 continue
             }
             val bitmap = decode(frame.jpeg)

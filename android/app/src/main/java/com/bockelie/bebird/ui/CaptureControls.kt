@@ -86,7 +86,7 @@ private class OpenCapture : ActivityResultContracts.OpenDocument() {
 /**
  * Files: the system document picker, opening in today's capture folder (else Pictures/Bebird)
  * and listing images and videos; the picked file then opens in its default app. Both open over
- * the app, in its task, so Back returns here (see ExternalLaunch). With no captures yet, or no
+ * the app, in its task, so Back returns here (see GraceKeeper.launchingOver). With no captures yet, or no
  * app to show a file, a snackbar says so.
  */
 @Composable
