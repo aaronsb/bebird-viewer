@@ -35,15 +35,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.hapticfeedback.HapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -70,6 +68,8 @@ class Hold(val durationMs: Long, private val tapMs: Long = TAP_MS) {
     private var done = false
 
     val isHeld: Boolean get() = pressedAt != null
+    /** Held, and the hold has completed. */
+    val isDone: Boolean get() = done
 
     /** Pressed at [now]; false (and nothing changes) while already held. */
     fun press(now: Long): Boolean {
@@ -121,9 +121,9 @@ class Hold(val durationMs: Long, private val tapMs: Long = TAP_MS) {
 
 /**
  * A button that acts only once held for [durationMs] (#38): while held it fills from left to
- * right in its content colour, and let go early the fill drains back. A light haptic tick on
- * press, a stronger one on completion, and [onHeld] runs then, without waiting for the release;
- * holding on doesn't repeat it. A tap runs [onTap], for a hint. It holds the same way with
+ * right in its content colour, and let go early the fill drains back. It vibrates as it fills and
+ * again on completion ([HoldPattern], #44); let go early, the vibration stops at once. [onHeld]
+ * runs on completion, without waiting for the release; holding on doesn't repeat it. A tap runs [onTap], for a hint. It holds the same way with
  * Enter, Space or the D-pad centre key once focused. A screen reader gets [onHeld] as the click
  * action, with no hold, labelled [description] (or the visible content if null). Not [enabled]:
  * greyed out, and no press starts.
@@ -142,10 +142,11 @@ fun HoldButton(
 ) {
     val fill = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
-    val driver = remember(durationMs) { HoldDriver(Hold(durationMs), fill, scope) }
-    val haptics = LocalHapticFeedback.current
+    val driver = remember(durationMs) { HoldDriver(Hold(durationMs), HoldPattern.of(durationMs), fill, scope) }
+    val context = LocalContext.current
+    val vibrator = remember(context) { HoldVibrator(context) }
     SideEffect {
-        driver.haptics = haptics
+        driver.vibrator = vibrator
         driver.onHeld = onHeld
         driver.onTap = onTap
         driver.enabled = enabled
@@ -212,13 +213,14 @@ fun HoldButton(
     }
 }
 
-/** Drives a [Hold] from a pointer or a key: the frame ticker, the fill and the haptics. Main thread. */
+/** Drives a [Hold] from a pointer or a key: the frame ticker, the fill and the vibration. Main thread. */
 private class HoldDriver(
     private val hold: Hold,
+    private val pattern: HoldPattern,
     private val fill: Animatable<Float, AnimationVector1D>,
     private val scope: CoroutineScope,
 ) {
-    var haptics: HapticFeedback? = null
+    var vibrator: HoldVibrator? = null
     var onHeld: () -> Unit = {}
     var onTap: () -> Unit = {}
     var enabled = true
@@ -227,14 +229,14 @@ private class HoldDriver(
     /** A press began; false if one is already held, or the button is disabled. */
     fun press(): Boolean {
         if (!enabled || !hold.press(uptimeMs())) return false
-        haptics?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        vibrator?.play(pattern.fill)
         ticker = scope.launch {
             while (isActive) {
                 withFrameMillis {}
                 val t = uptimeMs()
                 fill.snapTo(hold.progress(t))
                 if (hold.complete(t)) {
-                    haptics?.performHapticFeedback(HapticFeedbackType.LongPress)
+                    vibrator?.play(pattern.done)  // replaces what is left of the fill's
                     onHeld()
                     break
                 }
@@ -248,6 +250,8 @@ private class HoldDriver(
         ticker?.cancel()
         ticker = null
         if (!hold.isHeld) return
+        // Early: stop at once. Complete: let the completion finish, even as the button goes.
+        if (!hold.isDone) vibrator?.cancel()
         val how = if (released) {
             hold.release(uptimeMs())
         } else {
