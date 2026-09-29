@@ -199,11 +199,13 @@ The scale is **40 px/mm ±10 %** at the tip end, from ruler captures of 38.8–4
 - **Colour:**
   - Not locked: grey (170,170,170), 1 px, **dashed** (6° on, 6° off).
   - Locked (IN-ZONE): lock colour (0,230,200), 2 px, solid.
-- **Ring style (default):** circles at r = k·40 px for k = 1..5. Each ring is labelled by **diameter** ("⌀2", "⌀4", "⌀6", "⌀8", "⌀10") just above it on the vertical axis, at (C + 3, C − r − 2). "mm ±10%" sits near the upper right of the outer ring.
+- **Ring style (default):** circles at r = k·40 px for k = 1..5. Each ring is labelled by **diameter** ("⌀2", "⌀4", "⌀6", "⌀8", "⌀10") just right of it on the horizontal axis, baseline at (C + r + 3, C − 3). "mm ±10%" sits near the upper right of the outer ring. Something that fits within a ring is about that ring's diameter wide.
+- **Centre crosshair** (ring and bowtie): four short arms, up, down, left and right, from 0.1 to 0.4 mm (4–16 px) out, so the exact centre stays clear and the arms stay well inside the ⌀2 ring. Same colour and width as the scale; solid even when unlocked, since arms this short would show one dash or none. Upright, with no label.
 - **Bowtie:**
   - Two wedges at ±15° about the horizontal (0° and 180°), with edges running from r = 0.5 mm to 5.25 mm, dashed when unlocked.
   - An arc tick across the wedge at each mm, r = 1..5, labelled "⌀2k" on the right wedge.
   - "mm ±10%" below the right wedge.
+  - The centre crosshair, inside the wedges' 0.5 mm start.
 - **Bar:**
   - A horizontal line through the centre, ±5.5 mm.
   - A tick each mm, 7 px half-length, and long ticks (14 px) at −5, 0 and +5 mm.

@@ -52,6 +52,17 @@ class OverlayRendererTest {
         assertEquals(0, img.at(240, 240))  // the centre is left clear
     }
 
+    @Test fun theCrosshairMarksTheCentreAndLeavesItClear() {
+        val locked = ring(locked = true)
+        for ((dx, dy) in listOf(10 to 0, -10 to 0, 0 to 10, 0 to -10)) assertEquals("($dx, $dy)", ScaleOverlay.LOCK, locked.at(240 + dx, 240 + dy))
+        for (d in listOf(0, 1, 2)) assertEquals("gap $d", 0, locked.at(240 + d, 240))
+        assertEquals("past the arm", 0, locked.at(240 + 20, 240))
+        assertEquals("not diagonal", 0, locked.at(240 + 10, 240 + 10))
+        val unlocked = ring(locked = false)
+        assertEquals(ScaleOverlay.GREY, unlocked.at(240 + 10, 240))
+        assertEquals(ScaleOverlay.GREY, unlocked.at(240, 240 - 10))
+    }
+
     @Test fun ringsFollowTheDisplayScale() {
         // drawn at the screen size: 2.5 px per raw pixel puts the 1 mm ring at 100 px
         val img = ring(locked = true, f = 2.5)
