@@ -36,6 +36,7 @@ import com.bockelie.bebird.band.BandFonts
 import com.bockelie.bebird.focus.OverlayRenderer
 import com.bockelie.bebird.focus.ProximityPipeline
 import com.bockelie.bebird.band.BandRenderer
+import com.bockelie.bebird.band.PixelText
 import com.bockelie.bebird.connection.ScopeConnection
 import com.bockelie.bebird.control.RollFilter
 import com.bockelie.bebird.settings.ThemeMode
@@ -90,6 +91,9 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     // So do annotations' text labels.
     private val _annotationRenderer = MutableStateFlow<AnnotationRenderer?>(null)
     val annotationRenderer: StateFlow<AnnotationRenderer?> = _annotationRenderer.asStateFlow()
+    // And the viewport's own text: the empty circle's status and the scale's note.
+    private val _pixelText = MutableStateFlow<PixelText?>(null)
+    val pixelText: StateFlow<PixelText?> = _pixelText.asStateFlow()
 
     init {
         Log.i("BebirdSpike", "ViewModel created (${Integer.toHexString(System.identityHashCode(this))})")
@@ -99,6 +103,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
                 _bandRenderer.value = BandRenderer(fonts)
                 _overlayRenderer.value = OverlayRenderer(fonts)
                 _annotationRenderer.value = AnnotationRenderer(fonts)
+                _pixelText.value = PixelText(fonts)
             } catch (e: Exception) {
                 Log.e("BebirdSpike", "band fonts failed to load", e)
             }

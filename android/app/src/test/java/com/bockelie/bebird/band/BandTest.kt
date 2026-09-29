@@ -8,6 +8,7 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
+import java.util.Locale
 
 class BandTest {
     private val font = Fonts.source
@@ -34,6 +35,26 @@ class BandTest {
         for ((from, to) in listOf(0 to 9, 10 to 18, 19 to 28, 29 to 39, 40 to 49, 50 to 58)) {
             assertEquals("field at $from", lastCol(full, 0, from, to), lastCol(sparse, 0, from, to))
             assertEquals(to, lastCol(full, 0, from, to))
+        }
+    }
+
+    @Test fun bandPixelsArePinned() {
+        // Saved captures carry these pixels: any change to the band's drawing shows here. The
+        // hashes were taken from the renderer before the glyph blit was shared (drawGlyph).
+        assertEquals("480 px", PIN_480, renderer.render(full, 480).pixels.contentHashCode())
+        assertEquals("960 px", PIN_960, renderer.render(full, 960).pixels.contentHashCode())
+        assertEquals("sparse", PIN_SPARSE, renderer.render(sparse, 480).pixels.contentHashCode())
+    }
+
+    @Test fun theBandIgnoresTheLocalesDigits() {
+        // Arabic-Indic digits by default: the clock and date must still be ASCII, as saved files have them
+        val before = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ar-u-nu-arab"))
+            assertEquals("480 px", PIN_480, renderer.render(full, 480).pixels.contentHashCode())
+            assertEquals("sparse", PIN_SPARSE, renderer.render(sparse, 480).pixels.contentHashCode())
+        } finally {
+            Locale.setDefault(before)
         }
     }
 
@@ -220,5 +241,11 @@ class BandTest {
     @Test fun overlayOffIsTheFrameItself() {
         val f = frame()
         assertSame(f, renderer.compose(f, full, overlay = false))
+    }
+
+    companion object {
+        const val PIN_480 = -1126408723
+        const val PIN_960 = 1544876545
+        const val PIN_SPARSE = 962195081
     }
 }

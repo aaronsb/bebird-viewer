@@ -2,6 +2,7 @@
 package com.bockelie.bebird.ui
 
 import android.graphics.Bitmap
+import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -10,6 +11,8 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
@@ -41,25 +44,32 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import com.bockelie.bebird.R
 import com.bockelie.bebird.band.BandRenderer
+import com.bockelie.bebird.band.PixelText
 import com.bockelie.bebird.band.toBitmap
 import com.bockelie.bebird.capture.ZoomCrop
 import com.bockelie.bebird.focus.FrameGeometry
 import com.bockelie.bebird.focus.OverlayRenderer
 import com.bockelie.bebird.focus.OverlayShape
+import com.bockelie.bebird.focus.ScaleDisclaimer
 import com.bockelie.bebird.focus.ScaleOverlay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
  * The image circle inside a rectangular viewport. Pinch zooms (1-6x) and drag pans, clipped
  * to the viewport; double-tap resets. Display only: nothing here changes what is received.
+ * While there is no [frame], the circle says [status] (#32); while the scale is shown, a note
+ * says it is approximate (#35). Both are drawn with [text] once the band's fonts are loaded.
  */
 @Composable
 fun ZoomableCircle(
     frame: Bitmap?, rotation: Int, outline: Boolean, view: ZoomView, modifier: Modifier,
     proximity: List<OverlayShape> = emptyList(), overlayRenderer: OverlayRenderer? = null,
+    status: CircleStatus? = null, text: PixelText? = null,
 ) {
     // Outside the image circle the viewport is the band's black, not the theme's surface, so
     // image and band read as one panel (as in saved stills with the overlay).
@@ -93,10 +103,14 @@ fun ZoomableCircle(
             Box(
                 Modifier.size(with(LocalDensity.current) { side.toDp() })
                     .graphicsLayer {
-                        scaleX = view.zoom
-                        scaleY = view.zoom
-                        translationX = view.offset.x
-                        translationY = view.offset.y
+                        // With no picture the empty circle sits unzoomed round the status text;
+                        // the zoom is kept for when the picture comes back.
+                        if (frame != null) {
+                            scaleX = view.zoom
+                            scaleY = view.zoom
+                            translationX = view.offset.x
+                            translationY = view.offset.y
+                        }
                     }
                     .clip(CircleShape)
                     .background(Color.Black)
@@ -116,12 +130,21 @@ fun ZoomableCircle(
                 // picture (so mm stay true on screen), but stays upright: see scaleLayerRotation.
                 // Display only; saved files don't include it.
                 if (frame != null && overlayRenderer != null) {
-                    ScaleLayer(proximity.filterNot(::isClose), overlayRenderer, side.toInt(), scaleLayerRotation(rotation))
+                    ScaleLayer(proximity.filterNot(ScaleOverlay::isClose), overlayRenderer, side.toInt(), scaleLayerRotation(rotation))
                 }
+            }
+            // Where the circle sits at zoom 1, whatever the zoom or pan left from the last picture.
+            // Display only, like the scale: captures take the frame, never this layer.
+            if (frame == null && status != null && text != null) {
+                StatusLayer(status, text, w.toInt(), h.toInt(), side.toInt(), Modifier.align(Alignment.TopStart))
             }
             // CLOSE stays upright at the viewport's upper left, whatever the roll or zoom.
             if (frame != null && overlayRenderer != null) {
-                CloseLayer(proximity.filter(::isClose), overlayRenderer, side.toInt(), Modifier.align(Alignment.TopStart))
+                CloseLayer(proximity.filter(ScaleOverlay::isClose), overlayRenderer, side.toInt(), Modifier.align(Alignment.TopStart))
+            }
+            // The scale is an estimate: said at the upper right, upright and fixed like CLOSE (#35).
+            if (text != null && ScaleDisclaimer.shown(frame != null, proximity)) {
+                DisclaimerLayer(text, w.toInt(), h.toInt(), side.toInt(), Modifier.align(Alignment.TopEnd))
             }
         }
     }
@@ -140,9 +163,6 @@ class ZoomView {
         ZoomCrop.visible(frameSize, viewportW, viewportH, minOf(viewportW, viewportH), zoom, offset.x, offset.y)
 }
 
-private fun isClose(s: OverlayShape) =
-    s is OverlayShape.Warning || (s is OverlayShape.Label && s.text == ScaleOverlay.CLOSE_LABEL)
-
 /** The scale drawn at the circle's on-screen size [side] px, so its rings stay one pixel thin. */
 @Composable
 private fun ScaleLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, side: Int, rotation: Float) {
@@ -157,6 +177,89 @@ private fun ScaleLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, si
         filterQuality = FilterQuality.None,
         modifier = Modifier.fillMaxSize().rotate(rotation),
     )
+}
+
+/**
+ * [status] in the empty circle, in the band's font at the same whole scale as CLOSE: laid out in
+ * 1/k of the circle's [side], only the text's box drawn, off the main thread, and shown k times
+ * larger without smoothing at its place in the unzoomed circle, centred in the viewport.
+ * TalkBack announces each new status.
+ */
+@Composable
+private fun StatusLayer(status: CircleStatus, text: PixelText, viewportW: Int, viewportH: Int, side: Int, modifier: Modifier) {
+    val k = maxOf(1, side / FrameGeometry.SIZE)
+    val small = side / k
+    val title = stringResource(status.title)
+    val hint = stringResource(status.hint)
+    var drawn by remember { mutableStateOf<Pair<ImageBitmap, PixelText.Block>?>(null) }
+    LaunchedEffect(text, title, hint, small) {
+        drawn = try {
+            withContext(Dispatchers.Default) {
+                text.circleBlock(listOf(title, hint), small)?.let { b ->
+                    text.draw(b.lines, b.width, b.height, BandRenderer.VALUE).toBitmap().asImageBitmap() to b
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Log.e("BebirdSpike", "circle status not drawn", e)
+            null
+        }
+    }
+    val (image, block) = drawn ?: return
+    val left = (viewportW - small * k) / 2 + block.x * k
+    val top = (viewportH - small * k) / 2 + block.y * k
+    val description = "$title. $hint"
+    with(LocalDensity.current) {
+        Image(
+            bitmap = image,
+            contentDescription = description,
+            contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.None,
+            modifier = modifier.offset { IntOffset(left, top) }.size((image.width * k).toDp(), (image.height * k).toDp())
+                .semantics { liveRegion = LiveRegionMode.Polite },
+        )
+    }
+}
+
+/**
+ * The scale's disclaimer at the viewport's upper right, clear of CLOSE: drawn at scale 1 off the
+ * main thread and shown at [ScaleDisclaimer.place]'s whole scale without smoothing. TalkBack
+ * reads the full sentence.
+ */
+@Composable
+private fun DisclaimerLayer(text: PixelText, viewportW: Int, viewportH: Int, side: Int, modifier: Modifier) {
+    val k = maxOf(1, side / FrameGeometry.SIZE)
+    val paragraphs = listOf(
+        stringResource(R.string.scale_note_title), stringResource(R.string.scale_note_focus), stringResource(R.string.scale_note_sensor),
+    )
+    val description = stringResource(R.string.scale_note_description)
+    var drawn by remember { mutableStateOf<Pair<ImageBitmap, Int>?>(null) }
+    LaunchedEffect(text, paragraphs, viewportW, viewportH, k) {
+        drawn = try {
+            withContext(Dispatchers.Default) {
+                ScaleDisclaimer.place(text, paragraphs, viewportW, viewportH, k, CLOSE_W * k)?.let { p ->
+                    text.draw(p.lines, p.width, p.height, BandRenderer.TAG, outline = true).toBitmap().asImageBitmap() to p.scale
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Log.e("BebirdSpike", "scale note not drawn", e)
+            null
+        }
+    }
+    val (image, s) = drawn ?: return
+    with(LocalDensity.current) {
+        val inset = (ScaleDisclaimer.INSET * s).toDp()
+        Image(
+            bitmap = image,
+            contentDescription = description,
+            contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.None,
+            modifier = modifier.padding(top = inset, end = inset).size((image.width * s).toDp(), (image.height * s).toDp()),
+        )
+    }
 }
 
 /** The CLOSE indicator's raw-frame window: the triangle and its label, upper left. */

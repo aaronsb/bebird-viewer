@@ -59,6 +59,9 @@ object ScaleOverlay {
     /** Rings (and bowtie ticks) at k mm radius for k in 1..RINGS, labelled by diameter 2k. */
     const val RINGS = 5
 
+    /** Whether [s] is part of CLOSE (the triangle or its label) rather than of the scale. */
+    fun isClose(s: OverlayShape) = s is OverlayShape.Warning || (s is OverlayShape.Label && s.text == CLOSE_LABEL)
+
     /**
      * The overlay for one frame's [result], in the user's [style] and with CLOSE if [showClose]
      * (both from [ProximitySettings], read once, not per frame). With estimation off there

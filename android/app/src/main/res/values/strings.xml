@@ -4,6 +4,24 @@
     <string name="app_name">Bebird Viewer</string>
     <string name="connect">Connect</string>
     <string name="disconnect">Disconnect</string>
+    <!-- The empty image circle (#32), in the band's font: see CircleStatus for which button each hint names. -->
+    <string name="circle_not_connected">NOT CONNECTED</string>
+    <string name="circle_not_connected_hint">Turn the scope on, then tap Connect</string>
+    <string name="circle_connecting">CONNECTING…</string>
+    <string name="circle_connecting_hint">Pick the scope if Android asks</string>
+    <string name="circle_waiting">WAITING FOR PICTURE…</string>
+    <string name="circle_waiting_hint">If none comes, tap Reconnect</string>
+    <string name="circle_lost">CONNECTION LOST</string>
+    <string name="circle_lost_hint">Tap Disconnect, then Connect</string>
+    <string name="circle_not_found">SCOPE NOT FOUND</string>
+    <string name="circle_not_found_hint">Is it on and nearby? Tap Connect</string>
+    <string name="circle_failed">COULDN’T CONNECT</string>
+    <string name="circle_failed_hint">Tap Connect to try again</string>
+    <!-- Beside the proximity scale (#35), in the band's font; one line each where there is room. -->
+    <string name="scale_note_title">APPROXIMATE SCALE</string>
+    <string name="scale_note_focus">Valid only when in focus</string>
+    <string name="scale_note_sensor">No distance sensor</string>
+    <string name="scale_note_description">The scale and distance are approximate, estimated from several factors including the lens focal length. They hold within practical tolerances only when the picture is sharp and in focus. The scope has no distance-measuring signal.</string>
     <string name="no_device">Any Bebird scope</string>
     <string name="choose_device">Choose device</string>
     <string name="pick_different">Pick a different device</string>
