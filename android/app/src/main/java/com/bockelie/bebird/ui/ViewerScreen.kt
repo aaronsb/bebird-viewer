@@ -177,6 +177,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     snackbar.currentSnackbarData?.dismiss()
                     snackbar.showSnackbar(text)
                 }
+                val holdTurn = remember { HoldTurn() }  // one hold at a time on this row (#44)
                 if (idle) {
                     Button(onClick = { withPermission(conn::connect) }, enabled = !quitting, contentPadding = TopRowPadding) {
                         Text(stringResource(R.string.connect))
@@ -185,7 +186,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     val holdToDisconnect = stringResource(R.string.hold_to_disconnect)
                     HoldButton(
                         Hold.DISCONNECT_MS, onHeld = conn::disconnect, onTap = { hint(holdToDisconnect) },
-                        enabled = !quitting, contentPadding = TopRowPadding,
+                        enabled = !quitting, turn = holdTurn, contentPadding = TopRowPadding,
                     ) {
                         Text(stringResource(R.string.disconnect))
                     }
@@ -194,6 +195,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
                 val holdToQuit = stringResource(if (canPowerOff) R.string.hold_to_quit_power_off else R.string.hold_to_quit)
                 HoldButton(
                     Hold.QUIT_MS,
+                    feel = HoldFeel.HEAVY,
+                    turn = holdTurn,
                     onHeld = vm::quit,  // MainActivity closes the app once it's done
                     enabled = !quitting,
                     onTap = { hint(holdToQuit) },
