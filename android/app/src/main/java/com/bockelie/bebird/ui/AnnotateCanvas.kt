@@ -9,7 +9,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -89,15 +88,16 @@ class AnnotateTools {
 
 /**
  * The paused, upright [image] fitted whole in the viewport (no zoom), with [marks] over it.
- * Dragging draws with the current tool, from where the finger went down; with Text, a tap
- * chooses where the label goes. Marks are kept in image coordinates ([ImageFit]). The marks
+ * Dragging draws with the current tool, from where the finger went down, following that
+ * finger only; with Text, a tap chooses where the label goes. No input while not [enabled]
+ * (a save is running). Marks are kept in image coordinates ([ImageFit]). The marks
  * layer is drawn by the same [AnnotationRenderer] at the frame's own size, then scaled like
  * the frame, so the screen shows the saved file's pixels.
  */
 @Composable
 fun AnnotateCanvas(
     image: Bitmap, marks: List<Mark>, renderer: AnnotationRenderer, tools: AnnotateTools, outline: Boolean,
-    onMark: (Mark) -> Unit, modifier: Modifier,
+    enabled: Boolean, onMark: (Mark) -> Unit, modifier: Modifier,
 ) {
     val description = stringResource(R.string.annotate_canvas_description)
     val addMark by rememberUpdatedState(onMark)
@@ -131,7 +131,8 @@ fun AnnotateCanvas(
             }
         }
         Canvas(
-            Modifier.fillMaxSize().semantics { contentDescription = description }.pointerInput(tools.tool, tools.color, fit) {
+            Modifier.fillMaxSize().semantics { contentDescription = description }.pointerInput(tools.tool, tools.color, fit, enabled) {
+                if (!enabled) return@pointerInput
                 val tool = tools.tool
                 val color = tools.color
                 if (tool == Tool.TEXT) {
@@ -140,15 +141,25 @@ fun AnnotateCanvas(
                     awaitEachGesture {
                         // From the down point itself, not where the touch slop was crossed.
                         val down = awaitFirstDown()
-                        var pts = Drag.extend(emptyList(), fit.toImage(down.position.x, down.position.y), tool)
-                        stroke = pts
-                        val ended = drag(down.id) { change ->
-                            change.consume()
-                            pts = Drag.extend(pts, fit.toImage(change.position.x, change.position.y), tool)
+                        try {
+                            var pts = Drag.extend(emptyList(), fit.toImage(down.position.x, down.position.y), tool)
                             stroke = pts
+                            // Only the finger that went down draws: a second finger neither moves
+                            // the stroke nor carries it on when the first lifts.
+                            while (true) {
+                                val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) {
+                                    Drag.mark(tool, pts, color)?.let(addMark)
+                                    break
+                                }
+                                if (change.isConsumed) break  // taken by something else: no mark
+                                change.consume()
+                                pts = Drag.extend(pts, fit.toImage(change.position.x, change.position.y), tool)
+                                stroke = pts
+                            }
+                        } finally {
+                            stroke = emptyList()  // also when the input is restarted mid-drag
                         }
-                        if (ended) Drag.mark(tool, pts, color)?.let(addMark)
-                        stroke = emptyList()
                     }
                 }
             },

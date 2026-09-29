@@ -190,7 +190,8 @@ fun ViewerScreen(vm: ViewerViewModel) {
                     // No proximity scale here: it is never in saved files.
                     AnnotateCanvas(
                         image = paused.shot.frame, marks = paused.sketch.marks, renderer = annotations, tools = annotateTools,
-                        outline = paused.shot.overlay, onMark = { m -> vm.editAnnotations { it.add(m) } },
+                        outline = paused.shot.overlay, enabled = !paused.progress.saving,
+                        onMark = { m -> vm.editAnnotations { it.add(m) } },
                         modifier = Modifier.fillMaxWidth().weight(1f),
                     )
                 } else {
@@ -214,7 +215,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
             val paused = annotating
             if (paused != null) {
                 AnnotateControls(
-                    annotateTools, paused.sketch, saving = paused.progress.saving,
+                    annotateTools, paused.sketch, saving = paused.progress.saving, savedOriginal = paused.progress.savedOriginal,
                     onEdit = vm::editAnnotations, onResume = vm::resumeLive, onSave = vm::saveAnnotated,
                 )
             } else {
