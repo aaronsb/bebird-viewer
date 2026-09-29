@@ -5,6 +5,7 @@ import com.bockelie.bebird.band.PixelText
 import com.bockelie.bebird.proto.Protocol
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.scan
 
 /**
@@ -32,14 +33,31 @@ object BatteryLow {
         else -> was
     }
 
+    /** The latch's state: whether the warning is on, for which scope, after which reading. */
+    data class Latch(val scope: String?, val low: Boolean, val battery: Protocol.Battery? = null)
+
     /**
-     * The warning for a stream of battery readings (null: none, as when a new session starts),
-     * carrying the hysteresis from one reading to the next. Held by the ViewModel, so rotating
-     * the screen or annotating doesn't reset it.
+     * [state] after a [battery] reading from [scope]. The battery belongs to the scope, so only
+     * a different scope starts afresh; with the same one, a gap with no reading (Reconnect, a
+     * lost and rejoined session) keeps the state. When the scope changes, the reading still
+     * showing is the old scope's, so it doesn't count.
      */
-    fun latch(readings: Flow<Protocol.Battery?>): Flow<Boolean> =
+    fun step(state: Latch, scope: String?, battery: Protocol.Battery?): Latch {
+        val same = scope == state.scope
+        val was = state.low && same
+        val reading = if (same) battery else battery?.takeUnless { it == state.battery }
+        return Latch(scope, if (reading == null) was else next(was, reading.percent, reading.isCharging), battery)
+    }
+
+    /**
+     * The warning for a stream of (scope, battery reading) pairs, carrying the hysteresis from
+     * one to the next ([step]). Held by the ViewModel, so rotating the screen or annotating
+     * doesn't reset it either.
+     */
+    fun latch(readings: Flow<Pair<String?, Protocol.Battery?>>): Flow<Boolean> =
         readings.distinctUntilChanged()
-            .scan(false) { was, b -> next(was, b?.percent, b?.isCharging == true) }
+            .scan(Latch(null, false)) { state, (scope, battery) -> step(state, scope, battery) }
+            .map { it.low }
             .distinctUntilChanged()
 
     /** The label's box in viewport pixels at CLOSE's whole scale [k]: its lines and outline. */

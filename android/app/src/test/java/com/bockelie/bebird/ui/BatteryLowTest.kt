@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.runBlocking
@@ -62,30 +63,45 @@ class BatteryLowTest {
         }
     }
 
-    @Test fun theLatchKeepsItsStateAcrossCollectorsAndResetsWithTheSession() = runBlocking {
+    @Test fun theLatchIsPerScope() = runBlocking {
+        val device = MutableStateFlow<String?>("bebird_A")
         val readings = MutableStateFlow<Protocol.Battery?>(null)
         val scope = CoroutineScope(Dispatchers.Unconfined)
         try {
             // as the ViewModel holds it
-            val low = BatteryLow.latch(readings).stateIn(scope, SharingStarted.Eagerly, false)
+            val low = BatteryLow.latch(combine(device, readings, ::Pair)).stateIn(scope, SharingStarted.Eagerly, false)
             val seen = listOf(30, 20, 22).map { readings.value = Protocol.Battery(1, it); low.value }
             assertEquals(listOf(false, true, true), seen)
-            // the screen recreated (rotation, annotate): a new collector sees it still on at 22-24 %
+            // the screen recreated (rotation, annotate): a new collector sees it still on at 22 %
             assertEquals(true, low.first())
-            readings.value = Protocol.Battery(1, 24)
+            // Reconnect, or lost and rejoined: no reading for a while, same scope, still on at 22 %
+            readings.value = null
+            assertEquals(true, low.value)
+            readings.value = Protocol.Battery(1, 22)
             assertEquals(true, low.value)
             // charging hides it
-            readings.value = Protocol.Battery(2, 24)
+            readings.value = Protocol.Battery(2, 22)
             assertEquals(false, low.value)
             readings.value = Protocol.Battery(1, 20)
             assertEquals(true, low.value)
-            // a new session starts with no reading: reset, and 22 % doesn't bring it back
+            // another scope: reset; A's reading still showing doesn't count for B
+            device.value = "bebird_B"
+            assertEquals(false, low.value)
             readings.value = null
             assertEquals(false, low.value)
-            readings.value = Protocol.Battery(1, 22)
+            readings.value = Protocol.Battery(1, 22)  // B at 22 %: in the band, not low yet
             assertEquals(false, low.value)
+            readings.value = Protocol.Battery(1, 19)
+            assertEquals(true, low.value)
         } finally {
             scope.cancel()
         }
+    }
+
+    @Test fun stepLiterals() {
+        val a20 = BatteryLow.Latch("A", true, Protocol.Battery(1, 20))
+        assertEquals(BatteryLow.Latch("A", true, null), BatteryLow.step(a20, "A", null))
+        assertEquals(BatteryLow.Latch("B", false, Protocol.Battery(1, 20)), BatteryLow.step(a20, "B", Protocol.Battery(1, 20)))
+        assertEquals(BatteryLow.Latch("B", true, Protocol.Battery(1, 18)), BatteryLow.step(a20, "B", Protocol.Battery(1, 18)))
     }
 }
