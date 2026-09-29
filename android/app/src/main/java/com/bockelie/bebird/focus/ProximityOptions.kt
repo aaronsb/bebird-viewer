@@ -11,7 +11,12 @@ import kotlinx.coroutines.flow.asStateFlow
  * and the [gate] (whether the estimator runs). The sub-settings keep their values while the
  * master switch is off; they are only greyed out.
  */
-class ProximityOptions(private val settings: ProximitySettings, private val gate: ProximityGate) {
+class ProximityOptions(
+    private val settings: ProximitySettings,
+    private val gate: ProximityGate,
+    /** True once estimation has stopped for the session after errors: switching on then doesn't start it. */
+    private val stoppedForSession: () -> Boolean = { false },
+) {
     data class State(val enabled: Boolean, val style: ScaleStyle, val close: Boolean) {
         /** Scale and CLOSE can only be changed (and only matter) while estimation is on. */
         val subSettingsEnabled: Boolean get() = enabled
@@ -26,7 +31,7 @@ class ProximityOptions(private val settings: ProximitySettings, private val gate
 
     fun setEnabled(on: Boolean) {
         settings.enabled = on
-        gate.setEnabled(on)
+        gate.setEnabled(on && !stoppedForSession())  // no fresh estimator (and buffers) after giving up
         _state.value = _state.value.copy(enabled = on)
     }
 

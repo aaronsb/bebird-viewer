@@ -127,6 +127,31 @@ class ProximityWiringTest {
         assertEquals(3, hook.errors)
     }
 
+    @Test fun outOfMemoryGivesUpAtOnce() {
+        var created = 0
+        val gate = ProximityGate { created++; FrameEstimator { _, _, _ -> throw OutOfMemoryError() } }.apply { setEnabled(true) }
+        var gaveUp = 0
+        val hook = ProximityFrames(gate, { it.run() }, onGiveUp = { gaveUp++ }) { results += it }
+        hook.offer(0.0, 0) {}
+        assertEquals(1, gaveUp)  // not after three: a fresh estimator would only allocate again
+        assertEquals(1, created)
+        assertFalse(gate.enabled)
+    }
+
+    @Test fun switchingOnAfterGivingUpDoesntStartAnEstimator() {
+        var created = 0
+        val gate = ProximityGate { created++; FrameEstimator { _, _, _ -> throw OutOfMemoryError() } }
+        val hook = ProximityFrames(gate, { it.run() }) { results += it }
+        val o = ProximityOptions(ProximitySettings(MemoryKeyValue()), gate, stoppedForSession = { hook.gaveUp })
+        hook.offer(0.0, 0) {}  // gives up
+        assertEquals(1, created)
+        o.setEnabled(false)
+        o.setEnabled(true)
+        assertEquals(1, created)  // no new estimator or buffers this session
+        assertFalse(gate.enabled)
+        assertTrue(o.state.value.enabled)  // the setting itself stays as the user left it
+    }
+
     @Test fun failuresFarApartDontAddUp() {
         var now = 0L
         val gate = ProximityGate { FrameEstimator { _, _, _ -> throw IllegalStateException() } }.apply { setEnabled(true) }

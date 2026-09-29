@@ -193,9 +193,7 @@ private fun CloseLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, si
  */
 @Composable
 private fun rendered(shapes: List<OverlayShape>, size: Int, draw: () -> ImageBitmap): ImageBitmap? {
-    val cache = remember(size) { object : LinkedHashMap<List<OverlayShape>, ImageBitmap>(8, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<List<OverlayShape>, ImageBitmap>) = size > 6
-    } }
+    val cache = remember(size) { BoundedCache<List<OverlayShape>, ImageBitmap>(6) }
     var image by remember(size) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(shapes, size) {
         image = cache[shapes] ?: withContext(Dispatchers.Default) { draw() }.also { cache[shapes] = it }

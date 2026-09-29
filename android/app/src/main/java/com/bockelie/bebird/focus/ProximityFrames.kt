@@ -41,8 +41,8 @@ class ProximityFrames(
             run(Runnable {
                 try {
                     publish(gate.onFrame(t, roll, fill))
-                } catch (t: Throwable) {
-                    failed(t)
+                } catch (failure: Throwable) {
+                    failed(failure)
                 } finally {
                     busy.set(false)
                 }
@@ -55,14 +55,17 @@ class ProximityFrames(
     }
 
     /** Worker only: a frame failed. Start over, or give up if it keeps failing. */
-    private fun failed(t: Throwable) {
+    private fun failed(failure: Throwable) {
         errors++
-        runCatching { onError(t) }
+        runCatching { onError(failure) }
         publish(null)
         val now = clockMs()
         failures.addLast(now)
         while (failures.isNotEmpty() && now - failures.first() > GIVE_UP_WINDOW_MS) failures.removeFirst()
-        if (failures.size >= GIVE_UP_AFTER) {
+        // Out of memory (or another VM error, except a stack overflow from one bad frame): a
+        // fresh estimator would only allocate again, so stop at once.
+        val fatal = failure is VirtualMachineError && failure !is StackOverflowError
+        if (fatal || failures.size >= GIVE_UP_AFTER) {
             gaveUp = true
             gate.setEnabled(false)  // drops the estimator and its buffers; the setting is untouched
             runCatching { onGiveUp() }

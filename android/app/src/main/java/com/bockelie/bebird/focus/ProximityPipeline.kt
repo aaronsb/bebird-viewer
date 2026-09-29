@@ -22,7 +22,6 @@ import java.util.concurrent.Executors
  */
 class ProximityPipeline(connection: ScopeConnection, kv: KeyValue, scope: CoroutineScope) {
     private val gate = ProximityGate()
-    val options = ProximityOptions(ProximitySettings(kv), gate)
 
     private val _result = MutableStateFlow<FocusResult?>(null)
     val result: StateFlow<FocusResult?> = _result.asStateFlow()
@@ -42,6 +41,16 @@ class ProximityPipeline(connection: ScopeConnection, kv: KeyValue, scope: Corout
         },
         // a result from a frame already queued when estimation was turned off is dropped
     ) { r -> _result.value = r.takeIf { gate.enabled } }
+    val options = ProximityOptions(ProximitySettings(kv), gate, stoppedForSession = { frames.gaveUp })
+
+    private var stoppedNoticeShown = false  // main thread
+
+    /** True the first time it's asked after estimation stopped: the notice is shown once per session. */
+    fun takeStoppedNotice(): Boolean {
+        if (!_stopped.value || stoppedNoticeShown) return false
+        stoppedNoticeShown = true
+        return true
+    }
 
     init {
         scope.launch {

@@ -61,6 +61,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -161,7 +162,7 @@ fun ViewerScreen(vm: ViewerViewModel) {
     }
 
     val stoppedNotice = stringResource(R.string.proximity_stopped)
-    LaunchedEffect(proximityStopped) { if (proximityStopped) snackbar.showSnackbar(stoppedNotice) }
+    LaunchedEffect(proximityStopped) { if (vm.proximity.takeStoppedNotice()) snackbar.showSnackbar(stoppedNotice) }
 
     Scaffold(modifier = Modifier.fillMaxSize(), snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         Column(
@@ -494,7 +495,7 @@ private fun ScaleRow(style: ScaleStyle, enabled: Boolean, onStyle: (ScaleStyle) 
         ScaleStyle.NONE to R.string.proximity_scale_off,
     )
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(stringResource(R.string.proximity_scale), Modifier.padding(end = 8.dp))
+        Text(stringResource(R.string.proximity_scale), Modifier.padding(end = 8.dp).alpha(if (enabled) 1f else 0.38f))
         SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
             options.forEachIndexed { i, (s, name) ->
                 SegmentedButton(
