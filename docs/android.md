@@ -87,7 +87,7 @@ Snapshots carry the same metadata as the desktop's (see [Snapshot metadata](desk
 
 ### Use common sense
 
-Proximity and the mm scale are estimated. The main cue is focus: how sharp the picture is compared with the sharpest it has been in the last half minute. The others are the brightness trend (the picture brightens as the tip approaches a surface), movement in the view, and how steadily the scope is held, from its motion sensor. The scope has no distance sensor, and the estimate can be wrong either way. Always rely on common sense to handle the scope safely; the indicators never replace it.
+Proximity and the mm scale are estimated. The main cue is focus: how sharp the picture is compared with the sharpest it has been in the last half minute. The others are the brightness trend (the picture brightens as the tip approaches a surface), movement in the view, and the scope's motion sensor: the roll angle in every frame tells hand-held from resting and steady from jittery (while it rests, the scale stays grey and CLOSE stays off). The scope has no distance sensor, and the estimate can be wrong either way. Always rely on common sense to operate the scope safely; the indicators never replace that.
 
 How it works, and its limits: [focus-detection.md](focus-detection.md).
 

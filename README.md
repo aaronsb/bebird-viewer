@@ -25,7 +25,7 @@ Android 10 or later. What you can do:
 |---|---|---|
 | <img src="docs/media/scale-ring.webp" alt="Five cyan rings, labelled ⌀2 to ⌀10 mm, around a centre crosshair over a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="docs/media/scale-bowtie.webp" alt="A cyan bowtie with arcs at ⌀2 to ⌀10 mm across a ruler, and a yellow CLOSE warning top left" width="200"> | <img src="docs/media/scale-bar.webp" alt="A cyan bar marked 0 to 10 whose ticks line up with the ruler's mm marks, and a yellow CLOSE warning top left" width="200"> |
 
-The CLOSE warning and the mm scale are estimates. They come mainly from how sharp the picture is, plus how its brightness changes, how the view moves, and how steadily the scope is held. They can be wrong, so always use common sense to handle the scope safely; the indicators never replace it.
+The CLOSE warning and the mm scale are estimates. They come from focus (how sharp the picture is), movement and brightness in the picture, and the scope's motion sensor; the scope has no distance sensor. They can be wrong, so always rely on common sense to operate the scope safely; the indicators never replace that.
 
 ### Getting started
 
