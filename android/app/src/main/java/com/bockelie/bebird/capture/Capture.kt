@@ -6,6 +6,9 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
+import com.bockelie.bebird.annotate.AnnotationRenderer
+import com.bockelie.bebird.annotate.Mark
+import com.bockelie.bebird.annotate.annotatedStills
 import com.bockelie.bebird.band.BandData
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.band.PixelImage
@@ -68,13 +71,33 @@ class Capture(resolver: ContentResolver) {
         }
     }
 
+    /**
+     * Save the paused [shot] (its frame already upright, never a zoomed crop) as a snapshot
+     * saves it, then the same picture with [marks] over the frame as <name>_annotated.jpg,
+     * marked annotated in its EXIF. [done] gets each result.
+     */
+    fun snapshotAnnotated(shot: Shot, marks: List<Mark>, annotations: AnnotationRenderer, done: (Result) -> Unit) = worker.execute {
+        val time = shot.meta.taken.toLocalDateTime()
+        val name = CaptureNames.still(time)
+        val (plain, annotated) = try {
+            val upright = Frames.rotated(shot.frame, shot.rotation).toPixelImage()
+            annotatedStills(upright, shot.renderer, shot.band, shot.overlay, marks, annotations)
+        } catch (e: Throwable) {
+            Log.e(TAG, "drawing the annotations failed", e)
+            return@execute done(Result.Failed(name, e.message ?: e.javaClass.simpleName))
+        }
+        val dir = CaptureNames.folder(time.toLocalDate())
+        save(name, dir, plain, shot.meta, done)
+        save(CaptureNames.annotated(time), dir, annotated, shot.meta.copy(annotated = true), done)
+    }
+
     private fun save(name: String, dir: String, image: PixelImage, meta: SnapshotMeta, done: (Result) -> Unit) {
         try {
             val jpeg = ByteArrayOutputStream().also { image.toBitmap().compress(Bitmap.CompressFormat.JPEG, 95, it) }.toByteArray()
             val uri = files.write(MediaStoreFiles.Kind.STILL, name, dir, ExifWriter.insert(jpeg, meta))
             Log.i(TAG, "saved $name (${image.width}x${image.height})")
             done(Result.Saved(uri, name, video = false))
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "saving $name failed", e)
             done(Result.Failed(name, e.message ?: e.javaClass.simpleName))
         }

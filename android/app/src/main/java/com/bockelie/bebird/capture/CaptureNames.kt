@@ -4,9 +4,12 @@ package com.bockelie.bebird.capture
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-/** File names for captures, as the desktop's: bebird-YYYYMMDD-HHMMSS[_zoomed].ext. */
+/** File names for captures, as the desktop's: bebird-YYYYMMDD-HHMMSS[_zoomed|_annotated].ext. */
 object CaptureNames {
     fun still(time: LocalDateTime, zoomed: Boolean = false) = base(time) + (if (zoomed) "_zoomed" else "") + ".jpg"
+
+    /** The annotated copy of the still [still] would name for the same [time]. */
+    fun annotated(time: LocalDateTime) = base(time) + "_annotated.jpg"
 
     fun video(time: LocalDateTime) = base(time) + ".mp4"
 
