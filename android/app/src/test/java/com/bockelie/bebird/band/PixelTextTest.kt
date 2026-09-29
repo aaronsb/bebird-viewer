@@ -8,12 +8,12 @@ import org.junit.Test
 import java.io.BufferedReader
 import java.io.StringReader
 
-class CircleTextTest {
-    private val text = CircleText(Fonts.source)
+class PixelTextTest {
+    private val text = PixelText(Fonts.source)
 
     @Test fun oneShortParagraphSitsInTheMiddle() {
         // 64 px: one row, its 16-px cell from y 24; "I" is one 8-px cell from x 28
-        assertEquals(listOf(CircleText.Line("I", 28, 24)), text.layout(listOf("I"), 64))
+        assertEquals(listOf(PixelText.Line("I", 28, 24)), text.layout(listOf("I"), 64))
     }
 
     @Test fun linesWrapToTheChordAtTheirHeight() {
@@ -21,14 +21,14 @@ class CircleTextTest {
         // so "CCCC DDDD" shares row 2 and "EEEE" goes to the narrower row 3. Row 1 is the blank
         // between paragraphs.
         assertEquals(
-            listOf(CircleText.Line("AB", 42, 12), CircleText.Line("CCCC DDDD", 14, 52), CircleText.Line("EEEE", 34, 72)),
+            listOf(PixelText.Line("AB", 42, 12), PixelText.Line("CCCC DDDD", 14, 52), PixelText.Line("EEEE", 34, 72)),
             text.layout(listOf("AB", "CCCC DDDD EEEE"), 100),
         )
     }
 
     @Test fun aWordTooLongForItsRowIsBroken() {
         assertEquals(
-            listOf(CircleText.Line("ABCDEFGHI", 14, 32), CircleText.Line("JKLMNOP", 22, 52)),
+            listOf(PixelText.Line("ABCDEFGHI", 14, 32), PixelText.Line("JKLMNOP", 22, 52)),
             text.layout(listOf("ABCDEFGHIJKLMNOP"), 100),
         )
     }
@@ -82,6 +82,30 @@ class CircleTextTest {
             ENDCHAR
             ENDFONT
         """.trimIndent())))
-        assertEquals("A... B's", CircleText(GlyphSource(bare)).displayable("A… B’s"))
+        assertEquals("A... B's", PixelText(GlyphSource(bare)).displayable("A… B’s"))
+    }
+
+    @Test fun rightAlignedLinesEndTogether() {
+        assertEquals(
+            listOf(PixelText.Line("AB", 16, 0), PixelText.Line("CCCC", 0, 20)),
+            text.rightAligned(listOf("AB", "CCCC"), 100, 3),
+        )
+        assertEquals(listOf(PixelText.Line("AA", 0, 0), PixelText.Line("BB", 0, 20)), text.rightAligned(listOf("AA BB"), 24, 2))
+        assertNull("needs three rows", text.rightAligned(listOf("AA BB CC"), 24, 2))
+    }
+
+    @Test fun anOutlineRingsEachGlyphInBlack() {
+        val img = text.draw(listOf(PixelText.Line("I", 1, 1)), 10, 18, BandRenderer.TAG, outline = true)
+        val g = Fonts.source.glyph('I'.code)!!
+        fun glyphAt(x: Int, y: Int) = x - 1 in 0 until 8 && y - 1 in 0 until 16 && g.pixel(x - 1, y - 1)
+        for (y in 0 until 18) for (x in 0 until 10) {
+            val near = (-1..1).any { dy -> (-1..1).any { dx -> glyphAt(x + dx, y + dy) } }
+            val expected = when {
+                glyphAt(x, y) -> BandRenderer.TAG
+                near -> BandRenderer.BACKGROUND
+                else -> 0
+            }
+            assertEquals("($x, $y)", expected, img.pixels[y * 10 + x])
+        }
     }
 }

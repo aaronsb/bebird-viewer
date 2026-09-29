@@ -7,26 +7,26 @@ import kotlin.math.max
 import kotlin.math.sqrt
 
 /**
- * A few short paragraphs centred in the image circle, in the band's font at scale 1: the message
- * in the empty circle while there is no picture (#32). Each line is word-wrapped to fit the
- * circle's chord at its height, less a one-cell margin each side; a blank line separates
- * paragraphs. Pure; the screen scales the image up by a whole factor, without smoothing.
+ * A few short paragraphs in the band's font at scale 1, word-wrapped: centred in the image
+ * circle (the empty circle's message, #32), or right-aligned in a column (the scale's
+ * disclaimer, #35). Pure; the screen scales the image up by a whole factor, without smoothing.
  */
-class CircleText(private val font: GlyphSource) {
+class PixelText(private val font: GlyphSource) {
     /** One line, its cell's top left at ([x], [y]) in the image. */
     data class Line(val text: String, val x: Int, val y: Int)
 
     /**
      * Where [paragraphs]' lines go in a [side] × [side] image with the circle inscribed: the
-     * fewest rows that hold them, centred vertically, each line centred in its row. A word too
-     * long for its row is broken. Null if the circle is too small to hold them at all.
+     * fewest rows that hold them, centred vertically, each line centred in its row and fitting
+     * the circle's chord at its height, less a one-cell margin each side. A blank row separates
+     * paragraphs; a word too long for its row is broken. Null if the circle is too small.
      */
     fun layout(paragraphs: List<String>, side: Int): List<Line>? {
-        val words = paragraphs.map { p -> displayable(p).split(' ').filter { it.isNotEmpty() } }.filter { it.isNotEmpty() }
+        val words = words(paragraphs)
         if (words.isEmpty()) return emptyList()
         for (n in 1..side / PITCH) {
             val top = (side - (n * PITCH - GAP)) / 2
-            val rows = fill(words, n) { i -> room(top + i * PITCH, side) } ?: continue
+            val rows = fill(words, n, blankBetween = true) { i -> room(top + i * PITCH, side) } ?: continue
             return rows.mapIndexedNotNull { i, text ->
                 text.takeIf { it.isNotEmpty() }?.let { Line(it, (side - width(it)) / 2, top + i * PITCH) }
             }
@@ -35,18 +35,46 @@ class CircleText(private val font: GlyphSource) {
     }
 
     /** [paragraphs] drawn in [color] on a transparent [side] × [side] image; empty if they don't fit. */
-    fun render(paragraphs: List<String>, side: Int, color: Int = BandRenderer.VALUE): PixelImage {
-        val px = IntArray(side * side)
-        for (line in layout(paragraphs, side).orEmpty()) {
+    fun render(paragraphs: List<String>, side: Int, color: Int = BandRenderer.VALUE): PixelImage =
+        draw(layout(paragraphs, side).orEmpty(), side, side, color)
+
+    /**
+     * [paragraphs] right-aligned in a column at most [maxWidth] px wide, each on a new row, at most
+     * [maxRows] rows; x is from the left of the widest line, which starts at 0. A word too long
+     * for the column is broken. Null if they need more rows.
+     */
+    fun rightAligned(paragraphs: List<String>, maxWidth: Int, maxRows: Int): List<Line>? {
+        val rows = fill(words(paragraphs), maxRows, blankBetween = false) { maxWidth } ?: return null
+        val used = rows.maxOfOrNull { width(it) } ?: 0
+        return rows.mapIndexed { i, t -> Line(t, used - width(t), i * PITCH) }
+    }
+
+    /**
+     * [lines] in [color] on a transparent [width] × [height] image. With [outline], each glyph's
+     * pixels are first drawn one pixel out in all eight directions in black, as for CLOSE, so
+     * the text reads over the picture; the caller leaves a pixel of room round the lines.
+     */
+    fun draw(lines: List<Line>, width: Int, height: Int, color: Int, outline: Boolean = false): PixelImage {
+        val px = IntArray(width * height)
+        for (line in lines) {
             var x = line.x
             for (cp in line.text.codePoints()) {
                 val g = font.glyph(cp) ?: continue
-                drawGlyph(px, side, side, g, x, line.y, 1, color)
+                if (outline) for (dy in -1..1) for (dx in -1..1) {
+                    if (dx != 0 || dy != 0) drawGlyph(px, width, height, g, x + dx, line.y + dy, 1, BandRenderer.BACKGROUND)
+                }
+                drawGlyph(px, width, height, g, x, line.y, 1, color)
                 x += g.cells * PixelFont.CELL
             }
         }
-        return PixelImage(side, side, px)
+        return PixelImage(width, height, px)
     }
+
+    /** Height in pixels of [rows] rows of text. */
+    fun height(rows: Int): Int = if (rows <= 0) 0 else rows * PITCH - GAP
+
+    private fun words(paragraphs: List<String>) =
+        paragraphs.map { p -> displayable(p).split(' ').filter { it.isNotEmpty() } }.filter { it.isNotEmpty() }
 
     /** Width in pixels of [text] at scale 1. */
     fun width(text: String): Int = text.codePoints().toArray().sumOf { font.cells(it) } * PixelFont.CELL
@@ -71,13 +99,14 @@ class CircleText(private val font: GlyphSource) {
     }
 
     /**
-     * [words] greedily into [n] rows, row i at most [roomOf] (i) px wide, a blank row between
-     * paragraphs; null if they don't fit. A word wider than its row is broken to fill it.
+     * [words] greedily into [n] rows, row i at most [roomOf] (i) px wide, each paragraph on a new
+     * row ([blankBetween]: after a blank one); null if they don't fit. A word wider than its row
+     * is broken to fill it.
      */
-    private fun fill(words: List<List<String>>, n: Int, roomOf: (Int) -> Int): List<String>? {
+    private fun fill(words: List<List<String>>, n: Int, blankBetween: Boolean, roomOf: (Int) -> Int): List<String>? {
         val rows = ArrayList<String>()
         for ((p, paragraph) in words.withIndex()) {
-            if (p > 0) rows += ""
+            if (p > 0 && blankBetween) rows += ""
             var line = ""
             val queue = ArrayDeque(paragraph)
             while (queue.isNotEmpty()) {

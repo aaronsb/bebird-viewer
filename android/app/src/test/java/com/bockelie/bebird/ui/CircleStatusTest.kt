@@ -2,8 +2,7 @@
 package com.bockelie.bebird.ui
 
 import android.net.Network
-import com.bockelie.bebird.R
-import com.bockelie.bebird.band.CircleText
+import com.bockelie.bebird.band.PixelText
 import com.bockelie.bebird.band.Fonts
 import com.bockelie.bebird.wifi.ScopeWifi
 import com.bockelie.bebird.wifi.ScopeWifi.Target
@@ -11,7 +10,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
-import java.io.File
 
 class CircleStatusTest {
     /** An instance of a framework class without running its (stubbed) constructor. */
@@ -30,16 +28,7 @@ class CircleStatusTest {
         ScopeWifi.State.Failed("permission revoked"),
     )
 
-    /** The app's strings as written in values/strings.xml (JVM tests run in the module directory). */
-    private val strings: Map<String, String> by lazy {
-        val xml = File("src/main/res/values/strings.xml").readText()
-        Regex("""<string name="([^"]+)">(.*?)</string>""").findAll(xml).associate { it.groupValues[1] to it.groupValues[2].replace("\\'", "'") }
-    }
-
-    private fun text(id: Int): String {
-        val name = R.string::class.java.fields.first { it.getInt(null) == id }.name
-        return strings.getValue(name)
-    }
+    private fun text(id: Int) = AppStrings.text(id)
 
     @Test fun eachStateHasItsMessage() {
         assertEquals(
@@ -81,7 +70,7 @@ class CircleStatusTest {
 
     @Test fun everyMessageFitsTheCircle() {
         // 480 px is the smallest drawn size on a screen at least that wide; 240 is a small window
-        val circle = CircleText(Fonts.source)
+        val circle = PixelText(Fonts.source)
         for (s in CircleStatus.entries) for (side in listOf(480, 240)) {
             val paragraphs = listOf(text(s.title), text(s.hint))
             val lines = circle.layout(paragraphs, side)

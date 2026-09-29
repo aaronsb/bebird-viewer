@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
@@ -44,13 +45,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import com.bockelie.bebird.R
 import com.bockelie.bebird.band.BandRenderer
-import com.bockelie.bebird.band.CircleText
+import com.bockelie.bebird.band.PixelText
 import com.bockelie.bebird.band.GlyphSource
 import com.bockelie.bebird.band.toBitmap
 import com.bockelie.bebird.capture.ZoomCrop
 import com.bockelie.bebird.focus.FrameGeometry
 import com.bockelie.bebird.focus.OverlayRenderer
 import com.bockelie.bebird.focus.OverlayShape
+import com.bockelie.bebird.focus.ScaleDisclaimer
 import com.bockelie.bebird.focus.ScaleOverlay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -122,7 +124,7 @@ fun ZoomableCircle(
                 // picture (so mm stay true on screen), but stays upright: see scaleLayerRotation.
                 // Display only; saved files don't include it.
                 if (frame != null && overlayRenderer != null) {
-                    ScaleLayer(proximity.filterNot(::isClose), overlayRenderer, side.toInt(), scaleLayerRotation(rotation))
+                    ScaleLayer(proximity.filterNot(ScaleOverlay::isClose), overlayRenderer, side.toInt(), scaleLayerRotation(rotation))
                 }
                 // Display only, like the scale: captures take the frame, never this layer.
                 if (frame == null && status != null && overlayRenderer != null) {
@@ -131,7 +133,11 @@ fun ZoomableCircle(
             }
             // CLOSE stays upright at the viewport's upper left, whatever the roll or zoom.
             if (frame != null && overlayRenderer != null) {
-                CloseLayer(proximity.filter(::isClose), overlayRenderer, side.toInt(), Modifier.align(Alignment.TopStart))
+                CloseLayer(proximity.filter(ScaleOverlay::isClose), overlayRenderer, side.toInt(), Modifier.align(Alignment.TopStart))
+            }
+            // The scale is an estimate: said at the upper right, upright and fixed like CLOSE (#35).
+            if (overlayRenderer != null && ScaleDisclaimer.shown(frame != null, proximity)) {
+                DisclaimerLayer(overlayRenderer.font, w.toInt(), h.toInt(), side.toInt(), Modifier.align(Alignment.TopEnd))
             }
         }
     }
@@ -149,9 +155,6 @@ class ZoomView {
     fun crop(frameSize: Int): ZoomCrop.Rect? =
         ZoomCrop.visible(frameSize, viewportW, viewportH, minOf(viewportW, viewportH), zoom, offset.x, offset.y)
 }
-
-private fun isClose(s: OverlayShape) =
-    s is OverlayShape.Warning || (s is OverlayShape.Label && s.text == ScaleOverlay.CLOSE_LABEL)
 
 /** The scale drawn at the circle's on-screen size [side] px, so its rings stay one pixel thin. */
 @Composable
@@ -179,7 +182,7 @@ private fun StatusLayer(status: CircleStatus, font: GlyphSource, side: Int, modi
     val small = side / k
     val title = stringResource(status.title)
     val hint = stringResource(status.hint)
-    val text = remember(font) { CircleText(font) }
+    val text = remember(font) { PixelText(font) }
     var image by remember { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(text, title, hint, small) {
         image = try {
@@ -200,6 +203,47 @@ private fun StatusLayer(status: CircleStatus, font: GlyphSource, side: Int, modi
             contentScale = ContentScale.FillBounds,
             filterQuality = FilterQuality.None,
             modifier = modifier.size((shown.width * k).toDp(), (shown.height * k).toDp()),
+        )
+    }
+}
+
+/**
+ * The scale's disclaimer at the viewport's upper right, clear of CLOSE: drawn at scale 1 off the
+ * main thread and shown at [ScaleDisclaimer.place]'s whole scale without smoothing. TalkBack
+ * reads the full sentence.
+ */
+@Composable
+private fun DisclaimerLayer(font: GlyphSource, viewportW: Int, viewportH: Int, side: Int, modifier: Modifier) {
+    val k = maxOf(1, side / FrameGeometry.SIZE)
+    val paragraphs = listOf(
+        stringResource(R.string.scale_note_title), stringResource(R.string.scale_note_focus), stringResource(R.string.scale_note_sensor),
+    )
+    val description = stringResource(R.string.scale_note_description)
+    val text = remember(font) { PixelText(font) }
+    var drawn by remember { mutableStateOf<Pair<ImageBitmap, Int>?>(null) }
+    LaunchedEffect(text, paragraphs, viewportW, viewportH, k) {
+        drawn = try {
+            withContext(Dispatchers.Default) {
+                ScaleDisclaimer.place(text, paragraphs, viewportW, viewportH, k, CLOSE_W * k)?.let { p ->
+                    text.draw(p.lines, p.width, p.height, BandRenderer.TAG, outline = true).toBitmap().asImageBitmap() to p.scale
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Log.e("BebirdSpike", "scale note not drawn", e)
+            null
+        }
+    }
+    val (image, s) = drawn ?: return
+    with(LocalDensity.current) {
+        val inset = (ScaleDisclaimer.INSET * s).toDp()
+        Image(
+            bitmap = image,
+            contentDescription = description,
+            contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.None,
+            modifier = modifier.padding(top = inset, end = inset).size((image.width * s).toDp(), (image.height * s).toDp()),
         )
     }
 }
