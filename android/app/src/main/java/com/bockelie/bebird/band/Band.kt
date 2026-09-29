@@ -130,16 +130,19 @@ class BandRenderer(private val font: GlyphSource) {
     /** The band alone, [width] wide: black, glyphs drawn with integer scaling and no smoothing. */
     fun render(d: BandData, width: Int): PixelImage = renderInto(d, width, IntArray(width * height(width)))
 
-    /** Like [render], drawing into [px] (width × height ints, reused between redraws). */
-    fun renderInto(d: BandData, width: Int, px: IntArray): PixelImage {
+    /**
+     * Like [render], drawing into [px] (width × height ints, reused between redraws), in
+     * [palette]'s colours: the screen's in the light theme; saved output is always [ViewerPalette.DARK].
+     */
+    fun renderInto(d: BandData, width: Int, px: IntArray, palette: ViewerPalette = ViewerPalette.DARK): PixelImage {
         val s = scale(width)
         val h = height(width)
         require(px.size == width * h) { "buffer is ${px.size}, not $width x $h" }
-        px.fill(BACKGROUND)
+        px.fill(palette.field)
         val left = left(width)
         for (p in BandLayout.place(d, font)) {
             val g = font.glyph(p.codepoint) ?: continue
-            val color = if (p.bright) VALUE else TAG
+            val color = if (p.bright) palette.value else palette.tag
             drawGlyph(px, width, h, g, left + p.col * PixelFont.CELL * s, (PAD + p.row * PixelFont.HEIGHT) * s, s, color)
         }
         return PixelImage(width, h, px)

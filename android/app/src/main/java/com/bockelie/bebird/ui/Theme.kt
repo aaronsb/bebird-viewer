@@ -9,8 +9,14 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
+import com.bockelie.bebird.band.ViewerPalette
 import com.bockelie.bebird.settings.ThemeMode
+
+/** The viewer's surround on screen: light in the light theme (#51). Saved files never use it. */
+val LocalViewerPalette = staticCompositionLocalOf { ViewerPalette.DARK }
 
 /** Whether [mode] means dark right now (System follows the phone). */
 @Composable
@@ -20,7 +26,7 @@ fun isDark(mode: ThemeMode): Boolean = when (mode) {
     ThemeMode.DARK -> true
 }
 
-/** Material 3, light or dark per [mode], with dynamic color on 12+. */
+/** Material 3, light or dark per [mode], with dynamic color on 12+, and the viewer's palette to match. */
 @Composable
 fun BebirdTheme(mode: ThemeMode, content: @Composable () -> Unit) {
     val dark = isDark(mode)
@@ -30,5 +36,7 @@ fun BebirdTheme(mode: ThemeMode, content: @Composable () -> Unit) {
         dark -> darkColorScheme()
         else -> lightColorScheme()
     }
-    MaterialTheme(colorScheme = colors, content = content)
+    CompositionLocalProvider(LocalViewerPalette provides if (dark) ViewerPalette.DARK else ViewerPalette.LIGHT) {
+        MaterialTheme(colorScheme = colors, content = content)
+    }
 }

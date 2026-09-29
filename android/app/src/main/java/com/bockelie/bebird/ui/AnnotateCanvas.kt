@@ -64,8 +64,10 @@ import com.bockelie.bebird.annotate.PressOutcome
 import com.bockelie.bebird.annotate.Pt
 import com.bockelie.bebird.annotate.Tool
 import com.bockelie.bebird.annotate.classifyMovePress
-import com.bockelie.bebird.band.BandRenderer
+import com.bockelie.bebird.band.PixelText
+import com.bockelie.bebird.band.ViewerPalette
 import com.bockelie.bebird.band.toBitmap
+import com.bockelie.bebird.capture.ScaleStamp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -117,7 +119,8 @@ class AnnotateTools {
 
 /**
  * The paused, upright [image] fitted whole in the viewport (no zoom), with the proximity
- * [scale] kept from the pause (if one was shown) and [marks] over it.
+ * [scale] kept from the pause (if one was shown; inside the circle, with its note drawn in the
+ * screen's palette in the corner with [text], as the save has it) and [marks] over it.
  * Dragging draws with the current tool, from where the finger went down, following that
  * finger only; with Text, a tap chooses where the label goes; with Move, a drag on a mark
  * moves it and holding still on it deletes it. No input while not [enabled]
@@ -129,6 +132,7 @@ class AnnotateTools {
 fun AnnotateCanvas(
     image: Bitmap, marks: List<Mark>, renderer: AnnotationRenderer, tools: AnnotateTools, scale: Bitmap?, outline: Boolean,
     enabled: Boolean, onMark: (Mark) -> Unit, onMove: (Int, Mark) -> Unit, onDelete: (Int) -> Unit, modifier: Modifier,
+    text: PixelText? = null,
 ) {
     val description = stringResource(R.string.annotate_canvas_description)
     val addMark by rememberUpdatedState(onMark)
@@ -137,7 +141,8 @@ fun AnnotateCanvas(
     val current by rememberUpdatedState(marks)
     val haptic = LocalHapticFeedback.current
     val picker = remember(renderer, image.width, image.height) { Picker(renderer, image.width, image.height) }
-    BoxWithConstraints(modifier.clipToBounds().background(Color(BandRenderer.BACKGROUND))) {
+    val palette = LocalViewerPalette.current  // the surround follows the live view's (#51)
+    BoxWithConstraints(modifier.clipToBounds().background(Color(palette.field))) {
         val vw = constraints.maxWidth.toFloat()
         val vh = constraints.maxHeight.toFloat()
         val fit = remember(vw, vh, image.width, image.height) { ImageFit(vw, vh, image.width, image.height) }
@@ -165,7 +170,7 @@ fun AnnotateCanvas(
                     contentDescription = null,
                     contentScale = ContentScale.FillBounds,
                     modifier = Modifier.fillMaxSize().clip(CircleShape).background(Color.Black)
-                        .then(if (outline) Modifier.border(Dp.Hairline, Color(BandRenderer.CIRCLE), CircleShape) else Modifier),
+                        .then(if (outline) Modifier.border(Dp.Hairline, Color(palette.circle), CircleShape) else Modifier),
                 )
                 // The proximity scale kept from the pause, under the marks as in the saved copy.
                 scale?.let {
@@ -174,8 +179,9 @@ fun AnnotateCanvas(
                         contentDescription = null,
                         contentScale = ContentScale.FillBounds,
                         filterQuality = FilterQuality.None,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().clip(CircleShape),
                     )
+                    if (text != null) ScaleNote(text, w, palette)
                 }
                 layer?.let { l ->
                     Image(
@@ -426,4 +432,26 @@ private fun rememberLayer(marks: List<Mark>, picked: Mark?, w: Int, h: Int, rend
         }
     }
     return layer
+}
+
+/**
+ * The saved scale's note ([ScaleStamp.NOTE]) in the upper right corner of the [width]-px fitted
+ * image, where the save puts it, but in the screen's [palette]: on the light field it reads as
+ * the rest of the surround does, not as a patch of the saved file's black.
+ */
+@Composable
+private fun ScaleNote(text: PixelText, width: Int, palette: ViewerPalette) {
+    val note = remember(text, width) { ScaleStamp.note(text, width) } ?: return
+    val image = remember(note, palette) {
+        text.draw(note.lines, note.width, note.height, palette.note, outline = true, outlineColor = palette.halo).toBitmap().asImageBitmap()
+    }
+    with(LocalDensity.current) {
+        Image(
+            bitmap = image,
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.None,
+            modifier = Modifier.offset { IntOffset(note.left, note.top) }.size((note.width * note.scale).toDp(), (note.height * note.scale).toDp()),
+        )
+    }
 }

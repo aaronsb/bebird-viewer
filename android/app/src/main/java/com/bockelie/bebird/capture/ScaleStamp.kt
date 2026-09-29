@@ -28,6 +28,12 @@ data class SavedScale(val style: ScaleStyle, val locked: Boolean) {
  */
 class ScaleStamp(private val overlay: OverlayRenderer, private val text: PixelText) {
     /**
+     * Where [NOTE] goes on an image: [lines] (outline room included) in a [width] × [height]
+     * image shown [scale] times larger with its top left at ([left], [top]).
+     */
+    data class Note(val scale: Int, val left: Int, val top: Int, val width: Int, val height: Int, val lines: List<PixelText.Line>)
+
+    /**
      * The scale alone on a transparent [w] × [h] frame-size image, centred on the frame's centre
      * at the screen's px/mm for a frame that size, inside the image circle only.
      */
@@ -60,13 +66,13 @@ class ScaleStamp(private val overlay: OverlayRenderer, private val text: PixelTe
      * the black and the hair-thin ring never crosses it.
      */
     fun withNote(base: PixelImage): PixelImage {
-        val s = maxOf(1, base.width / FrameGeometry.SIZE)
-        val lines = text.rightAligned(NOTE, base.width / 2 / s - 2, NOTE.size) ?: return base
-        val nw = (lines.maxOfOrNull { it.x + text.width(it.text) } ?: 0) + 2
-        val nh = text.height(lines.size) + 2
-        val note = text.draw(lines.map { it.copy(x = it.x + 1, y = it.y + 1) }, nw, nh, BandRenderer.TAG, outline = true)
-        val left = base.width - (NOTE_INSET + nw) * s
-        val top = NOTE_INSET * s
+        val n = note(text, base.width) ?: return base
+        val s = n.scale
+        val nw = n.width
+        val nh = n.height
+        val note = text.draw(n.lines, nw, nh, BandRenderer.TAG, outline = true)
+        val left = n.left
+        val top = n.top
         val px = base.pixels.copyOf()
         for (y in 0 until nh * s) for (x in 0 until nw * s) {
             val p = note.pixels[(y / s) * nw + x / s]
@@ -114,6 +120,15 @@ class ScaleStamp(private val overlay: OverlayRenderer, private val text: PixelTe
 
         /** The note's gap from the top and right edges, in note pixels: small, to stay in the corner outside the circle. */
         const val NOTE_INSET = 1
+
+        /** [NOTE]'s place in the upper right corner of an image [imageWidth] px wide, at a whole scale (1 at 480); null if it doesn't fit. */
+        fun note(text: PixelText, imageWidth: Int): Note? {
+            val s = maxOf(1, imageWidth / FrameGeometry.SIZE)
+            val lines = text.rightAligned(NOTE, imageWidth / 2 / s - 2, NOTE.size) ?: return null
+            val nw = (lines.maxOfOrNull { it.x + text.width(it.text) } ?: 0) + 2
+            val nh = text.height(lines.size) + 2
+            return Note(s, imageWidth - (NOTE_INSET + nw) * s, NOTE_INSET * s, nw, nh, lines.map { it.copy(x = it.x + 1, y = it.y + 1) })
+        }
 
         /**
          * [scale] and what [draw] makes of it, or no scale at all if drawing fails ([onFailure] is

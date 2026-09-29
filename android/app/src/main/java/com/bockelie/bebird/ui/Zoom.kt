@@ -77,9 +77,9 @@ fun ZoomableCircle(
     proximity: List<OverlayShape> = emptyList(), overlayRenderer: OverlayRenderer? = null,
     status: CircleStatus? = null, text: PixelText? = null, batteryLow: Boolean = false,
 ) {
-    // Outside the image circle the viewport is the band's black, not the theme's surface, so
-    // image and band read as one panel (as in saved stills with the overlay).
-    val palette = ViewerPalette.DARK
+    // Outside the image circle the viewport is the band's field (black, or light in the light
+    // theme), not the theme's surface, so image and band read as one panel.
+    val palette = LocalViewerPalette.current
     BoxWithConstraints(modifier.clipToBounds().background(Color(palette.field)), contentAlignment = Alignment.Center) {
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
@@ -316,14 +316,14 @@ private fun StatusLayer(status: CircleStatus, text: PixelText, viewportW: Int, v
  */
 @Composable
 private fun DisclaimerLayer(text: PixelText, viewportW: Int, viewportH: Int, side: Int, modifier: Modifier) {
-    val palette = ViewerPalette.DARK
     val k = maxOf(1, side / FrameGeometry.SIZE)
     val paragraphs = listOf(
         stringResource(R.string.scale_note_title), stringResource(R.string.scale_note_focus), stringResource(R.string.scale_note_sensor),
     )
     val description = stringResource(R.string.scale_note_description)
     var drawn by remember { mutableStateOf<Pair<ImageBitmap, Int>?>(null) }
-    LaunchedEffect(text, paragraphs, viewportW, viewportH, k) {
+    val palette = LocalViewerPalette.current
+    LaunchedEffect(text, paragraphs, viewportW, viewportH, k, palette) {
         drawn = try {
             withContext(Dispatchers.Default) {
                 ScaleDisclaimer.place(text, paragraphs, viewportW, viewportH, k, CLOSE_W * k)?.let { p ->
@@ -353,11 +353,11 @@ private fun DisclaimerLayer(text: PixelText, viewportW: Int, viewportH: Int, sid
 /** BATTERY LOW at CLOSE's whole scale. TalkBack announces it when it appears. */
 @Composable
 private fun BatteryLayer(text: PixelText, side: Int, modifier: Modifier) {
-    val palette = ViewerPalette.DARK
     val k = maxOf(1, side / FrameGeometry.SIZE)
     val label = stringResource(R.string.battery_low)
     val description = stringResource(R.string.battery_low_description)
-    val image = remember(text, label, k) {
+    val palette = LocalViewerPalette.current
+    val image = remember(text, label, k, palette) {
         val box = BatteryLow.box(text, label, k)
         text.draw(listOf(PixelText.Line(label, 1, 1)), box.width / k, box.height / k, palette.batteryLow, outline = true, outlineColor = palette.halo)
             .toBitmap().asImageBitmap()
@@ -375,6 +375,10 @@ private fun BatteryLayer(text: PixelText, side: Int, modifier: Modifier) {
     }
 }
 
+/** CLOSE's [shapes] with its label in [palette]'s warning colour; the triangle unchanged. */
+internal fun closeInPalette(shapes: List<OverlayShape>, palette: ViewerPalette): List<OverlayShape> =
+    shapes.map { if (it is OverlayShape.Label) it.copy(color = palette.warning) else it }
+
 /** The CLOSE indicator's raw-frame window: the triangle and its label, upper left. */
 private const val CLOSE_X = 10.0
 private const val CLOSE_Y = 8.0
@@ -383,11 +387,15 @@ private const val CLOSE_H = 58
 
 /** CLOSE at a whole scale for this screen, upright and outside the zoom. */
 @Composable
-private fun CloseLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, side: Int, modifier: Modifier) {
-    if (shapes.isEmpty()) return
+private fun CloseLayer(close: List<OverlayShape>, renderer: OverlayRenderer, side: Int, modifier: Modifier) {
+    if (close.isEmpty()) return
     val k = maxOf(1, side / FrameGeometry.SIZE)
-    val image = rendered(shapes, k) {
-        renderer.render(shapes, CLOSE_W * k, CLOSE_H * k, k.toDouble(), CLOSE_X, CLOSE_Y).toBitmap().asImageBitmap()
+    val palette = LocalViewerPalette.current
+    // the label in the palette's warning colour and halo; the triangle keeps its own colours
+    val shapes = remember(close, palette) { closeInPalette(close, palette) }
+    val image = rendered(shapes to palette.halo, k) {
+        renderer.render(shapes, CLOSE_W * k, CLOSE_H * k, k.toDouble(), CLOSE_X, CLOSE_Y, labelOutline = palette.halo)
+            .toBitmap().asImageBitmap()
     } ?: return
     val description = stringResource(R.string.proximity_close_description)
     with(LocalDensity.current) {
@@ -403,16 +411,17 @@ private fun CloseLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, si
 }
 
 /**
- * [draw]'s image for ([shapes], [size]), rasterised off the main thread; the previous image
- * stays up until the new one is ready. A few recent ones are kept, so flipping between locked
- * and unlocked (or CLOSE on and off) reuses them instead of drawing again.
+ * [draw]'s image for ([key], [size]), rasterised off the main thread; the previous image
+ * stays up until the new one is ready. [key] names everything the drawing depends on (the
+ * shapes, and anything else such as a colour). A few recent ones are kept, so flipping between
+ * locked and unlocked (or CLOSE on and off) reuses them instead of drawing again.
  */
 @Composable
-private fun rendered(shapes: List<OverlayShape>, size: Int, draw: () -> ImageBitmap): ImageBitmap? {
-    val cache = remember(size) { BoundedCache<List<OverlayShape>, ImageBitmap>(6) }
+private fun rendered(key: Any, size: Int, draw: () -> ImageBitmap): ImageBitmap? {
+    val cache = remember(size) { BoundedCache<Any, ImageBitmap>(6) }
     var image by remember(size) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(shapes, size) {
-        image = cache[shapes] ?: withContext(Dispatchers.Default) { draw() }.also { cache[shapes] = it }
+    LaunchedEffect(key, size) {
+        image = cache[key] ?: withContext(Dispatchers.Default) { draw() }.also { cache[key] = it }
     }
     return image
 }

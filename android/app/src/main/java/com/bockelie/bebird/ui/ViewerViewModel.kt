@@ -271,8 +271,10 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
                 val (upright, drawnScale) = withContext(Dispatchers.Default) {
                     val upright = Frames.rotated(s.frame, s.rotation)
                     // If the scale can't be drawn, pause without it (and save none) rather than not at all.
+                    // On screen the scale alone, inside the circle; the view draws the note in the
+                    // screen's palette (#51). The save draws both afresh (Capture), as always.
                     upright to ScaleStamp.drawnOrNone(s.scale, { Log.e("BebirdSpike", "scale not drawn on the paused frame", it) }) { sc ->
-                        s.stamp?.layer(sc, upright.width, upright.height)?.toBitmap()
+                        s.stamp?.scaleOnly(sc, upright.width, upright.height)?.toBitmap()
                     }
                 }
                 val paused = Capture.Shot(upright, 0, s.overlay, s.renderer, s.band, s.meta, null, drawnScale?.first, s.stamp)
