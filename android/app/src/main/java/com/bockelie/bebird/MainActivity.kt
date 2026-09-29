@@ -67,6 +67,11 @@ class MainActivity : ComponentActivity() {
         grace.onReturn()
     }
 
+    override fun onResume() {
+        super.onResume()
+        grace.onResumed()
+    }
+
     override fun onStop() {
         super.onStop()
         // A rotation keeps the connection. Otherwise recording stops and its file is finished

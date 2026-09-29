@@ -51,7 +51,9 @@ class GraceKeeperTest {
         val releases = CopyOnWriteArrayList<List<Sent>>()
         val starts = CopyOnWriteArrayList<Target>()
         override fun start(target: Target, why: String?) { starts += target }
+        @Volatile var releaseMs = 0L  // how long the network takes to go
         override fun stop() {
+            Thread.sleep(releaseMs)
             releases += links.sends()
             state.value = ScopeWifi.State.Idle
         }
@@ -393,11 +395,36 @@ class GraceKeeperTest {
         await("the release") { wifi.releases.isNotEmpty() }
         Thread.sleep(150)
         assertEquals(requests, wifi.starts.size)
-        timer.advance(60_000)  // the end of the period: nothing left to switch off
-        Thread.sleep(100)
+        // the keep ends with it: no notification, no wake lock, no timer
         assertNull(keeper.kept.value)
+        assertEquals(0, awake)
+        assertTrue(conn.decoding)
+        timer.advance(60_000)  // the old deadline: nothing more happens
+        Thread.sleep(100)
         assertTrue(links.sends().none { it.bytes == POWER_OFF })
         assertEquals(requests, wifi.starts.size)
+        assertEquals(1, wifi.releases.size)
+    }
+
+    @Test fun aHungStopStillTearsDownWithinTheWait() {
+        // STOP never completes in time: end() gives up waiting after 1 s, the release goes ahead
+        // on its own timeout, and the keeper is clean
+        grace(0, powerOff = false)
+        join()
+        stream()
+        links.last(Protocol.DATA_PORT).sendDelayMs = 3000
+        wifi.releaseMs = 500  // the release (after the 1 s STOP timeout) can't be done within the wait
+        val t0 = System.nanoTime()
+        onMain { keeper.onLeave() }
+        val waitedMs = (System.nanoTime() - t0) / 1_000_000
+        assertTrue("waited $waitedMs ms", waitedMs in 900..1400)
+        assertTrue(wifi.releases.isEmpty())  // awaitRelease gave up
+        assertNull(keeper.kept.value)
+        assertEquals(0, services)
+        await("the release", 3000) { wifi.releases.isNotEmpty() }
+        Thread.sleep(3000)  // the hung STOP finishes, then the links close
+        assertEquals(1, wifi.releases.size)
+        assertTrue(links.sends().none { it.bytes == POWER_OFF })
     }
 
     @Test fun ourOwnLaunchIsNeverAnImmediateEnd() {
@@ -459,6 +486,20 @@ class GraceKeeperTest {
         Thread.sleep(100)
         assertTrue(wifi.releases.isEmpty())
         timer.advance(1)
+        assertReleasedAfter(STOP)
+    }
+
+    @Test fun aLaunchThatOnlyPausedTheAppCoversNothingAfterward() {
+        // a translucent chooser, cancelled: onResume without onStop/onStart, then Home
+        grace(0, powerOff = false)
+        join()
+        stream()
+        onMain {
+            keeper.launchingOver()
+            keeper.onResumed()
+            keeper.onLeave()
+        }
+        assertEquals(0, services)
         assertReleasedAfter(STOP)
     }
 

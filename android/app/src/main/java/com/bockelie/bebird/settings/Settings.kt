@@ -85,6 +85,14 @@ class Settings(private val kv: KeyValue) {
         get() = kv.getBoolean("power_off_after_grace", true)
         set(v) = kv.putBoolean("power_off_after_grace", v)
 
+    /**
+     * When the app last powered the scope off, on the connection's clock (monotonic since boot;
+     * a value from before a reboot is ignored), so a launch right after doesn't reconnect.
+     */
+    var poweredOffAt: Long
+        get() = kv.getString("powered_off_at", "").toLongOrNull() ?: Long.MIN_VALUE
+        set(v) = kv.putString("powered_off_at", v.toString())
+
     /** At launch, connect to the last device, if its exact BSSID is known (no picker). */
     var autoConnect: Boolean
         get() = kv.getBoolean("auto_connect", true)

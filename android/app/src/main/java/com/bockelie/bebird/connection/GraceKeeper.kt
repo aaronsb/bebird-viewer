@@ -50,6 +50,10 @@ class GraceKeeper(
     private var holds = 0
     private var expired = false  // the grace period is over, but a hold keeps the connection
 
+    init {
+        connection.onLetGo = ::lostWhileKept
+    }
+
     /**
      * The screen went away (onStop, not for a configuration change). After our own launch over
      * the app ([launchingOver]) the connection is kept for at least the cover's time, never ended
@@ -68,6 +72,12 @@ class GraceKeeper(
     /** That launch failed: nothing covers the next stop. */
     fun launchFailed() = cover.returned()
 
+    /**
+     * The activity is in front again. After a launch that only paused it (a translucent chooser,
+     * cancelled) there is no onStart, so the cover is cleared here too.
+     */
+    fun onResumed() = cover.returned()
+
     /** The app was closed (the Activity finishing, or the task swiped away): end now. */
     fun onClose() {
         if (_kept.value == null) leave(0) else expire()
@@ -76,6 +86,17 @@ class GraceKeeper(
     /** The screen is back: the kept session carries on, and the service stops. */
     fun onReturn() {
         cover.returned()
+        stopTimer()
+        sleep()
+        expired = false
+        connection.decoding = true
+        _kept.value = null
+    }
+
+    /** The connection let go on its own (the network went while kept): nothing left to end. */
+    private fun lostWhileKept() {
+        if (_kept.value == null) return
+        Log.i(TAG, "the connection went while kept; nothing left to keep")
         stopTimer()
         sleep()
         expired = false

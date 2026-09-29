@@ -71,8 +71,11 @@ class ScopeConnectionTest {
     }
 
     /** Another connection on the same Wi-Fi, with its own book and settings. */
-    private fun connection(book: DeviceBook, autoConnect: Boolean = true) = onMain {
-        val s = Settings(MemoryKeyValue()).apply { this.autoConnect = autoConnect }
+    private fun connection(book: DeviceBook, autoConnect: Boolean = true, poweredOffAgoMs: Long? = null) = onMain {
+        val s = Settings(MemoryKeyValue()).apply {
+            this.autoConnect = autoConnect
+            poweredOffAgoMs?.let { poweredOffAt = System.nanoTime() / 1_000_000 - it }
+        }
         val st = object : BookStore {
             override fun load() = book
             override fun save(book: DeviceBook) {}
@@ -116,6 +119,21 @@ class ScopeConnectionTest {
         onMain { c.connectOnLaunch() }
         Thread.sleep(200)
         assertEquals(emptyList<Target>(), wifi.starts.toList())
+    }
+
+    @Test fun atLaunchNothingRightAfterAPowerOff() {
+        // the scope may still be shutting down
+        val c = connection(store.book, poweredOffAgoMs = 5_000)
+        onMain { c.connectOnLaunch() }
+        Thread.sleep(200)
+        assertEquals(emptyList<Target>(), wifi.starts.toList())
+    }
+
+    @Test fun atLaunchAPowerOffLongerAgoDoesNotMatter() {
+        val c = connection(store.book, poweredOffAgoMs = 11_000)
+        onMain { c.connectOnLaunch() }
+        await("the request") { wifi.starts.size == 1 }
+        assertEquals(exact, wifi.starts.single())
     }
 
     @Test fun atLaunchAConnectionAlreadyWantedIsLeftAlone() {

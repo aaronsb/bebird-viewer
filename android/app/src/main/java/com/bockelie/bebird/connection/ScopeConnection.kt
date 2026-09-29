@@ -86,6 +86,9 @@ class ScopeConnection(
     // The request connectOnLaunch() made: if it finds nothing (scope off), no fallback, since
     // that could show Android's picker nobody asked for.
     private var quiet: Target? = null
+    /** Called when the connection lets go on its own while not decoding (see [GraceKeeper]). */
+    var onLetGo: (() -> Unit)? = null
+
     /** A connection was asked for and not ended since: something to keep in the background. */
     val isWanted: Boolean get() = wanted != null
 
@@ -112,7 +115,10 @@ class ScopeConnection(
                             // In the background a new request could show Android's picker over
                             // another app: let go instead (the grace period then just ends).
                             when {
-                                !decoding -> disconnect()
+                                !decoding -> {
+                                    disconnect()
+                                    onLetGo?.invoke()
+                                }
                                 state.target == quiet -> Log.i(TAG, "last device not found at launch; staying idle")
                                 else -> fallBack(state.target)
                             }
@@ -143,6 +149,12 @@ class ScopeConnection(
      */
     fun connectOnLaunch() {
         if (!settings.autoConnect || wanted != null) return
+        val sincePowerOff = clock() - settings.poweredOffAt
+        if (sincePowerOff in 0 until POWER_OFF_QUIET_MS) {
+            // it may still be shutting down: a new session would send STOP/START after its 66 3E
+            Log.i(TAG, "powered off $sincePowerOff ms ago: not connecting at launch")
+            return
+        }
         val last = _book.value.last?.takeIf { it.bssid != null } ?: return
         Log.i(TAG, "connecting to the last device at launch")
         val t = Target.Exact(last.ssid, last.bssid)
@@ -203,6 +215,7 @@ class ScopeConnection(
         Log.i(TAG, "power off")
         wanted = null
         gate.disconnect(stopSession(ScopeSession::powerOff, "powered off"))
+        settings.poweredOffAt = clock()
         return true
     }
 
@@ -334,5 +347,7 @@ class ScopeConnection(
         private const val TAG = "BebirdSpike"
         // A dead link can't hold up the release for longer than this.
         private const val STOP_TIMEOUT_MS = 1000L
+        // No connecting at launch this soon after a power-off (the process may have been restarted).
+        private const val POWER_OFF_QUIET_MS = 10_000L
     }
 }
