@@ -56,7 +56,7 @@ private const val TEXT_MAX = 40
  */
 @Composable
 fun AnnotateControls(
-    tools: AnnotateTools, sketch: Sketch, saving: Boolean,
+    tools: AnnotateTools, sketch: Sketch, saving: Boolean, savedOriginal: String?,
     onEdit: ((Sketch) -> Sketch) -> Unit, onResume: () -> Unit, onSave: () -> Unit,
 ) {
     var confirmingDiscard by rememberSaveable { mutableStateOf(false) }
@@ -90,7 +90,13 @@ fun AnnotateControls(
         AlertDialog(
             onDismissRequest = { confirmingDiscard = false },
             title = { Text(stringResource(R.string.annotate_discard_title)) },
-            text = { Text(stringResource(R.string.annotate_discard_message)) },
+            // after a failed copy the picture itself is already saved; only the marks are lost
+            text = {
+                Text(
+                    if (savedOriginal == null) stringResource(R.string.annotate_discard_message)
+                    else stringResource(R.string.annotate_discard_message_saved, savedOriginal),
+                )
+            },
             confirmButton = { TextButton(onClick = { confirmingDiscard = false; onResume() }) { Text(stringResource(R.string.annotate_discard)) } },
             dismissButton = { TextButton(onClick = { confirmingDiscard = false }) { Text(stringResource(R.string.annotate_keep)) } },
         )

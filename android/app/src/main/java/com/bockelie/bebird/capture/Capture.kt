@@ -10,6 +10,7 @@ import com.bockelie.bebird.annotate.AnnotationRenderer
 import com.bockelie.bebird.annotate.Mark
 import com.bockelie.bebird.annotate.SaveOutcome
 import com.bockelie.bebird.annotate.annotatedStills
+import com.bockelie.bebird.annotate.drawFailureName
 import com.bockelie.bebird.band.BandData
 import com.bockelie.bebird.band.BandRenderer
 import com.bockelie.bebird.band.PixelImage
@@ -38,6 +39,8 @@ class Capture(resolver: ContentResolver) {
     sealed interface Result {
         data class Saved(val uri: Uri, val name: String, val video: Boolean) : Result
         data class Failed(val what: String, val reason: String) : Result
+        /** Something else went wrong, not saving a file: [text] is shown as it is. */
+        data class Problem(val text: String) : Result
     }
 
     private val files = MediaStoreFiles(resolver)
@@ -65,10 +68,12 @@ class Capture(resolver: ContentResolver) {
         val rotated = Frames.rotated(shot.frame, shot.rotation)
         val time = shot.meta.taken.toLocalDateTime()
         val dir = CaptureNames.folder(time.toLocalDate())
-        done(save(CaptureNames.still(time), dir, Frames.composed(rotated.toPixelImage(), shot.renderer, shot.band, shot.overlay), shot.meta))
+        val still = CaptureNames.still(time)
+        val full = save(still, dir, Frames.composed(rotated.toPixelImage(), shot.renderer, shot.band, shot.overlay), shot.meta).also(done)
         shot.zoomRect?.let { rect ->
             val zoomed = Frames.zoomed(rotated, rect, shot.renderer, shot.band, shot.overlay)
-            done(save(CaptureNames.still(time, zoomed = true), dir, zoomed, shot.meta.copy(zoomed = true)))
+            // named after the full frame as saved, so the pair stays together after a rename
+            done(save(CaptureNames.zoomed((full as? Result.Saved)?.name ?: still), dir, zoomed, shot.meta.copy(zoomed = true)))
         }
     }
 
@@ -89,7 +94,7 @@ class Capture(resolver: ContentResolver) {
             annotatedStills(upright, shot.renderer, shot.band, shot.overlay, marks, annotations)
         } catch (e: Throwable) {
             Log.e(TAG, "drawing the annotations failed", e)
-            done(Result.Failed(savedOriginal ?: CaptureNames.still(time), e.message ?: e.javaClass.simpleName))
+            done(Result.Failed(drawFailureName(savedOriginal, CaptureNames.still(time)), e.message ?: e.javaClass.simpleName))
             return@execute finished(SaveOutcome(savedOriginal, complete = false))
         }
         val dir = CaptureNames.folder(time.toLocalDate())

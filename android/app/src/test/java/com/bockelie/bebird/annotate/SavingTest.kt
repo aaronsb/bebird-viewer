@@ -26,6 +26,13 @@ class SavingTest {
         assertNull(after.start().finish(SaveOutcome("bebird-x (1).jpg", complete = true)))
     }
 
+    @Test fun aDrawingFailureNamesTheFileThatWasntWritten() {
+        // first try: nothing saved yet, so the still
+        assertEquals("bebird-x.jpg", drawFailureName(null, "bebird-x.jpg"))
+        // a retry: the original is saved, the copy is what failed
+        assertEquals("bebird-x (1)_annotated.jpg", drawFailureName("bebird-x (1).jpg", "bebird-x.jpg"))
+    }
+
     @Test fun marksAreFrozenWhileSaving() {
         assertTrue(AnnotateRules.canEdit(SaveProgress()))
         assertFalse(AnnotateRules.canEdit(SaveProgress().start()))

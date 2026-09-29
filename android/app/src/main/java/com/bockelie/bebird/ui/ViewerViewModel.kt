@@ -31,6 +31,7 @@ import java.time.ZonedDateTime
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bockelie.bebird.BebirdApp
+import com.bockelie.bebird.R
 import com.bockelie.bebird.band.BandFonts
 import com.bockelie.bebird.focus.OverlayRenderer
 import com.bockelie.bebird.focus.ProximityPipeline
@@ -236,7 +237,8 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (e: Throwable) {
                 Log.e("BebirdSpike", "pausing to annotate failed", e)
-                _captureResults.tryEmit(Capture.Result.Failed(CaptureNames.still(s.meta.taken.toLocalDateTime()), e.message ?: e.javaClass.simpleName))
+                val reason = e.message ?: e.javaClass.simpleName
+                _captureResults.tryEmit(Capture.Result.Problem(getApplication<Application>().getString(R.string.annotate_pause_failed, reason)))
             } finally {
                 if (pausing === coroutineContext[Job]) pausing = null
             }

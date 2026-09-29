@@ -26,13 +26,18 @@ class CaptureTest {
     @Test fun names() {
         val t = LocalDateTime.of(2026, 1, 2, 3, 4, 5)
         assertEquals("bebird-20260102-030405.jpg", CaptureNames.still(t))
-        assertEquals("bebird-20260102-030405_zoomed.jpg", CaptureNames.still(t, zoomed = true))
+        assertEquals("bebird-20260102-030405_zoomed.jpg", CaptureNames.zoomed(CaptureNames.still(t)))
         assertEquals("bebird-20260102-030405.mp4", CaptureNames.video(t))
     }
 
     @Test fun theAnnotatedCopySharesTheStillsName() {
         val t = LocalDateTime.of(2026, 9, 29, 23, 59, 58)
         assertEquals("bebird-20260929-235958_annotated.jpg", CaptureNames.annotated(CaptureNames.still(t)))
+    }
+
+    @Test fun theZoomedCropFollowsTheNameTheStillWasSavedUnder() {
+        // two snapshots in one second: the second's full frame was renamed, its crop goes with it
+        assertEquals("bebird-20260929-235958 (1)_zoomed.jpg", CaptureNames.zoomed("bebird-20260929-235958 (1).jpg"))
     }
 
     @Test fun theAnnotatedCopyFollowsTheNameTheStillWasSavedUnder() {

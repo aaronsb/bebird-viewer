@@ -132,6 +132,8 @@
     <string name="annotate_text_add">Add</string>
     <string name="annotate_discard_title">Discard annotations?</string>
     <string name="annotate_discard_message">They haven\'t been saved. The live view comes back without them.</string>
+    <string name="annotate_discard_message_saved">The picture is saved as %1$s, but the annotated copy isn\'t. The live view comes back without the marks.</string>
+    <string name="annotate_pause_failed">Couldn\'t pause on this frame: %1$s</string>
     <string name="annotate_discard">Discard</string>
     <string name="annotate_keep">Keep editing</string>
 </resources>

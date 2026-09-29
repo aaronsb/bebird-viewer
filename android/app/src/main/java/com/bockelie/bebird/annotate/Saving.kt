@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.bockelie.bebird.annotate
 
+import com.bockelie.bebird.capture.CaptureNames
+
 /** How one annotated save went: the original still's saved name (null if it wasn't saved), and whether the copy was saved too. */
 data class SaveOutcome(val original: String?, val complete: Boolean)
 
@@ -15,6 +17,12 @@ data class SaveProgress(val saving: Boolean = false, val savedOriginal: String? 
     fun finish(outcome: SaveOutcome): SaveProgress? =
         if (outcome.complete) null else SaveProgress(saving = false, savedOriginal = outcome.original ?: savedOriginal)
 }
+
+/**
+ * The file a failed drawing step is reported against: the annotated copy on a retry (the
+ * original, [savedOriginal], is already saved), else the [still] about to be written.
+ */
+fun drawFailureName(savedOriginal: String?, still: String) = savedOriginal?.let(CaptureNames::annotated) ?: still
 
 /** When annotate and recording may start; each excludes the other, including while a pause is being prepared. */
 object AnnotateRules {
