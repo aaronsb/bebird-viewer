@@ -98,7 +98,7 @@
     <string name="proximity_menu">Proximity…</string>
     <string name="proximity_title">Proximity</string>
     <string name="proximity_enabled">Proximity estimation</string>
-    <string name="proximity_note">Estimates from image sharpness whether something is at the tip end, and draws a mm scale when it can. Best effort, shown on screen only; saved files don\'t include it.</string>
+    <string name="proximity_note">Estimates from image sharpness whether something is at the tip end, and draws a mm scale when it can. Best effort: no CLOSE doesn\'t mean nothing is near. Shown on screen only; saved files don\'t include it.</string>
     <string name="proximity_scale">Scale</string>
     <string name="proximity_scale_ring">Ring</string>
     <string name="proximity_scale_bowtie">Bowtie</string>

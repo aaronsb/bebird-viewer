@@ -29,13 +29,17 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import com.bockelie.bebird.R
 import com.bockelie.bebird.band.BandRenderer
@@ -45,6 +49,8 @@ import com.bockelie.bebird.focus.FrameGeometry
 import com.bockelie.bebird.focus.OverlayRenderer
 import com.bockelie.bebird.focus.OverlayShape
 import com.bockelie.bebird.focus.ScaleOverlay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * The image circle inside a rectangular viewport. Pinch zooms (1-6x) and drag pans, clipped
@@ -140,9 +146,9 @@ private fun isClose(s: OverlayShape) =
 @Composable
 private fun ScaleLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, side: Int, rotation: Int) {
     if (shapes.isEmpty() || side <= 0) return
-    val image = remember(shapes, side) {
+    val image = rendered(shapes, side) {
         renderer.render(shapes, side, side, side.toDouble() / FrameGeometry.SIZE).toBitmap().asImageBitmap()
-    }
+    } ?: return
     Image(
         bitmap = image,
         contentDescription = null,
@@ -163,9 +169,9 @@ private const val CLOSE_H = 58
 private fun CloseLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, side: Int, modifier: Modifier) {
     if (shapes.isEmpty()) return
     val k = maxOf(1, side / FrameGeometry.SIZE)
-    val image = remember(shapes, k) {
+    val image = rendered(shapes, k) {
         renderer.render(shapes, CLOSE_W * k, CLOSE_H * k, k.toDouble(), CLOSE_X, CLOSE_Y).toBitmap().asImageBitmap()
-    }
+    } ?: return
     val description = stringResource(R.string.proximity_close_description)
     with(LocalDensity.current) {
         Image(
@@ -173,7 +179,25 @@ private fun CloseLayer(shapes: List<OverlayShape>, renderer: OverlayRenderer, si
             contentDescription = description,
             contentScale = ContentScale.None,
             filterQuality = FilterQuality.None,
-            modifier = modifier.size(image.width.toDp(), image.height.toDp()),
+            // TalkBack mentions CLOSE when it appears, without interrupting
+            modifier = modifier.size(image.width.toDp(), image.height.toDp()).semantics { liveRegion = LiveRegionMode.Polite },
         )
     }
+}
+
+/**
+ * [draw]'s image for ([shapes], [size]), rasterised off the main thread; the previous image
+ * stays up until the new one is ready. A few recent ones are kept, so flipping between locked
+ * and unlocked (or CLOSE on and off) reuses them instead of drawing again.
+ */
+@Composable
+private fun rendered(shapes: List<OverlayShape>, size: Int, draw: () -> ImageBitmap): ImageBitmap? {
+    val cache = remember(size) { object : LinkedHashMap<List<OverlayShape>, ImageBitmap>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<List<OverlayShape>, ImageBitmap>) = size > 6
+    } }
+    var image by remember(size) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(shapes, size) {
+        image = cache[shapes] ?: withContext(Dispatchers.Default) { draw() }.also { cache[shapes] = it }
+    }
+    return image
 }

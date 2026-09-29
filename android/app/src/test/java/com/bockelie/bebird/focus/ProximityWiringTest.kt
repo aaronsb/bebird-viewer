@@ -75,6 +75,61 @@ class ProximityWiringTest {
         assertEquals(1, c.updates)
     }
 
+    @Test fun aThrowingEstimatorCostsOneResultNotTheApp() {
+        var created = 0
+        var calls = 0
+        val gate = ProximityGate {
+            created++
+            FrameEstimator { _, t, _ ->
+                calls++
+                if (calls == 2) throw IllegalStateException("bad frame")
+                FocusTracker().update(t, 100, 30.0, 1.0, 0.0, 0.0)
+            }
+        }.apply { setEnabled(true) }
+        val errors = mutableListOf<Exception>()
+        val hook = ProximityFrames(gate, { it.run() }, onError = { errors += it }) { results += it }
+        hook.offer(0.0, 0) {}
+        hook.offer(0.1, 0) {}  // throws inside the estimator
+        hook.offer(0.2, 0) {}
+        assertEquals(1, errors.size)
+        assertTrue(errors.single() is IllegalStateException)
+        assertEquals(1, hook.errors)
+        assertEquals(listOf(true, false, true), results.map { it != null })  // null for the bad frame
+        assertEquals(2, created)  // a fresh estimator after the error
+        assertTrue(gate.enabled)
+        assertTrue(hook.offer(0.3, 0) {})  // and the hook isn't stuck busy
+    }
+
+    @Test fun anErrorAfterSwitchingOffDoesntSwitchItBackOn() {
+        val gate = ProximityGate { FrameEstimator { _, _, _ -> throw IllegalStateException() } }.apply { setEnabled(true) }
+        val pending = ArrayDeque<Runnable>()
+        val hook = ProximityFrames(gate, { pending += it }) { results += it }
+        hook.offer(0.0, 0) {}
+        gate.setEnabled(false)
+        pending.removeFirst().run()  // the estimator isn't there any more: nothing runs, nothing is re-enabled
+        assertFalse(gate.enabled)
+    }
+
+    @Test fun restartStartsTheEstimatorOverOnlyIfItRuns() {
+        val c = Counting()
+        val gate = c.gate()
+        val hook = ProximityFrames(gate, { it.run() }) { results += it }
+        hook.restart()
+        assertFalse(gate.enabled)
+        assertEquals(0, c.created)
+        gate.setEnabled(true)
+        hook.restart()  // the stream ended: fresh estimator, still on
+        assertTrue(gate.enabled)
+        assertEquals(2, c.created)
+    }
+
+    @Test fun onlyRawSoftwareArgbFramesAreAccepted() {
+        assertTrue(ProximityFrames.accepts(480, 480, softwareArgb8888 = true))
+        assertFalse(ProximityFrames.accepts(480, 480, softwareArgb8888 = false))  // HARDWARE, RGB_565
+        assertFalse(ProximityFrames.accepts(960, 960, softwareArgb8888 = true))   // not the raw frame
+        assertFalse(ProximityFrames.accepts(480, 528, softwareArgb8888 = true))   // a composited one
+    }
+
     // --- settings state ---
 
     @Test fun optionsStartFromTheStoredSettings() {

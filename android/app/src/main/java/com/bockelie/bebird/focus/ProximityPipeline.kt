@@ -3,14 +3,13 @@ package com.bockelie.bebird.focus
 
 import android.graphics.Bitmap
 import android.os.SystemClock
+import android.util.Log
 import com.bockelie.bebird.connection.ScopeConnection
 import com.bockelie.bebird.settings.KeyValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
@@ -29,24 +28,38 @@ class ProximityPipeline(connection: ScopeConnection, kv: KeyValue, scope: Corout
     val result: StateFlow<FocusResult?> = _result.asStateFlow()
 
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "bebird-proximity").apply { isDaemon = true } }
-    // A result from a frame that was already queued when estimation was turned off is dropped.
-    private val frames = ProximityFrames(gate, worker::execute) { r -> _result.value = r.takeIf { gate.enabled } }
+    private val frames = ProximityFrames(
+        gate, worker::execute,
+        onError = { Log.e(TAG, "proximity estimator failed; starting it over (${it.javaClass.simpleName})", it) },
+        // a result from a frame already queued when estimation was turned off is dropped
+    ) { r -> _result.value = r.takeIf { gate.enabled } }
 
     init {
         scope.launch {
-            connection.stats.map { it.frame to it.angle }.distinctUntilChanged().collect { (frame, roll) ->
-                when {
-                    frame == null -> _result.value = null  // the stream stopped
-                    // lumaInto needs the raw 480 × 480 frame as a software ARGB_8888 bitmap (what
-                    // BitmapFactory decodes by default); anything else is skipped, not converted
-                    frame.width != FrameGeometry.SIZE || frame.height != FrameGeometry.SIZE ||
-                        frame.config != Bitmap.Config.ARGB_8888 -> Unit
-                    else -> frames.offer(SystemClock.elapsedRealtime() / 1000.0, roll) { buffers -> frame.lumaInto(buffers) }
+            var last: Bitmap? = null
+            connection.stats.collect { stats ->
+                val frame = stats.frame
+                if (frame === last) return@collect  // not a new frame (battery, fps, ...)
+                last = frame
+                if (frame == null) {
+                    // The stream ended (stop, a lost link, another scope): what the estimator
+                    // learned about the tip and the scene doesn't carry over to the next one.
+                    _result.value = null
+                    frames.restart()
+                    return@collect
                 }
+                if (!gate.enabled) return@collect  // off: no clock read, no lambda, nothing queued
+                if (!ProximityFrames.accepts(frame.width, frame.height, frame.config == Bitmap.Config.ARGB_8888)) return@collect
+                val roll = stats.angle
+                frames.offer(SystemClock.elapsedRealtime() / 1000.0, roll) { buffers -> frame.lumaInto(buffers) }
             }
         }
         scope.launch {
             options.state.collect { if (!it.enabled) _result.value = null }
         }
+    }
+
+    private companion object {
+        const val TAG = "BebirdSpike"
     }
 }

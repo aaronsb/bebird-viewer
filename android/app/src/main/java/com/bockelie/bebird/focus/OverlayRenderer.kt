@@ -50,28 +50,41 @@ class OverlayRenderer(private val font: GlyphSource) {
             if (x in 0 until w && y in 0 until h) px[y * w + x] = color
         }
 
-        /** A ring by distance test, touching only the rows and columns it can reach. */
+        /**
+         * A ring by distance test: pixel centres with r − half ≤ d < r + half. Each row touches
+         * only the ring's one or two spans (squared distances, no sqrt per pixel).
+         */
         fun arc(a: OverlayShape.Arc) {
             val cx = X(a.cx)
             val cy = Y(a.cy)
             val r = a.r * f
             val half = max(0.5, a.width * k / 2.0)
+            val outer = r + half
+            val inner = max(0.0, r - half)
+            val outer2 = outer * outer
+            val inner2 = inner * inner
             val span = a.endDeg - a.startDeg
-            for (y in max(0, floor(cy - r - half).toInt())..min(h - 1, ceil(cy + r + half).toInt())) {
+            val partial = span < 360.0 || a.dashDeg > 0
+            for (y in max(0, floor(cy - outer).toInt())..min(h - 1, ceil(cy + outer).toInt())) {
                 val dy = y - cy
-                val outer = r + half
-                if (abs(dy) > outer) continue
-                val xo = sqrt(outer * outer - dy * dy)
-                for (x in max(0, floor(cx - xo).toInt())..min(w - 1, ceil(cx + xo).toInt())) {
-                    val dx = x - cx
-                    if (abs(hypot(dx, dy) - r) >= half) continue
-                    if (span < 360.0 || a.dashDeg > 0) {
-                        // degrees clockwise from +x (y down), measured from the arc's start, in [0, 360)
-                        val deg = ((Math.toDegrees(atan2(dy, dx)) - a.startDeg) % 360 + 360) % 360
-                        if (span < 360.0 && deg > span) continue
-                        if (a.dashDeg > 0 && floor(deg / a.dashDeg).toInt() % 2 != 0) continue
+                val dy2 = dy * dy
+                if (dy2 >= outer2) continue
+                val xo = sqrt(outer2 - dy2)
+                val xi = if (dy2 < inner2) sqrt(inner2 - dy2) else 0.0
+                // left span [cx − xo, cx − xi], right span [cx + xi, cx + xo]; one span if xi = 0
+                for ((from, to) in if (xi > 0) listOf(cx - xo to cx - xi, cx + xi to cx + xo) else listOf(cx - xo to cx + xo)) {
+                    for (x in max(0, floor(from).toInt())..min(w - 1, ceil(to).toInt())) {
+                        val dx = x - cx
+                        val d2 = dx * dx + dy2
+                        if (d2 >= outer2 || d2 < inner2) continue
+                        if (partial) {
+                            // degrees clockwise from +x (y down), measured from the arc's start, in [0, 360)
+                            val deg = ((Math.toDegrees(atan2(dy, dx)) - a.startDeg) % 360 + 360) % 360
+                            if (span < 360.0 && deg > span) continue
+                            if (a.dashDeg > 0 && floor(deg / a.dashDeg).toInt() % 2 != 0) continue
+                        }
+                        set(x, y, a.color)
                     }
-                    set(x, y, a.color)
                 }
             }
         }

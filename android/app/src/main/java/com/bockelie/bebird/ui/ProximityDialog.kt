@@ -20,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.bockelie.bebird.R
 import com.bockelie.bebird.focus.ProximityOptions
@@ -52,7 +54,7 @@ fun ProximityDialog(
                 Text(
                     stringResource(R.string.proximity_scale),
                     style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.alpha(if (sub) 1f else DISABLED_ALPHA),
+                    modifier = Modifier.alpha(if (sub) 1f else DISABLED_ALPHA).semantics { heading() },
                 )
                 Column(Modifier.selectableGroup()) {
                     for ((style, name) in listOf(
