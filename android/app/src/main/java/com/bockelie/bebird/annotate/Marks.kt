@@ -24,7 +24,8 @@ sealed interface Mark {
     data class Text(val at: Pt, val text: String, override val color: Int) : Mark
 }
 
-enum class Tool { ELLIPSE, BOX, ARROW, PEN, TEXT }
+/** The drawing tools, and [MOVE]: drag a mark to move it, hold on it to delete it. */
+enum class Tool { ELLIPSE, BOX, ARROW, PEN, TEXT, MOVE }
 
 /** The fixed colours to draw with (opaque ARGB), the first being the default. */
 object Palette {
@@ -37,8 +38,9 @@ object Palette {
 }
 
 /**
- * The marks on a paused frame, with every earlier state for Undo; Clear is one more state, so
- * Undo brings the marks back. Immutable: each change returns a new sketch.
+ * The marks on a paused frame, with every earlier state for Undo; Clear, a move and a delete
+ * are one more state each, so Undo brings the marks back as they were. Immutable: each change
+ * returns a new sketch.
  */
 class Sketch private constructor(val marks: List<Mark>, private val past: List<List<Mark>>) {
     constructor() : this(emptyList(), emptyList())
@@ -48,6 +50,14 @@ class Sketch private constructor(val marks: List<Mark>, private val past: List<L
     fun add(mark: Mark) = Sketch(marks + mark, past + listOf(marks))
 
     fun clear() = if (marks.isEmpty()) this else Sketch(emptyList(), past + listOf(marks))
+
+    /** The mark at [index] replaced by [mark] (moved), keeping its place in the stacking order. */
+    fun replace(index: Int, mark: Mark) =
+        if (index !in marks.indices || marks[index] == mark) this
+        else Sketch(marks.toMutableList().also { it[index] = mark }, past + listOf(marks))
+
+    fun remove(index: Int) =
+        if (index !in marks.indices) this else Sketch(marks.filterIndexed { i, _ -> i != index }, past + listOf(marks))
 
     fun undo() = if (past.isEmpty()) this else Sketch(past.last(), past.dropLast(1))
 }
@@ -82,7 +92,7 @@ object Drag {
             Tool.BOX -> Mark.Box(a, b, color)
             Tool.ARROW -> Mark.Arrow(a, b, color)
             Tool.PEN -> Mark.Pen(points, color)
-            Tool.TEXT -> null
+            Tool.TEXT, Tool.MOVE -> null
         }
     }
 }
