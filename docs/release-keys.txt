@@ -2,5 +2,5 @@
 # these in before the first release; the release workflow and `make release-sign` refuse to go on
 # while either is TODO. Fingerprints are hex (GPG: 40 digits, or 64 for a v5/v6 key); colons and
 # spaces are ignored.
-Android certificate SHA-256: TODO
-GPG fingerprint: TODO
+Android certificate SHA-256: 55:E1:E8:00:59:AD:6E:7C:B3:51:49:BE:D6:3D:73:32:BB:2A:E8:D0:60:AA:E8:F3:7D:5C:F9:3D:A1:AF:D1:F7
+GPG fingerprint: 33F9 B54F D2A4 B6A4 1107  49B3 BA46 4FC9 847A 832A
