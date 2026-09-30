@@ -1,0 +1,216 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Builds the release APK in the same container as `make android-release` does locally, signs it
+# offline as `make android-release-sign` does, and publishes it as a GitHub Release. Pushing a tag
+# vX.Y.Z publishes. Running it by hand (workflow_dispatch) is a dry run that only uploads
+# artifacts: signed when run on a tag, unsigned on any other ref.
+#
+# The signing secrets live in the `release` environment, which only v*.*.* tags may use, and only
+# the sign job, which runs no Gradle and has no network while the key is in use, can read them.
+# The tag need not be GPG-signed (CI has no public key to check it); GPG is local only:
+# `make release-sign` adds the checksum's signature after publishing.
+# Secrets and how to cut a release: docs/building.md#release-builds.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PUBLISH: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+
+jobs:
+  # No secrets here: the unit tests and the unsigned release APK.
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: gradle/actions/wrapper-validation@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+
+      - name: Version matches the tag
+        id: version
+        run: |
+          version=$(sed -nE 's/^ *versionName = "([^"]+)".*/\1/p' android/app/build.gradle.kts)
+          test -n "$version" || { echo "::error::no versionName in android/app/build.gradle.kts"; exit 1; }
+          # vX.Y.Z is the release of versionName X.Y.Z; vX.Y.Z-rc.N is a pre-release of it, for a
+          # rehearsal (docs/building.md#rehearsing-a-release).
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag_version=${GITHUB_REF_NAME#v}
+            rc=${tag_version#"$version"-rc.}
+            if [ "$tag_version" != "$version" ] && { [ "$rc" = "$tag_version" ] || ! [[ $rc =~ ^[0-9]+$ ]]; }; then
+              echo "::error::tag $GITHUB_REF_NAME does not match versionName $version"
+              exit 1
+            fi
+            version=$tag_version
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: make android-image
+      - name: Unit tests
+        run: make android-test
+      - name: Unsigned release APK
+        run: make android-release
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bebird-release-unsigned
+          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
+      # R8's mapping turns obfuscated stack traces from this build back into source names.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bebird-release-mapping
+          path: android/app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
+
+  sign:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    environment: release
+    outputs:
+      cert: ${{ steps.verify.outputs.cert }}
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Build image
+        run: make android-image
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bebird-release-unsigned
+          path: android/app/build/outputs/apk/release
+
+      # The keystore exists on disk only from here until "Remove keystore", and no action runs
+      # in between.
+      - name: Keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.BEBIRD_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "::error::secret BEBIRD_KEYSTORE_BASE64 is not set in the release environment"; exit 1; }
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+      - name: Sign
+        env:
+          BEBIRD_KEYSTORE_PASSWORD: ${{ secrets.BEBIRD_KEYSTORE_PASSWORD }}
+          BEBIRD_KEY_ALIAS: ${{ secrets.BEBIRD_KEY_ALIAS }}
+          BEBIRD_KEY_PASSWORD: ${{ secrets.BEBIRD_KEY_PASSWORD }}
+        run: |
+          BEBIRD_KEYSTORE="$RUNNER_TEMP/release.keystore" make android-release-sign | tee "$RUNNER_TEMP/verify.txt"
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.keystore"
+
+      # Publishing needs the certificate pin: it catches a replaced keystore secret, which would
+      # otherwise ship to new installs under the wrong key.
+      - name: Verify signature and certificate
+        id: verify
+        env:
+          EXPECTED_CERT: ${{ vars.BEBIRD_CERT_SHA256 || secrets.BEBIRD_CERT_SHA256 }}
+        run: |
+          for want in "Number of signers: 1" \
+                      "Verified using v2 scheme (APK Signature Scheme v2): true" \
+                      "Verified using v3 scheme (APK Signature Scheme v3): true"; do
+            grep -qxF "$want" "$RUNNER_TEMP/verify.txt" || { echo "::error::apksigner did not report: $want"; exit 1; }
+          done
+          actual=$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-f]+)$/\1/p' "$RUNNER_TEMP/verify.txt")
+          echo "$actual" | grep -qxE '[0-9a-f]{64}' || { echo "::error::no certificate SHA-256 in apksigner's output"; exit 1; }
+          if [ -n "$EXPECTED_CERT" ]; then
+            expected=$(printf '%s' "$EXPECTED_CERT" | tr -d ':[:space:]' | tr 'A-F' 'a-f')
+            [ "$actual" = "$expected" ] || { echo "::error::signed with certificate $actual, expected $expected"; exit 1; }
+          elif [ "$PUBLISH" = true ]; then
+            echo "::error::BEBIRD_CERT_SHA256 is not set in the release environment: not publishing an unpinned certificate ($actual)"
+            exit 1
+          else
+            echo "::warning::BEBIRD_CERT_SHA256 is not set: the signing certificate ($actual) was not checked"
+          fi
+          # The committed docs/release-keys.txt is what users and `make release-sign` check against.
+          keys=docs/release-keys.txt
+          committed=$(sed -nE 's/^Android certificate SHA-256: *//p' "$keys" | tr -d ':[:space:]' | tr 'A-F' 'a-f')
+          gpg_fpr=$(sed -nE 's/^GPG fingerprint: *//p' "$keys" | tr -d ':[:space:]')
+          if [ "$PUBLISH" = true ]; then
+            echo "$committed" | grep -qxE '[0-9a-f]{64}' || { echo "::error::$keys has no Android certificate SHA-256"; exit 1; }
+            [ "$committed" = "$actual" ] || { echo "::error::$keys lists certificate '$committed', the APK is signed with $actual"; exit 1; }
+            echo "$gpg_fpr" | grep -qxE '[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64}' || { echo "::error::$keys has no GPG fingerprint"; exit 1; }
+          fi
+          echo "cert=$actual" >> "$GITHUB_OUTPUT"
+
+      - name: Name and checksum
+        run: |
+          mkdir -p out
+          apk=bebird-$VERSION.apk
+          cp android/app/build/outputs/apk/release/app-release.apk "out/$apk"
+          (cd out && sha256sum "$apk" > "$apk.sha256" && cat "$apk.sha256")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bebird-release-apk
+          path: out/
+          if-no-files-found: error
+
+  release:
+    needs: [build, sign]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bebird-release-apk
+          path: out
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CERT: ${{ needs.sign.outputs.cert }}
+        run: |
+          # Notes: the CHANGELOG.md section for this version (else GitHub's generated notes), then
+          # how to verify the download.
+          notes="$RUNNER_TEMP/notes.md"
+          awk -v head="## [$VERSION]" 'index($0, head) == 1 {on = 1; next} on && /^## \[/ {exit} on' \
+            CHANGELOG.md > "$notes" 2>/dev/null || true
+          if grep -q '[^[:space:]]' "$notes"; then generate=(); else generate=(--generate-notes); fi
+          apk=bebird-$VERSION.apk
+          gpg_fpr=$(sed -nE 's/^GPG fingerprint: *//p' docs/release-keys.txt | tr -d ':[:space:]')
+          cat >> "$notes" <<EOF
+
+          ## Verifying the download
+
+          With the files in one directory:
+
+          \`\`\`sh
+          sha256sum -c $apk.sha256
+          gpg --verify $apk.sha256.asc $apk.sha256
+          apksigner verify --print-certs $apk
+          \`\`\`
+
+          \`$apk.sha256.asc\`, the maintainer's GPG signature of the checksum, is added shortly after the release is published. Get the maintainer's public key from https://github.com/aaronsb.gpg (\`curl -s https://github.com/aaronsb.gpg | gpg --import\`), and check that \`gpg --verify\` names this fingerprint, not just "Good signature":
+
+          \`$gpg_fpr\`
+
+          apksigner must report this signing certificate SHA-256 digest, the same for every release:
+
+          \`$CERT\`
+          EOF
+          case "$VERSION" in *-rc.*) pre=(--prerelease) ;; *) pre=() ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "bebird-viewer $VERSION" "${pre[@]}" \
+            --notes-file "$notes" "${generate[@]}" \
+            "out/$apk" "out/$apk.sha256" LICENSE LICENSES/Apache-2.0.txt

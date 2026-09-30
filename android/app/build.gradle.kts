@@ -24,7 +24,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // No signingConfig: Gradle only builds app-release-unsigned.apk and never sees the key.
+            // `make android-release-sign` signs it offline (docs/building.md#release-builds).
         }
     }
     compileOptions {
