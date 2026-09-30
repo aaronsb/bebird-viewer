@@ -37,7 +37,7 @@ jobs:
       # Unsigned: catches R8 breaking the build or dropping a required asset.
       - name: Release APK (unsigned)
         run: make android-release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bebird-viewer-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
